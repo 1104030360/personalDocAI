@@ -8,7 +8,8 @@
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 9**（檢索服務兩條查詢可用、測試累計 21）。
+- 需要已完成的 phase：**Phase 9**（檢索服務兩條查詢可用、測試累計 50）。
+- 基線（2026-08-19 開工前實查）：`app/services/ask_workflow.py` 已存在但是**空檔**（Phase 02 骨架佔位）；langgraph 1.2.11／langchain-ollama 1.1.0 已隨 Phase 01 裝好；`grandalf`（驗收 4 畫 ASCII 圖用）未裝，屆時照常見問題 Q1 安裝。
 - 環境：測試資料庫可用；本 phase 的測試**不需要 Ollama**（用 `FakeRouter` 與 `FakeEmbeddings`）。
 - 每次開工先執行：
   ```bash
@@ -77,6 +78,9 @@
 ---
 
 ## 逐步驟操作
+
+> 🧪 **執行順序採 TDD（先紅再綠）**：實際動手時，先做**步驟 3** 建立測試檔並執行 `pytest tests/integration/test_workflow_route.py -v` 看它**失敗**（`ask_workflow` 與 `FakeRouter` 都還不存在，該檔從 import 就收集失敗——這就是紅；其餘 50 個測試不受影響），再照步驟 1 → 步驟 2 的順序實作讓測試轉綠。
+> ⚠️ **順序陷阱**：`conftest.py` 會 import `tests/fakes.py`——若在 `ask_workflow.py` 還是空檔時就把 `from app.services.ask_workflow import RouteDecision` 加進 fakes.py，**整個測試套件會從收集階段爆掉**。所以步驟 2 一定要等步驟 1 完成後才做。
 
 ### 步驟 1：寫 `app/services/ask_workflow.py`
 
@@ -267,7 +271,8 @@ def run_ask(question: str, deps: AskDeps) -> AskState:
 ### 步驟 2：在 `tests/fakes.py` 加上 `FakeRouter`
 
 ```python
-# 接在 tests/fakes.py 既有內容後面
+# import 放到 tests/fakes.py 檔頂、跟既有的 vlm_service import 併排；
+# 其餘內容接在檔案既有內容後面。（順序陷阱見「逐步驟操作」開頭的 ⚠️）
 from app.services.ask_workflow import RouteDecision
 
 # 規格例子與雙語測試裡的問題 → 應該得到的判斷結果
@@ -306,7 +311,9 @@ class FakeRouter:
         return self.decisions[question]
 ```
 
-### 步驟 3：建立 `tests/test_workflow_route.py`
+### 步驟 3：建立 `tests/integration/test_workflow_route.py`
+
+（檔案歸 `tests/integration/`：這些測試連真測試庫做端到端流程驗證，依 2026-08-19 起的測試分層規則屬整合測試。）
 
 ```python
 """route 節點：判斷查法 ＋ 失敗時 fallback 語意查詢 ＋ 英文問題也能判斷。"""
@@ -396,7 +403,7 @@ def test_路由回傳格式不對也走語意查詢(一張Target收據):
 1. **route 測試全綠**
    ```bash
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-   pytest tests/test_workflow_route.py -v
+   pytest tests/integration/test_workflow_route.py -v
    ```
    預期最後一行：`5 passed`
 
@@ -404,7 +411,7 @@ def test_路由回傳格式不對也走語意查詢(一張Target收據):
    ```bash
    pytest -q
    ```
-   預期：`26 passed`（**測試累計數：26**＝ Phase 9 的 21 ＋ 本 phase 的 5）
+   預期：`55 passed`（**測試累計數：55**＝ Phase 9 的 50 ＋ 本 phase 的 5）
 
 3. **route prompt 真的含英文 few-shot 例句**
    ```bash
@@ -413,7 +420,7 @@ def test_路由回傳格式不對也走語意查詢(一張Target收據):
    ```
    預期：各印出一行。
 
-4. **流程圖的結構正確**（畫出來看看）
+4. **流程圖的結構正確**（畫出來看看；需先 `uv pip install grandalf`，見常見問題 Q1）
    ```bash
    python - <<'PY'
    from datetime import date
@@ -470,4 +477,4 @@ def test_路由回傳格式不對也走語意查詢(一張Target收據):
 
 ## 完成後的專案狀態
 
-詢問流程的前半段完成：LangGraph 會先請 LLM 判斷查法與過濾條件（中文與英文問題都能判斷），再分岔到對應的查詢並把照片撈進 state；判斷失敗時一律走語意查詢（規則 Q3 已成立）。但還沒有人把撈到的照片變成一段回答，也還沒有 `POST /ask` 端點。測試累計 **26** 個。
+詢問流程的前半段完成：LangGraph 會先請 LLM 判斷查法與過濾條件（中文與英文問題都能判斷），再分岔到對應的查詢並把照片撈進 state；判斷失敗時一律走語意查詢（規則 Q3 已成立）。但還沒有人把撈到的照片變成一段回答，也還沒有 `POST /ask` 端點。測試累計 **55** 個。

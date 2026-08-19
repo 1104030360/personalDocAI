@@ -9,6 +9,7 @@
 ## 前置條件
 
 - 需要已完成的 phase：**Phase 3**（`photo_repository`）、**Phase 6**（`indexing_service.build_document`）、**Phase 8**（真實向量維度已確認）。
+- 基線（2026-08-19 開工前實查）：`pytest -q` = **40 passed**（Phase 01〜08 完成）；`app/services/retrieval_service.py` 已存在但是**空檔**（Phase 02 骨架佔位），本 phase 直接填入內容；`config.py` 已有 `RECENT_DAYS`／`TOP_K`。
 - 環境：測試資料庫可用；本 phase 的測試**不需要 Ollama**（用 `FakeEmbeddings`）。
 - 每次開工先執行：
   ```bash
@@ -78,6 +79,8 @@
 ---
 
 ## 逐步驟操作
+
+> 🧪 **執行順序採 TDD（先紅再綠）**：實際動手時，先做**步驟 3** 建立測試檔並執行 `pytest tests/integration/test_retrieval.py -v` 看它**失敗**（此時 `retrieval_service.py` 還是空檔，該檔會從 import 就收集失敗——這就是紅；其餘 40 個測試不受影響），再回頭照步驟 1〜2 實作讓測試轉綠。步驟編號維持「先講實作再講測試」只是閱讀順序（先懂 SQL 與服務在做什麼，測試才讀得懂）。
 
 ### 步驟 1：在 `app/repositories/photo_repository.py` 加上兩個查詢函式
 
@@ -286,9 +289,9 @@ def photo_retriever(request: dict[str, Any]) -> list[Document]:
     return vector_search(request["question"], request["embeddings"], filters, today)
 ```
 
-### 步驟 3：建立 `tests/test_retrieval.py`
+### 步驟 3：建立 `tests/integration/test_retrieval.py`
 
-這裡把規格「時間過濾」那條 Rule 的資料原封不動搬進來，加上 30 天邊界測試，確認**條件查詢與語意查詢共用同一條時間過濾**，並補兩個 ILIKE 的雙語測試。
+這裡把規格「時間過濾」那條 Rule 的資料原封不動搬進來，加上 30 天邊界測試，確認**條件查詢與語意查詢共用同一條時間過濾**，並補兩個 ILIKE 的雙語測試。（檔案歸 `tests/integration/`：這些測試連真測試庫，依 2026-08-19 起的測試分層規則屬整合測試。）
 
 ```python
 """檢索層測試：兩條查詢 ＋ 30 天時間過濾（含邊界）＋ ILIKE 大小寫不敏感。"""
@@ -458,7 +461,7 @@ def test_自訂retriever兩種模式都能用(三張規格照片):
 1. **檢索層測試全綠**
    ```bash
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-   pytest tests/test_retrieval.py -v
+   pytest tests/integration/test_retrieval.py -v
    ```
    預期最後一行：`10 passed`（8 個測試函式，其中邊界測試帶 3 組參數，pytest 算成 3 個）
 
@@ -466,7 +469,7 @@ def test_自訂retriever兩種模式都能用(三張規格照片):
    ```bash
    pytest -q
    ```
-   預期：`21 passed`（**測試累計數：21**＝ Phase 7 的 11 ＋ 本 phase 的 10）
+   預期：`50 passed`（**測試累計數：50**＝ 開工前基線 40 ＋ 本 phase 的 10）
 
 3. **時間過濾的 SQL 真的是設計文件那句**
    ```bash
@@ -571,4 +574,4 @@ def test_自訂retriever兩種模式都能用(三張規格照片):
 
 ## 完成後的專案狀態
 
-系統已經「找得到照片」：條件查詢能用類別／地點／物品過濾（`ILIKE`，大小寫不敏感，支援英文值），語意查詢能用向量找出最接近的 5 張，兩邊都正確套用「最近＝30 天、內容時間優先」的規則（規則 Q2 已成立）。但還沒有東西決定要走哪一條路，也還沒有人負責回答。測試累計 **21** 個。
+系統已經「找得到照片」：條件查詢能用類別／地點／物品過濾（`ILIKE`，大小寫不敏感，支援英文值），語意查詢能用向量找出最接近的 5 張，兩邊都正確套用「最近＝30 天、內容時間優先」的規則（規則 Q2 已成立）。但還沒有東西決定要走哪一條路，也還沒有人負責回答。測試累計 **50** 個。
