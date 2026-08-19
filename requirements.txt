@@ -1,0 +1,21 @@
+# --- Web 框架 ---
+fastapi>=0.115            # 提供 HTTP API 的框架
+uvicorn[standard]>=0.30   # 實際把 FastAPI 跑起來的伺服器
+python-multipart>=0.0.9   # 讓 FastAPI 能接收上傳的檔案
+pydantic>=2.7             # 定義資料格式並自動驗證
+
+# --- 資料庫 ---
+psycopg[binary]>=3.2      # Python 連 PostgreSQL 的套件（第 3 代）
+
+# --- AI 積木 ---
+langchain-core>=1.0       # LangChain 的核心：Document、Embeddings 介面、@chain
+langchain-ollama>=1.0     # 用 LangChain 的介面呼叫本機 Ollama
+langgraph>=1.0            # 把「判斷 → 查詢 → 回答」串成流程圖
+
+# --- 設定 ---
+python-dotenv>=1.0        # 讀 .env 檔裡的環境變數
+
+# --- 測試 ---
+pytest>=8.0               # 測試框架
+pytest-bdd>=8.1           # 讓 pytest 能直接執行 .feature 規格檔（Rule/Example 需要這個版本以上）
+httpx>=0.27               # 測試時用來呼叫自己的 API

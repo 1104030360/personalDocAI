@@ -1,0 +1,32 @@
+// 規格模型：資料模型 (ERM)
+// 來源：docs/spec/draft/design-draft.md
+// 依 prompts/formulation-rules.md 萃取，僅包含原始規格文本明確提及或可直接推導之內容
+
+Table Photo {
+  id int [pk, note: '照片的唯一識別碼，必須唯一']
+  text string [note: '系統利用 VLM 理解照片內容後轉成的文字，即照片資訊（規格原文稱「圖片資訊」；不含原始照片檔）']
+  category string [note: '結構化 metadata：照片類別（如：收據），由 VLM 產生；供 metadata search 過濾']
+  location string [note: '結構化 metadata：地點/商家（如：Target），由 VLM 產生；供 metadata search 過濾']
+  items string [note: '結構化 metadata：物品清單（如：可樂、洋芋片），由 VLM 產生；供 metadata search 過濾；多值清單，規格允許型別中無陣列型別，以 string 標記']
+  content_time string [note: '結構化 metadata：內容時間，由 VLM 從照片推斷（如收據上的消費日期），可能為空；規格允許型別中無日期型別，以 string 標記']
+  uploaded_at string [note: '上傳時間，系統於收到照片時自動記錄，必有值；規格允許型別中無日期型別，以 string 標記']
+  embedding float [note: '由文字 (text) 與 metadata（category、location、items、content_time）合併之內容經 LangChain 建立成 Document 後產生的 embedding 向量，以 pgvector 儲存，供 vector semantic search 使用；規格限定型別 (int, long, float, bool, string) 中無向量型別，此處以元素型別 float 標記']
+
+  Note: '''
+  照片：使用者透過 FastAPI 上傳的照片。
+  系統以 VLM 理解照片內容並轉成文字與結構化 metadata，再透過 LangChain 建立 Document、產生 embedding 向量，
+  並使用 PostgreSQL + pgvector 儲存照片資訊、metadata 與向量。
+
+  已釐清決策：
+  - 系統為單一使用者系統：不建立 User 實體，照片不區分擁有者，詢問時不以使用者過濾
+  - 不儲存原始照片檔案：照片資訊僅指 VLM 轉成的文字，原始照片檔處理完即捨棄
+  - metadata 僅含固定欄位：照片類別 (category)、地點/商家 (location)、物品清單 (items)、內容時間 (content_time)；VLM 產出不在此清單的資訊一律捨棄
+  - 時間資訊：記錄上傳時間 (uploaded_at) 與內容時間 (content_time)；時間性查詢（如「最近」）優先以內容時間過濾，內容時間為空時以上傳時間替代；「最近」定義為詢問當下時間回推 30 天內
+  - 上傳為同步處理：上傳完成即代表文字、metadata 與向量皆已儲存；不需要處理狀態欄位
+  - VLM 無法理解照片內容時上傳失敗，不儲存任何資料（不會出現 text 為空的照片記錄）
+  - 術語統一：概念一律稱「照片」（規格原文亦稱「圖片」，已正規化；「圖片格式」因指檔案格式而保留）；中文敘述稱「向量」或「embedding 向量」，欄位名維持 embedding
+
+  跨屬性不變條件：
+  - embedding 由 text 與 metadata（category、location、items、content_time）合併之內容（經 LangChain 建立成 Document）產生
+  '''
+}
