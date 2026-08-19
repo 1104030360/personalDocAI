@@ -25,6 +25,9 @@ uvicorn app.main:app --reload --port 8000
 # 跑測試（Phase 03 起；在專案根目錄執行，會自動連 visual_memory_test 並每測清空）
 pytest -q
 
+# 手動煙霧測試（需要 Ollama 真的在跑；真模型不寫自動化測試、不進驗收與 CI）
+python scripts/check_embedding_dim.py
+
 # 資料庫（本專案的 @17 在 5433；互動 shell 已由 ~/.zshrc 的 PGPORT=5433 設好預設）
 psql -d visual_memory       # 正式庫
 psql -d visual_memory_test  # 測試庫
