@@ -2,14 +2,17 @@
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事；想「順便多做一點」的時候，答案一律是「不要」。
 
+> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫步驟——(1) 全面改為 **TDD 順序**（步驟 0 先寫測試跑紅燈，再實作轉綠）；(2) 測試檔依 dev-prompt 指示分目錄：「合併順序固定」等純函式測試移到 `tests/unit/test_indexing_service_unit.py`，煙霧測試在 `tests/integration/test_upload_smoke.py`（Phase 5 已建）；(3) 原「步驟 5 在煙霧測試檔加 wire_fakes fixture」改為**擴充 conftest 既有的 `wire_fake_ai` 安全網**（Phase 5 建立；全套測試因此永不誤打真 Ollama——本 phase 接上 embeddings 後，Phase 5 改寫的兩個 201 測試若無安全網會真的呼叫 bge-m3）；(4) 測試累計數由 6 改為 **34**（Phase 5 結束為 29）。程式碼區塊（indexing_service／dependencies／fakes／photos）與原計畫一致。
+
 **目標：** 把文字＋四個 metadata 欄位合併成一份 LangChain Document、轉成向量，經 repository 一次寫進資料庫，並回傳規格要求的 201 內容。上傳流程到此**完整跑通**。
 
 ---
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 3**（`photo_repository.insert_photo` 可用）、**Phase 5**（看圖服務與 `POST /photos` 的前兩關）。
-- 環境：仍然不需要真的 Ollama（本 phase 用假的 embedding）；但 **PostgreSQL 必須在跑**——本 phase 會真的把資料寫進測試資料庫。沒在跑就先執行 `brew services start postgresql@17`（Phase 1 裝的）。
+- 需要已完成的 phase：**Phase 3**（`photo_repository.insert_photo` 可用）、**Phase 5**（看圖服務與 `POST /photos` 的前兩關；`pytest -q` 現況 **29 passed**；`tests/fakes.py`、conftest 的 `wire_fake_ai`／`client` fixture 已存在）。
+- 現況檔案狀態：`app/services/indexing_service.py` 是空檔案（本 phase 填入）；`app/schemas/photo.py` 的 `UploadResponse`／`PhotoMetadata` **已在 Phase 2 寫好**（直接取用）。
+- 環境：pytest 仍然**不需要（也絕不可以）呼叫真的 Ollama**（本 phase 用假的 embedding）；但 **PostgreSQL 必須在跑**——本 phase 會真的把資料寫進測試資料庫。沒在跑就先執行 `brew services start postgresql@17`（Phase 1 裝的）。
 - 每次開工先執行：
   ```bash
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -67,12 +70,281 @@
    │    （上傳時間正式由 DB 的 now() 自動記；測試才用固定時鐘注入固定時間）
    │
    ▼
-   ⑤ 回 201 {"id":1, "text":"…", "metadata":{四個欄位}}   【schemas/photo.py】
+   ⑤ 回 201 {"id":1, "text":"…", "metadata":{四個欄位}}   【schemas/photo.py，Phase 2 已寫好】
 ```
 
 ---
 
-## 逐步驟操作
+## 逐步驟操作（TDD：步驟 0 先寫測試跑紅燈，步驟 1〜3 實作轉綠）
+
+### 步驟 0：測試先行（紅燈）
+
+#### 步驟 0-1：在 `tests/fakes.py` 加上 `FakeEmbeddings` 與 `FixedClock`
+
+把整個檔案改成下面的內容。`FakeVLM` 是 Phase 5 已經寫好的，原封不動；新增的是最上面的 import、`VOCABULARY`／`SYNONYMS` 兩個對照表，以及 `FakeEmbeddings` 與 `FixedClock` 兩個假件：
+
+```python
+"""測試用的假件。真 AI／真時鐘的替身，讓測試結果可預期。"""
+
+from __future__ import annotations
+
+import hashlib
+import math
+from datetime import datetime
+
+from app.core import config
+from app.services.vlm_service import PhotoUnderstanding
+
+
+class FakeVLM:
+    """照測試指定的內容回傳；「看不懂」情境回 understood=False。"""
+
+    def __init__(self, result: PhotoUnderstanding | None = None) -> None:
+        self.result = result or PhotoUnderstanding(understood=False)
+        self.calls = 0
+
+    def understand(self, image_bytes: bytes, content_type: str) -> PhotoUnderstanding:
+        self.calls += 1
+        return self.result
+
+
+# 規格例子與雙語測試裡會出現的詞。假的向量只認得這些詞，因此結果完全可預期。
+VOCABULARY = [
+    # 中文（規格 .feature 的例子用的詞）
+    "收據", "風景", "照片", "購買",
+    "Target", "Costco", "7-11", "海邊",
+    "可樂", "洋芋片", "咖啡", "牛奶", "衛生紙", "飲料",
+    # 英文（雙語測試用的詞）
+    "Receipt", "receipt", "Cola", "cola", "Chips", "chips",
+    "coffee", "milk", "drinks", "drink",
+]
+
+# 同義／跨語言對照：左邊的詞出現時，右邊的詞也會被算進向量。
+# 這是在假件裡「模擬」多語 embedding 的效果——真的 bge-m3 天生就有這個能力，
+# 假件必須手動列出來，測試結果才可預期。
+SYNONYMS = {
+    "飲料": ["可樂", "咖啡", "牛奶"],
+    "drinks": ["可樂", "咖啡", "牛奶", "Cola", "cola"],
+    "drink": ["可樂", "咖啡", "牛奶"],
+    "receipt": ["收據"],
+    "Receipt": ["收據"],
+    "cola": ["可樂"],
+    "Cola": ["可樂"],
+}
+
+
+class FakeEmbeddings:
+    """決定論向量：同樣的文字永遠得到同樣的數字，且不需要任何 AI 服務。
+
+    做法：每個出現過的詞用「雜湊」（把文字換算成一個固定的數字）決定它落在
+    向量的哪個位置，該位置 +1；最後做「正規化」（把整條向量縮放成長度 1，
+    只留下方向），cosine 相似度比的才會是「內容」而不是「字數多寡」。
+    """
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._vector(text)
+
+    def _vector(self, text: str) -> list[float]:
+        vector = [0.0] * config.EMBEDDING_DIM
+        vector[0] = 0.1  # 保底值，避免全零向量讓 cosine 距離算出 NaN
+        for word in self._words(text):
+            vector[self._slot(word)] += 1.0
+        length = math.sqrt(sum(v * v for v in vector)) or 1.0
+        return [v / length for v in vector]
+
+    @staticmethod
+    def _words(text: str) -> list[str]:
+        found = [word for word in VOCABULARY if word in text]
+        for word in list(found):
+            found.extend(SYNONYMS.get(word, []))
+        return found
+
+    @staticmethod
+    def _slot(word: str) -> int:
+        digest = hashlib.md5(word.encode("utf-8")).hexdigest()
+        return int(digest, 16) % config.EMBEDDING_DIM
+
+
+class FixedClock:
+    """固定的「現在時間」，對應規格的 Given 現在時間為 "2026-08-18 10:00"。"""
+
+    def __init__(self, moment: datetime) -> None:
+        self.moment = moment
+
+    def __call__(self) -> datetime:
+        return self.moment
+```
+
+#### 步驟 0-2：擴充 `tests/conftest.py` 的 `wire_fake_ai` 安全網
+
+Phase 5 的 `wire_fake_ai` 只接了 `get_vlm`。本 phase 起，router 會再要 `get_embeddings` 與 `get_now`——若不接假件，Phase 5 改寫的兩個 201 測試會**真的呼叫本機 bge-m3**。把 conftest 追加區塊改成（`client` fixture 不動）：
+
+```python
+# ---------- Phase 5 追加、Phase 6 擴充：假件安全網＋API 測試用戶端 ----------
+# （import 必須留在 DATABASE_URL 導向之後，理由同檔案開頭註解）
+from datetime import datetime  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.dependencies import get_embeddings, get_now, get_vlm  # noqa: E402
+from app.main import app  # noqa: E402
+from tests.fakes import FakeEmbeddings, FakeVLM, FixedClock  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def wire_fake_ai():
+    """安全網：每個測試預設接上假 AI 與固定時鐘，結束時清掉所有覆寫。
+
+    本機 Ollama 是真的在跑——pytest 絕不能默默打真模型（design.md §11：
+    全部測試不依賴任何外部服務）。需要不同行為的測試自行覆寫：
+    - get_vlm 預設「看不懂」假件（要看得懂就覆寫成 FakeVLM(某理解結果)）
+    - get_embeddings 預設 FakeEmbeddings（決定論向量）
+    - get_now 預設固定時鐘 2026-08-18 10:00（對應規格 Given 的現在時間）
+    """
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM()
+    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
+    app.dependency_overrides[get_now] = FixedClock(datetime(2026, 8, 18, 10, 0))
+    yield
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client() -> TestClient:
+    """可以直接呼叫自己 API 的測試用戶端（不需要真的啟動伺服器）。"""
+    with TestClient(app) as test_client:
+        yield test_client
+```
+
+#### 步驟 0-3：建立 `tests/unit/test_indexing_service_unit.py`（4 個單元測試）
+
+合併與轉向量的純邏輯，不碰資料庫、不碰網路（原計畫的「合併內容的順序固定」煙霧測試與驗收 3／4 條在此自動化）：
+
+```python
+"""indexing_service 的單元測試：合併與轉向量的純邏輯，不碰資料庫、不碰網路。
+
+BDD 對應（docs/spec/features/上傳照片.feature）：
+Rule U4「儲存透過 LangChain 產生的 embedding 向量（由文字與 metadata 合併之內容產生）」
+——合併順序固定＝「同輸入同向量」的前提（design.md §9）。
+"""
+
+from app.core import config
+from app.services.indexing_service import build_document, embed_document
+from tests.fakes import FakeEmbeddings
+
+
+def test_合併內容的順序固定():
+    document = build_document(
+        text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
+        category="收據",
+        location="Target",
+        items=["可樂", "洋芋片"],
+        content_time="2026-08-10",
+    )
+    assert document.page_content == (
+        "在 Target 購買可樂與洋芋片的收據，日期 2026-08-10\n"
+        "類別: 收據\n"
+        "地點: Target\n"
+        "物品: 可樂、洋芋片\n"
+        "時間: 2026-08-10"
+    )
+    assert document.metadata == {
+        "category": "收據",
+        "location": "Target",
+        "items": ["可樂", "洋芋片"],
+        "content_time": "2026-08-10",
+    }
+
+
+def test_空欄位直接省略():
+    document = build_document(
+        text="海邊的風景照", category="風景", location="海邊", items=[], content_time=None
+    )
+    assert document.page_content == "海邊的風景照\n類別: 風景\n地點: 海邊"
+
+
+def test_英文值保持原文而標籤固定中文():
+    # design.md §9：標籤是固定格式的一部分不隨語言變，值保持原文，跨語言交給多語 embedding
+    document = build_document(
+        text="Receipt from Target with Cola and Chips",
+        category="Receipt",
+        location="Target",
+        items=["Cola", "Chips"],
+        content_time="2026-08-10",
+    )
+    assert document.page_content == (
+        "Receipt from Target with Cola and Chips\n"
+        "類別: Receipt\n"
+        "地點: Target\n"
+        "物品: Cola、Chips\n"
+        "時間: 2026-08-10"
+    )
+
+
+def test_embed_document_長度正確且同輸入同向量():
+    document = build_document(
+        text="在 Target 購買可樂與洋芋片的收據",
+        category="收據",
+        location="Target",
+        items=["可樂"],
+        content_time=None,
+    )
+    first = embed_document(FakeEmbeddings(), document)
+    second = embed_document(FakeEmbeddings(), document)
+    assert len(first) == config.EMBEDDING_DIM
+    assert first == second  # 決定論：同輸入永遠同向量
+```
+
+#### 步驟 0-4：擴充煙霧測試 `tests/integration/test_upload_smoke.py`
+
+兩個改動：
+
+**(a)** 在檔案最後加上這個新測試（假 embedding 與固定時鐘由 conftest 的 `wire_fake_ai` 自動接上，這裡只需覆寫看圖結果）：
+
+```python
+def test_上傳成功會完整寫入並回201(client):
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(中文收據)
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["text"] == 中文收據.text
+    assert body["metadata"] == {
+        "category": "收據",
+        "location": "Target",
+        "items": ["可樂", "洋芋片"],
+        "content_time": "2026-08-10",
+    }
+
+    row = photo_repository.fetch_photo(body["id"])
+    assert row["items"] == ["可樂", "洋芋片"]
+    assert row["uploaded_at"].strftime("%Y-%m-%d %H:%M") == "2026-08-18 10:00"
+    assert photo_repository.fetch_embedding(body["id"]) is not None
+```
+
+**(b)** ⚠️ Phase 5 的 `test_英文照片的描述保持英文不翻譯` 現在會真的走完寫入流程。它斷言的是回應的 `text`／`category`／`items`——本 phase 把回應換成 `UploadResponse` 之後，`category` 與 `items` 移進了 `metadata` 裡面。**請把那個測試的最後兩行斷言改成**：
+
+```python
+    assert body["metadata"]["category"] == "Receipt"
+    assert body["metadata"]["items"] == ["Cola", "Chips"]
+```
+
+第一行 `assert body["text"] == ...` 不用改。
+
+**影響面檢查（改完應該不用再動的檔案）**：`test_看得懂的照片回傳理解結果` 只斷言 201＋`text`＋呼叫次數 → 換成 `UploadResponse` 後依然成立，不用改；Phase 5 改寫的 `test_upload_png_understood_returns_201`／`test_upload_jpeg_understood_returns_201` 只斷言 201（＋`text`）→ 也不用改（它們如今會走完整寫入流程，靠 conftest 假件保持決定論）。
+
+#### 步驟 0-5：跑紅燈留證據
+
+```bash
+python -m pytest tests -q
+```
+
+預期：**collection error**（conftest 從 `dependencies.py` import 不到 `get_embeddings`／`get_now`；unit 測試從空的 `indexing_service.py` import 不到 `build_document`）——「功能不存在」的正確紅燈。把輸出留給 report。
 
 ### 步驟 1：寫 `app/services/indexing_service.py`
 
@@ -188,106 +460,9 @@ def get_now() -> datetime | None:
     return None
 ```
 
-### 步驟 3：在 `tests/fakes.py` 加上 `FakeEmbeddings` 與 `FixedClock`
+（Phase 5 版 `get_vlm` 的 docstring 內容可以保留——上面是最小可讀版本，兩者擇一，行為相同。）
 
-把整個檔案改成下面的內容。`FakeVLM` 是 Phase 5 已經寫好的，原封不動；新增的是最上面的 import、`VOCABULARY`／`SYNONYMS` 兩個對照表，以及 `FakeEmbeddings` 與 `FixedClock` 兩個假件：
-
-```python
-"""測試用的假件。真 AI／真時鐘的替身，讓測試結果可預期。"""
-
-from __future__ import annotations
-
-import hashlib
-import math
-from datetime import datetime
-
-from app.core import config
-from app.services.vlm_service import PhotoUnderstanding
-
-
-class FakeVLM:
-    """照測試指定的內容回傳；「看不懂」情境回 understood=False。"""
-
-    def __init__(self, result: PhotoUnderstanding | None = None) -> None:
-        self.result = result or PhotoUnderstanding(understood=False)
-        self.calls = 0
-
-    def understand(self, image_bytes: bytes, content_type: str) -> PhotoUnderstanding:
-        self.calls += 1
-        return self.result
-
-
-# 規格例子與雙語測試裡會出現的詞。假的向量只認得這些詞，因此結果完全可預期。
-VOCABULARY = [
-    # 中文（規格 .feature 的例子用的詞）
-    "收據", "風景", "照片", "購買",
-    "Target", "Costco", "7-11", "海邊",
-    "可樂", "洋芋片", "咖啡", "牛奶", "衛生紙", "飲料",
-    # 英文（雙語測試用的詞）
-    "Receipt", "receipt", "Cola", "cola", "Chips", "chips",
-    "coffee", "milk", "drinks", "drink",
-]
-
-# 同義／跨語言對照：左邊的詞出現時，右邊的詞也會被算進向量。
-# 這是在假件裡「模擬」多語 embedding 的效果——真的 bge-m3 天生就有這個能力，
-# 假件必須手動列出來，測試結果才可預期。
-SYNONYMS = {
-    "飲料": ["可樂", "咖啡", "牛奶"],
-    "drinks": ["可樂", "咖啡", "牛奶", "Cola", "cola"],
-    "drink": ["可樂", "咖啡", "牛奶"],
-    "receipt": ["收據"],
-    "Receipt": ["收據"],
-    "cola": ["可樂"],
-    "Cola": ["可樂"],
-}
-
-
-class FakeEmbeddings:
-    """決定論向量：同樣的文字永遠得到同樣的數字，且不需要任何 AI 服務。
-
-    做法：每個出現過的詞用「雜湊」（把文字換算成一個固定的數字）決定它落在
-    向量的哪個位置，該位置 +1；最後做「正規化」（把整條向量縮放成長度 1，
-    只留下方向），cosine 相似度比的才會是「內容」而不是「字數多寡」。
-    """
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._vector(text) for text in texts]
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._vector(text)
-
-    def _vector(self, text: str) -> list[float]:
-        vector = [0.0] * config.EMBEDDING_DIM
-        vector[0] = 0.1  # 保底值，避免全零向量讓 cosine 距離算出 NaN
-        for word in self._words(text):
-            vector[self._slot(word)] += 1.0
-        length = math.sqrt(sum(v * v for v in vector)) or 1.0
-        return [v / length for v in vector]
-
-    @staticmethod
-    def _words(text: str) -> list[str]:
-        found = [word for word in VOCABULARY if word in text]
-        for word in list(found):
-            found.extend(SYNONYMS.get(word, []))
-        return found
-
-    @staticmethod
-    def _slot(word: str) -> int:
-        digest = hashlib.md5(word.encode("utf-8")).hexdigest()
-        return int(digest, 16) % config.EMBEDDING_DIM
-
-
-class FixedClock:
-    """固定的「現在時間」，對應規格的 Given 現在時間為 "2026-08-18 10:00"。"""
-
-    def __init__(self, moment: datetime) -> None:
-        self.moment = moment
-
-    def __call__(self) -> datetime:
-        return self.moment
-```
-
-### 步驟 4：改寫 `app/api/routers/photos.py`，把流程接完
+### 步驟 3：改寫 `app/api/routers/photos.py`，把流程接完
 
 ```python
 """上傳照片的 router：POST /photos。"""
@@ -371,93 +546,13 @@ def upload_photo(
     )
 ```
 
-### 步驟 5：擴充煙霧測試 `tests/test_upload_smoke.py`
+### 步驟 4：轉綠
 
-有一件事必須先處理：Phase 5 的測試現在會一路走到「轉向量」這一步。如果不處理，它會去呼叫真的 `OllamaEmbeddings`——但本 phase 說好不需要 Ollama。解法是加一個 `autouse=True` 的 fixture（autouse ＝ 不用在測試參數裡點名，pytest 對這個檔案裡的每個測試都會自動先執行它），把假 embedding 與固定時鐘接到 app 上。
-
-先把檔案開頭（docstring 到 `PNG_BYTES` 為止）改成：
-
-```python
-"""Phase 5〜6 的暫時性測試：看圖、轉向量、寫入、201 回應。"""
-
-from datetime import datetime
-
-import pytest
-
-from app.dependencies import get_embeddings, get_now, get_vlm
-from app.main import app
-from app.repositories import photo_repository
-from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeEmbeddings, FakeVLM, FixedClock
-
-PNG_BYTES = (
-    b"\x89PNG\r\n\x1a\n"  # 內容不重要，我們用假件，不會真的去看圖
-)
-
-
-@pytest.fixture(autouse=True)
-def wire_fakes():
-    """每個測試都自動換上假 embedding 與固定時鐘——真 Ollama 完全不會被呼叫。"""
-    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
-    app.dependency_overrides[get_now] = FixedClock(datetime(2026, 8, 18, 10, 0))
-    yield
-    app.dependency_overrides.clear()
+```bash
+python -m pytest tests -q
 ```
 
-（`中文收據`／`英文收據` 兩個常數與原有的四個測試**繼續留在檔案裡**；除了英文照片那個測試要照下面的 ⚠️ 改兩行斷言之外，其餘一字不改。）
-
-然後在檔案最後加上這兩個新測試：
-
-```python
-def test_上傳成功會完整寫入並回201(client):
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(中文收據)
-
-    response = client.post(
-        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["text"] == 中文收據.text
-    assert body["metadata"] == {
-        "category": "收據",
-        "location": "Target",
-        "items": ["可樂", "洋芋片"],
-        "content_time": "2026-08-10",
-    }
-
-    row = photo_repository.fetch_photo(body["id"])
-    assert row["items"] == ["可樂", "洋芋片"]
-    assert row["uploaded_at"].strftime("%Y-%m-%d %H:%M") == "2026-08-18 10:00"
-    assert photo_repository.fetch_embedding(body["id"]) is not None
-
-
-def test_合併內容的順序固定():
-    # 這個測試不打 API，直接驗 build_document 的輸出字串
-    from app.services.indexing_service import build_document
-
-    document = build_document(
-        text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
-        category="收據",
-        location="Target",
-        items=["可樂", "洋芋片"],
-        content_time="2026-08-10",
-    )
-    assert document.page_content == (
-        "在 Target 購買可樂與洋芋片的收據，日期 2026-08-10\n"
-        "類別: 收據\n"
-        "地點: Target\n"
-        "物品: 可樂、洋芋片\n"
-        "時間: 2026-08-10"
-    )
-```
-
-> ⚠️ Phase 5 的 `test_英文照片的描述保持英文不翻譯` 現在會真的走完寫入流程。它斷言的是回應的 `text`／`category`／`items`——本 phase 把回應換成 `UploadResponse` 之後，`category` 與 `items` 移進了 `metadata` 裡面。**請把那個測試的最後兩行斷言改成**：
-> ```python
->     assert body["metadata"]["category"] == "Receipt"
->     assert body["metadata"]["items"] == ["Cola", "Chips"]
-> ```
-> 第一行 `assert body["text"] == ...` 不用改。
+預期：**34 passed**。有紅就修到綠——但只准改「本 phase 動過的東西」，Phase 3〜5 的既有行為不得為了過測試而更動。
 
 ---
 
@@ -466,17 +561,23 @@ def test_合併內容的順序固定():
 1. **煙霧測試全綠**
    ```bash
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-   pytest tests/test_upload_smoke.py -v
+   pytest tests/integration/test_upload_smoke.py -v
    ```
-   預期最後一行：`6 passed`
+   預期最後一行：`5 passed`
 
-2. **全部測試一起跑**
+2. **indexing 單元測試全綠**
+   ```bash
+   pytest tests/unit/test_indexing_service_unit.py -v
+   ```
+   預期最後一行：`4 passed`
+
+3. **全部測試一起跑**
    ```bash
    pytest -q
    ```
-   預期：`6 passed`（**測試累計數：6**）
+   預期：`34 passed`（**測試累計數：34** ＝ Phase 5 的 29 ＋ unit 4 ＋ smoke 1）
 
-3. **合併內容格式正確（中文）**
+4. **合併內容格式正確（中文）**（已由單元測試把關；此指令供人工複核）
    ```bash
    python -c "
    from app.services.indexing_service import build_document
@@ -485,7 +586,7 @@ def test_合併內容的順序固定():
    ```
    預期輸出：`'海邊的風景照\n類別: 風景\n地點: 海邊'`（沒有物品與時間兩行——空欄位省略）
 
-4. **合併內容格式正確（英文，值保持原文）**
+5. **合併內容格式正確（英文，值保持原文）**（已由單元測試把關；此指令供人工複核）
    ```bash
    python -c "
    from app.services.indexing_service import build_document
@@ -502,7 +603,7 @@ def test_合併內容的順序固定():
    ```
    （標籤固定中文、值保持英文原文——這就是設計要的行為。）
 
-5. **資料庫真的多了一筆完整資料**
+6. **資料庫真的多了一筆完整資料**
    跑測試沒辦法直接看到資料——測試每次開始前都會清空資料表。改用下面這個腳本手動走一次「合併 → 轉向量 → 寫入」，資料會留在測試資料庫裡：
    ```bash
    python - <<'PY'
@@ -536,7 +637,7 @@ def test_合併內容的順序固定():
    ```
    預期看到 **1 筆**資料：`id` 是 `1`、`category` 是 `收據`、`location` 是 `Target`、`items` 顯示為 `{可樂,洋芋片}`、`content_time` 是 `2026-08-10`、`vector_dims` 是 `1024`。
 
-6. **用真正的 HTTP 請求跑一次也可以**（可選，需要 Ollama）
+7. **用真正的 HTTP 請求跑一次也可以**（可選，需要 Ollama）
    ```bash
    uvicorn app.main:app --port 8000   # 另一個視窗，記得先 cd ＋啟用虛擬環境
    curl -s -X POST http://localhost:8000/photos -F "file=@/tmp/sample.png;type=image/png"
@@ -565,8 +666,11 @@ def test_合併內容的順序固定():
 **Q6：合併時的標籤「類別/地點/物品/時間」要不要依內容語言改成 Category/Location/…？**
 **不要。** 標籤是固定格式的一部分，換了就破壞「同輸入同向量」。design.md §9 明訂合併規則是固定順序的那五行，值保持原文即可。
 
+**Q7：為什麼假 embedding／固定時鐘接在 conftest 而不是煙霧測試檔裡？**
+因為需要它們的不只煙霧測試——Phase 5 改寫的兩個 201 測試也會走完整寫入流程。放 conftest 的 `wire_fake_ai`（autouse）一處搞定，並保證「全套 pytest 永不呼叫真 Ollama」（design.md §11）。個別測試要不同行為時自行覆寫即可。
+
 ---
 
 ## 完成後的專案狀態
 
-`POST /photos` 已經完整可用：合格照片會被看圖、合併成 Document、轉成向量、經 repository 一次寫進資料庫，並回傳 `id`＋文字＋四欄位 metadata；中文與英文照片都能正確處理且不翻譯。規則 U1〜U7 的行為都已實作，只差用 `.feature` 檔正式驗收。測試累計 **6** 個。
+`POST /photos` 已經完整可用：合格照片會被看圖、合併成 Document、轉成向量、經 repository 一次寫進資料庫，並回傳 `id`＋文字＋四欄位 metadata；中文與英文照片都能正確處理且不翻譯。規則 U1〜U7 的行為都已實作，只差用 `.feature` 檔正式驗收（Phase 7）。測試累計 **34** 個（unit 12＝8＋4；integration 22＝21＋1），全部不依賴 Ollama。

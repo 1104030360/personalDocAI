@@ -223,7 +223,7 @@ personalDocAI/
 │   └── check_embedding_dim.py # 實測 bge-m3 向量維度（P08）
 └── tests/
     ├── __init__.py
-    ├── conftest.py            # 測試共用設定：指向測試庫＋每測清空 photo 表（P03 起；P05、P07 擴充假件與表格小工具）
+    ├── conftest.py            # 測試共用設定：指向測試庫＋每測清空 photo 表（P03 起；P05/P06 擴充假件安全網與 client fixture、P07 擴充表格小工具）
     ├── unit/                  # 【2026-08-19 起】單元測試：純函式，不碰資料庫
     │   ├── __init__.py
     │   └── test_photo_repository_unit.py  # to_vector_literal（P03）
@@ -242,18 +242,19 @@ personalDocAI/
     └── test_error_paths.py    # 錯誤處理總表逐列驗證（P13）
 ```
 
-> 過程中還會出現一個**暫時性**檔案 `tests/test_upload_smoke.py`（P05 建立、P06 擴充、**P07 刪除**）。它不在最終結構裡。
+> 過程中還會出現一個**暫時性**檔案 `tests/integration/test_upload_smoke.py`（P05 建立、P06 擴充、**P07 刪除**）。它不在最終結構裡。
 
 **測試數量的累進**（每個 phase 的驗收都會叫你核對這個數字，對不上就代表漏做或多做）：
 
 > 🔄 **2026-08-19 更新（dev-prompt `phase0819.md`）**：改採 TDD——pytest 測試自 **P03** 起建立（原為 P05 起），並分 `tests/unit/` 與 `tests/integration/` 兩個子目錄；P05 之後各檔的歸屬子目錄，等各該 phase 開工前更新計畫時再定。P03/P04 之後的累計數已依此順移 +19。
+> 🔄 **2026-08-19 再更新（dev-prompt `phase0819-1.md`，P05/P06 開工前）**：P05／P06 兩列已依更新後計畫改定（TDD 單元測試計入、佔位測試改寫、conftest 假件安全網），累計 **29／34**；**P07 起各列仍為舊制數字**，照慣例等各該 phase 開工前更新計畫時再重算。
 
 | Phase | 新增測試 | `pytest -q` 累計 |
 |---|---|---|
 | P03【TDD 提前】 | `unit/test_photo_repository_unit.py` 2＋`integration/test_photo_repository.py` 10 | **12** |
 | P04【TDD 提前】 | `integration/test_photos_upload.py` 7 | **19** |
-| P05 | `test_upload_smoke.py` 4 | **23** |
-| P06 | 同檔 +2 | **25** |
+| P05 | `unit/test_vlm_service_unit.py` 6＋`integration/test_upload_smoke.py` 4（另改寫 upload 兩個佔位測試） | **29** |
+| P06 | `unit/test_indexing_service_unit.py` 4＋smoke 同檔 +1（英文斷言改 metadata 巢狀） | **34** |
 | P07 | 刪掉 smoke 6，新增 feature 7＋indexing 3＋bilingual 1 | **30** |
 | P08 | 0（不加需要真模型的測試） | **30** |
 | P09 | `test_retrieval.py` 10 | **40** |
