@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **功能僅兩項：上傳照片、自然語言詢問。不得新增任何其他能力**（多使用者、照片瀏覽/刪除、原始檔儲存、非同步佇列、對話記憶、前端 UI 等一律禁止）。
 
-**現況：Phase 01〜06 已完成**（2026-08-19）——環境就緒（Python 3.12 venv、PostgreSQL@17 於 5433＋pgvector、Ollama gemma4＋bge-m3）、`app/` 分層骨架已建；`photo` 資料表（兩庫＋HNSW cosine 索引）、`db/session.py`、`repositories/photo_repository.py`（全系統唯一寫 SQL）皆完成；**`POST /photos` 全流程可用**：格式檢查（非 JPEG/PNG→415）→ `services/vlm_service.py` 看圖（正式路徑 `OllamaVLM`；看不懂／呼叫失敗／text 空白→422 什麼都不存）→ `services/indexing_service.py` 固定順序合併＋轉向量（`embed_query`）→ 一條 INSERT → `UploadResponse` 201。注入點在 `app/dependencies.py`（`get_vlm`／`get_embeddings`／`get_now`）。實作依 `docs/plan/unfinish/` 的 phase 順序進行（已完成的 phase 計畫歸檔至 `docs/plan/finish/`），進度與紀錄見 `docs/plan/todo/`、`docs/plan/report/`。pytest 測試自 Phase 03 起以 TDD 建立：`tests/unit/`＋`tests/integration/`（目前 36 個全綠），`tests/conftest.py` 自動把 `DATABASE_URL` 切到 `visual_memory_test`、每測清空 `photo` 表，並以 autouse `wire_fake_ai` 把 AI／時鐘預設換成假件（假件在 `tests/fakes.py`；**pytest 絕不呼叫真 Ollama**——本機 Ollama 常駐，忘記覆寫會誤觸真模型推論）。
+**現況：Phase 01〜08 已完成**（2026-08-19）——環境就緒（Python 3.12 venv、PostgreSQL@17 於 5433＋pgvector、Ollama gemma4＋bge-m3）、`app/` 分層骨架已建；`photo` 資料表（兩庫＋HNSW cosine 索引）、`db/session.py`、`repositories/photo_repository.py`（全系統唯一寫 SQL）皆完成；**`POST /photos` 全流程可用**：格式檢查（非 JPEG/PNG→415）→ `services/vlm_service.py` 看圖（正式路徑 `OllamaVLM`；看不懂／呼叫失敗／text 空白→422 什麼都不存）→ `services/indexing_service.py` 固定順序合併＋轉向量（`embed_query`）→ 一條 INSERT → `UploadResponse` 201。注入點在 `app/dependencies.py`（`get_vlm`／`get_embeddings`／`get_now`）。上傳功能已過**規格驗收**（pytest-bdd 直接掛 `上傳照片.feature`，7 條 Rule U1〜U7 全綠；規格檔唯讀）並完成**真模型煙霧**（`scripts/check_embedding_dim.py` 實測 bge-m3＝1024 維、中英同義句相似度 0.837 vs 無關句 0.377；gemma4 真看圖＋真 HTTP 上傳成功，正式庫已有真實照片資料）。實作依 `docs/plan/unfinish/` 的 phase 順序進行（已完成的 phase 計畫歸檔至 `docs/plan/finish/`），進度與紀錄見 `docs/plan/todo/`、`docs/plan/report/`。pytest 測試自 Phase 03 起以 TDD 建立：`tests/unit/`＋`tests/integration/`（目前 40 個全綠），`tests/conftest.py` 自動把 `DATABASE_URL` 切到 `visual_memory_test`、每測清空 `photo` 表，並以 autouse `wire_fake_ai` 把 AI／時鐘預設換成假件（假件在 `tests/fakes.py`；**pytest 絕不呼叫真 Ollama**——本機 Ollama 常駐，忘記覆寫會誤觸真模型推論；真模型只做手動煙霧，不進驗收與 CI）。
 
 ## 指令
 
@@ -42,7 +42,7 @@ psql -d visual_memory_test  # 測試庫
 3. **Clarify**（`3.clarify.md`）：互動式逐題釐清，答案即時整合回規格檔，已解決項目歸檔至 `docs/spec/.clarify/resolved/`。
 4. **Design**（`4.design_prompt.md`）：產出 canonical design 到 `docs/design/design.md`。
 
-**目前進度**：四階段全數完成——18 項釐清 Resolved（見 `.clarify/overview.md`）、12 條 Rule 全數附 Example、無 #TODO；`docs/design/design.md`（**v4**）為 canonical design：分層架構（api/routers→services→repositories）、Ollama 本地模型（gemma4＋bge-m3）、中英雙語、side project 原則、Phase 14 極簡網頁介面。實作路線圖：`docs/plan/unfinish/`（phase-00 總覽＋未完成的 phase-07〜14）；已完成的 phase-01〜06 計畫歸檔於 `docs/plan/finish/`。
+**目前進度**：四階段全數完成——18 項釐清 Resolved（見 `.clarify/overview.md`）、12 條 Rule 全數附 Example、無 #TODO；`docs/design/design.md`（**v4**）為 canonical design：分層架構（api/routers→services→repositories）、Ollama 本地模型（gemma4＋bge-m3）、中英雙語、side project 原則、Phase 14 極簡網頁介面。實作路線圖：`docs/plan/unfinish/`（phase-00 總覽＋未完成的 phase-09〜14）；已完成的 phase-01〜08 計畫歸檔於 `docs/plan/finish/`。
 
 ### Source of Truth 優先序（衝突時依序採用）
 
