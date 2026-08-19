@@ -26,25 +26,30 @@ def clean_photo_table():
     yield
 
 
-# ---------- Phase 5 追加：假件安全網＋API 測試用戶端 ----------
+# ---------- Phase 5 追加、Phase 6 擴充：假件安全網＋API 測試用戶端 ----------
 # （import 必須留在 DATABASE_URL 導向之後，理由同檔案開頭註解）
+from datetime import datetime  # noqa: E402
+
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.dependencies import get_vlm  # noqa: E402
+from app.dependencies import get_embeddings, get_now, get_vlm  # noqa: E402
 from app.main import app  # noqa: E402
-from tests.fakes import FakeVLM  # noqa: E402
+from tests.fakes import FakeEmbeddings, FakeVLM, FixedClock  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def wire_fake_ai():
-    """安全網：每個測試預設把看圖換成「看不懂」假件，結束時清掉所有覆寫。
+    """安全網：每個測試預設接上假 AI 與固定時鐘，結束時清掉所有覆寫。
 
-    本機 Ollama 是真的在跑（gemma4）——測試忘記覆寫 get_vlm 時，
-    寧可拿到可預期的 422，也絕不讓 pytest 默默打真模型。
-    需要「看得懂」的測試自行覆寫 get_vlm。
-    （Phase 6 會在這裡再加 get_embeddings／get_now 的假件。）
+    本機 Ollama 是真的在跑——pytest 絕不能默默打真模型（design.md §11：
+    全部測試不依賴任何外部服務）。需要不同行為的測試自行覆寫：
+    - get_vlm 預設「看不懂」假件（要看得懂就覆寫成 FakeVLM(某理解結果)）
+    - get_embeddings 預設 FakeEmbeddings（決定論向量）
+    - get_now 預設固定時鐘 2026-08-18 10:00（對應規格 Given 的現在時間）
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM()
+    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
+    app.dependency_overrides[get_now] = FixedClock(datetime(2026, 8, 18, 10, 0))
     yield
     app.dependency_overrides.clear()
 

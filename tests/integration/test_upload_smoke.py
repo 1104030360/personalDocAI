@@ -53,8 +53,8 @@ def test_英文照片的描述保持英文不翻譯(client):
     assert response.status_code == 201
     body = response.json()
     assert body["text"] == "Receipt from Target with Cola and Chips, dated 2026-08-10"
-    assert body["category"] == "Receipt"
-    assert body["items"] == ["Cola", "Chips"]
+    assert body["metadata"]["category"] == "Receipt"
+    assert body["metadata"]["items"] == ["Cola", "Chips"]
 
 
 def test_看不懂的照片回傳422且不儲存(client):
@@ -96,3 +96,26 @@ def test_理解結果text全空白也回422且不儲存(client):
     assert response.status_code == 422
     assert response.json()["detail"] == "VLM 無法理解照片內容，未儲存任何資料"
     assert photo_repository.count_photos() == 0
+
+
+def test_上傳成功會完整寫入並回201(client):
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(中文收據)
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["text"] == 中文收據.text
+    assert body["metadata"] == {
+        "category": "收據",
+        "location": "Target",
+        "items": ["可樂", "洋芋片"],
+        "content_time": "2026-08-10",
+    }
+
+    row = photo_repository.fetch_photo(body["id"])
+    assert row["items"] == ["可樂", "洋芋片"]
+    assert row["uploaded_at"].strftime("%Y-%m-%d %H:%M") == "2026-08-18 10:00"
+    assert photo_repository.fetch_embedding(body["id"]) is not None
