@@ -10,14 +10,26 @@ import base64
 
 from fastapi.testclient import TestClient
 
+from app.dependencies import get_vlm
 from app.main import app
 from app.repositories import photo_repository as repo
+from app.services.vlm_service import PhotoUnderstanding
+from tests.fakes import FakeVLM
 
 client = TestClient(app)
 
 # 一張合法的 1×1 PNG（與步驟 3 的 /tmp/sample.png 相同內容，70 bytes）
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+看得懂的收據 = PhotoUnderstanding(
+    understood=True,
+    text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
+    category="收據",
+    location="Target",
+    items=["可樂", "洋芋片"],
+    content_time="2026-08-10",
 )
 
 
@@ -48,19 +60,17 @@ def test_upload_octet_stream_returns_415():
     assert resp.status_code == 415
 
 
-def test_upload_png_returns_201_placeholder():
-    # PNG 通過格式檢查；Phase 6 之前先回佔位回應
+def test_upload_png_understood_returns_201():
+    # PNG 通過格式檢查後交給看圖（pytest 一律用假件，絕不打真 Ollama）
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(看得懂的收據)
     resp = client.post("/photos", files={"file": ("sample.png", PNG_BYTES, "image/png")})
     assert resp.status_code == 201
-    assert resp.json() == {
-        "accepted": True,
-        "content_type": "image/png",
-        "size": len(PNG_BYTES),
-    }
+    assert resp.json()["text"] == 看得懂的收據.text
 
 
-def test_upload_jpeg_returns_201():
-    # JPEG 也通過（本 phase 只驗 content_type，不驗檔案內容）
+def test_upload_jpeg_understood_returns_201():
+    # JPEG 也通過格式檢查（只驗 content_type，不驗檔案內容）
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(看得懂的收據)
     resp = client.post(
         "/photos", files={"file": ("sample.jpg", b"\xff\xd8\xff\xe0fakejpeg", "image/jpeg")}
     )

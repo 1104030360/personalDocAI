@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **功能僅兩項：上傳照片、自然語言詢問。不得新增任何其他能力**（多使用者、照片瀏覽/刪除、原始檔儲存、非同步佇列、對話記憶、前端 UI 等一律禁止）。
 
-**現況：Phase 01〜04 已完成**（2026-08-19）——環境就緒（Python 3.12 venv、PostgreSQL@17 於 5433＋pgvector、Ollama gemma4＋bge-m3）、`app/` 分層骨架已建；`photo` 資料表（兩庫＋HNSW cosine 索引）、`db/session.py`、`repositories/photo_repository.py`（全系統唯一寫 SQL）、`POST /photos` 格式檢查（非 JPEG/PNG→415，合格檔暫回佔位回應）皆完成。實作依 `docs/plan/unfinish/` 的 phase 順序進行（已完成的 phase 計畫歸檔至 `docs/plan/finish/`），進度與紀錄見 `docs/plan/todo/`、`docs/plan/report/`。pytest 測試自 Phase 03 起以 TDD 建立：`tests/unit/`＋`tests/integration/`（目前 19 個全綠），`tests/conftest.py` 自動把 `DATABASE_URL` 切到 `visual_memory_test` 並每測清空 `photo` 表。
+**現況：Phase 01〜06 已完成**（2026-08-19）——環境就緒（Python 3.12 venv、PostgreSQL@17 於 5433＋pgvector、Ollama gemma4＋bge-m3）、`app/` 分層骨架已建；`photo` 資料表（兩庫＋HNSW cosine 索引）、`db/session.py`、`repositories/photo_repository.py`（全系統唯一寫 SQL）皆完成；**`POST /photos` 全流程可用**：格式檢查（非 JPEG/PNG→415）→ `services/vlm_service.py` 看圖（正式路徑 `OllamaVLM`；看不懂／呼叫失敗／text 空白→422 什麼都不存）→ `services/indexing_service.py` 固定順序合併＋轉向量（`embed_query`）→ 一條 INSERT → `UploadResponse` 201。注入點在 `app/dependencies.py`（`get_vlm`／`get_embeddings`／`get_now`）。實作依 `docs/plan/unfinish/` 的 phase 順序進行（已完成的 phase 計畫歸檔至 `docs/plan/finish/`），進度與紀錄見 `docs/plan/todo/`、`docs/plan/report/`。pytest 測試自 Phase 03 起以 TDD 建立：`tests/unit/`＋`tests/integration/`（目前 36 個全綠），`tests/conftest.py` 自動把 `DATABASE_URL` 切到 `visual_memory_test`、每測清空 `photo` 表，並以 autouse `wire_fake_ai` 把 AI／時鐘預設換成假件（假件在 `tests/fakes.py`；**pytest 絕不呼叫真 Ollama**——本機 Ollama 常駐，忘記覆寫會誤觸真模型推論）。
 
 ## 指令
 
@@ -39,7 +39,7 @@ psql -d visual_memory_test  # 測試庫
 3. **Clarify**（`3.clarify.md`）：互動式逐題釐清，答案即時整合回規格檔，已解決項目歸檔至 `docs/spec/.clarify/resolved/`。
 4. **Design**（`4.design_prompt.md`）：產出 canonical design 到 `docs/design/design.md`。
 
-**目前進度**：四階段全數完成——18 項釐清 Resolved（見 `.clarify/overview.md`）、12 條 Rule 全數附 Example、無 #TODO；`docs/design/design.md`（**v4**）為 canonical design：分層架構（api/routers→services→repositories）、Ollama 本地模型（gemma4＋bge-m3）、中英雙語、side project 原則、Phase 14 極簡網頁介面。實作路線圖：`docs/plan/unfinish/`（phase-00 總覽＋未完成的 phase-05〜14）；已完成的 phase-01〜04 計畫歸檔於 `docs/plan/finish/`。
+**目前進度**：四階段全數完成——18 項釐清 Resolved（見 `.clarify/overview.md`）、12 條 Rule 全數附 Example、無 #TODO；`docs/design/design.md`（**v4**）為 canonical design：分層架構（api/routers→services→repositories）、Ollama 本地模型（gemma4＋bge-m3）、中英雙語、side project 原則、Phase 14 極簡網頁介面。實作路線圖：`docs/plan/unfinish/`（phase-00 總覽＋未完成的 phase-07〜14）；已完成的 phase-01〜06 計畫歸檔於 `docs/plan/finish/`。
 
 ### Source of Truth 優先序（衝突時依序採用）
 
@@ -71,7 +71,7 @@ Clarify 階段定案（完整清單與被否決方案見 `.clarify/resolved/` �
 
 ## 重要陷阱
 
-- **`docs/plan/` 新舊混雜，要分清楚**：`docs/plan/unfinish/`（本專案未完成的 phase 計畫＋phase-00 總覽）、`finish/`（已完成的 phase 計畫）、`todo/`、`report/`、`dev-prompts/phase0818.md`／`phase0819.md` 是**本專案的文件**；`dev-prompts/phase0808〜0812.md` 等舊檔是另一個專案（18652FSE Chat Room）的殘留（socket.io、JWT、前端約束皆與本專案無關），**禁止引用作為本專案依據**。若出現 `docs/requirments/` 或 `docs/design/draft.md` 亦同（舊複本以 `docs/spec/draft/design-draft.md` 為準）。
+- **`docs/plan/` 新舊混雜，要分清楚**：`docs/plan/unfinish/`（本專案未完成的 phase 計畫＋phase-00 總覽）、`finish/`（已完成的 phase 計畫）、`todo/`、`report/`、`dev-prompts/phase0818.md`／`phase0819*.md` 是**本專案的文件**；`dev-prompts/phase0808〜0812.md` 等舊檔是另一個專案（18652FSE Chat Room）的殘留（socket.io、JWT、前端約束皆與本專案無關），**禁止引用作為本專案依據**。若出現 `docs/requirments/` 或 `docs/design/draft.md` 亦同（舊複本以 `docs/spec/draft/design-draft.md` 為準）。
 - **本機 PostgreSQL 有兩套**：既有 `postgresql@14`（5432 埠）內有**其他專案的資料庫（wanderlove、fse_chat_room），絕不可停用或修改**；本專案用 `postgresql@17` 跑在 **5433 埠**（`DATABASE_URL` 一律帶 `:5433`，互動 shell 由 `PGPORT=5433` 讓 psql 預設連對）。
 - `erm.dbml` 的型別受規格型別清單限制（如 `items` 標成 string、`embedding` 標成 float）；落地為實際 PostgreSQL 型別屬 design decision，需在 design 文件裁決並說明對應，**不要回頭改 `erm.dbml`**。
 - 本 repo 自 2026-08-19 起**已是 git repository**（分支 `master`；初始 commit 即 Phase 01〜04 完成狀態）。`.venv/`、`.env`、`__pycache__/`、`.pytest_cache/` 不入版控。
