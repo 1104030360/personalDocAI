@@ -97,7 +97,11 @@ from app.services.vlm_service import PhotoUnderstanding
 
 
 class FakeVLM:
-    """照測試指定的內容回傳；「看不懂」情境回 understood=False。"""
+    """考試用的固定答案卡，不是正式看圖系統。
+
+    測試會先指定「請當作收據、店名 Target」；understand() 照念，不呼叫 Ollama。
+    沒給 result 時預設 understood=False（規格：看不懂 → 422、什麼都不存）。
+    """
 
     def __init__(self, result: PhotoUnderstanding | None = None) -> None:
         self.result = result or PhotoUnderstanding(understood=False)
@@ -631,11 +635,15 @@ python -m pytest tests -q
    寫入 id： 1 上傳時間： 2026-08-18 10:00:00+08:00
    ```
    （時區偏移視你的系統設定而定，重點是日期與時分是 `2026-08-18 10:00`。）
-   接著用 psql 看剛剛寫入的那筆資料：
+   接著用 psql 看剛剛寫入的那筆資料（**非互動 shell 沒有 ~/.zshrc 的 `PGPORT=5433`，一律帶 `-p 5433` 才不會誤連 5432 的另一套 PostgreSQL**）：
    ```bash
-   psql -d visual_memory_test -c "SELECT id, text, category, location, items, content_time, uploaded_at, vector_dims(embedding) FROM photo;"
+   psql -p 5433 -d visual_memory_test -c "SELECT id, text, category, location, items, content_time, uploaded_at, vector_dims(embedding) FROM photo;"
    ```
    預期看到 **1 筆**資料：`id` 是 `1`、`category` 是 `收據`、`location` 是 `Target`、`items` 顯示為 `{可樂,洋芋片}`、`content_time` 是 `2026-08-10`、`vector_dims` 是 `1024`。
+   記錄完畢後把這筆手動資料清掉，讓資料庫收尾維持 0 筆：
+   ```bash
+   psql -p 5433 -d visual_memory_test -c "TRUNCATE TABLE photo RESTART IDENTITY;"
+   ```
 
 7. **用真正的 HTTP 請求跑一次也可以**（可選，需要 Ollama）
    ```bash
