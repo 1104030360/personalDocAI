@@ -94,3 +94,27 @@ class FixedClock:
 
     def __call__(self) -> datetime:
         return self.moment
+
+
+# 規格例子出現過的文字 → 對應的假 VLM 結果。
+# 規格新增例子時，在這裡補一筆即可。
+KNOWN_UNDERSTANDINGS: dict[str, PhotoUnderstanding] = {
+    "在 Target 購買可樂與洋芋片的收據，日期 2026-08-10": PhotoUnderstanding(
+        understood=True,
+        text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
+        category="收據",
+        location="Target",
+        items=["可樂", "洋芋片"],
+        content_time="2026-08-10",
+    ),
+}
+
+
+def understanding_for_text(text: str) -> PhotoUnderstanding:
+    """依規格步驟給的文字，取出對應的假 VLM 結果。"""
+    if text not in KNOWN_UNDERSTANDINGS:
+        raise KeyError(
+            f"沒有為這段文字準備假的 VLM 結果：{text}\n"
+            "請到 tests/fakes.py 的 KNOWN_UNDERSTANDINGS 補一筆。"
+        )
+    return KNOWN_UNDERSTANDINGS[text]

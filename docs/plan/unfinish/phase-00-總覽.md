@@ -224,22 +224,24 @@ personalDocAI/
 └── tests/
     ├── __init__.py
     ├── conftest.py            # 測試共用設定：指向測試庫＋每測清空 photo 表（P03 起；P05/P06 擴充假件安全網與 client fixture、P07 擴充表格小工具）
-    ├── unit/                  # 【2026-08-19 起】單元測試：純函式，不碰資料庫
+    ├── fakes.py               # FakeVLM / FakeEmbeddings / FakeRouter / FakeAnswerLLM / FixedClock（P05、P06、P07、P10、P11）
+    ├── unit/                  # 【2026-08-19 起】單元測試：純函式與資料模型
     │   ├── __init__.py
-    │   └── test_photo_repository_unit.py  # to_vector_literal（P03）
+    │   ├── test_photo_repository_unit.py  # to_vector_literal（P03）
+    │   ├── test_vlm_service_unit.py       # 六欄位、prompt 雙語規則、日期解析（P05）
+    │   └── test_indexing_service_unit.py  # Document 合併順序固定（中英文）＋決定論（P06；原 P07 的 test_indexing.py 由此涵蓋）
     ├── integration/           # 【2026-08-19 起】整合測試：連 visual_memory_test 測試庫
     │   ├── __init__.py
     │   ├── test_photo_repository.py       # repository 五操作＋U4/U5 資料層（P03）
-    │   └── test_photos_upload.py          # POST /photos 格式檢查＝Rule U1（P04）
-    ├── fakes.py               # FakeVLM / FakeEmbeddings / FakeRouter / FakeAnswerLLM / FixedClock（P05、P06、P07、P10、P11）
-    ├── test_indexing.py       # Document 合併順序固定（中英文）（P07）
-    ├── test_upload_bilingual.py   # 英文照片描述與欄位原樣儲存（P07）
-    ├── test_upload_feature.py     # 掛 docs/spec/features/上傳照片.feature（P07）
-    ├── test_retrieval.py      # 兩條查詢＋30 天邊界＋ILIKE 大小寫（P09）
-    ├── test_workflow_route.py # route 節點＋fallback＋英文提問（P10）
-    ├── test_ask_endpoint.py   # POST /ask 基本行為＋英文回答（P11）
-    ├── test_ask_feature.py    # 掛 docs/spec/features/自然語言詢問.feature（P12）
-    └── test_error_paths.py    # 錯誤處理總表逐列驗證（P13）
+    │   ├── test_photos_upload.py          # POST /photos 格式檢查＝Rule U1（P04；P05 改寫佔位測試）
+    │   ├── test_upload_feature.py         # 掛 docs/spec/features/上傳照片.feature（P07）
+    │   ├── test_upload_bilingual.py       # 英文照片描述與欄位原樣儲存（P07）
+    │   └── test_upload_design_rules.py    # 三個設計守衛：415 不進後續／text 空白 422／U4 向量護欄（P07，自煙霧測試承接）
+    ├── test_retrieval.py      # 兩條查詢＋30 天邊界＋ILIKE 大小寫（P09；歸屬子目錄屆時再定）
+    ├── test_workflow_route.py # route 節點＋fallback＋英文提問（P10；同上）
+    ├── test_ask_endpoint.py   # POST /ask 基本行為＋英文回答（P11；同上）
+    ├── test_ask_feature.py    # 掛 docs/spec/features/自然語言詢問.feature（P12；同上）
+    └── test_error_paths.py    # 錯誤處理總表逐列驗證（P13；同上）
 ```
 
 > 過程中還會出現一個**暫時性**檔案 `tests/integration/test_upload_smoke.py`（P05 建立、P06 擴充、**P07 刪除**）。它不在最終結構裡。
@@ -248,6 +250,7 @@ personalDocAI/
 
 > 🔄 **2026-08-19 更新（dev-prompt `phase0819.md`）**：改採 TDD——pytest 測試自 **P03** 起建立（原為 P05 起），並分 `tests/unit/` 與 `tests/integration/` 兩個子目錄；P05 之後各檔的歸屬子目錄，等各該 phase 開工前更新計畫時再定。P03/P04 之後的累計數已依此順移 +19。
 > 🔄 **2026-08-19 再更新（dev-prompt `phase0819-1.md`，P05/P06 開工前；階段I review 後 P05 smoke +1）**：P05／P06 兩列已依更新後計畫改定（TDD 單元測試計入、佔位測試改寫、conftest 假件安全網、review 後補「text 全空白也 422」），累計 **30／36**；**P07 起各列仍為舊制數字**，照慣例等各該 phase 開工前更新計畫時再重算。
+> 🔄 **2026-08-19 三度更新（dev-prompt `phase0819-2.md`，P07/P08 開工前）**：P07／P08 兩列已依更新後計畫改定（三個守衛自 smoke 遷移至 `integration/test_upload_design_rules.py`、原規劃的 indexing 測試由 P06 unit 檔涵蓋），累計 **40／40**；**P09 起各列仍為舊制數字**，照慣例開工前再重算。
 
 | Phase | 新增測試 | `pytest -q` 累計 |
 |---|---|---|
@@ -255,8 +258,8 @@ personalDocAI/
 | P04【TDD 提前】 | `integration/test_photos_upload.py` 7 | **19** |
 | P05 | `unit/test_vlm_service_unit.py` 6＋`integration/test_upload_smoke.py` 5（另改寫 upload 兩個佔位測試） | **30** |
 | P06 | `unit/test_indexing_service_unit.py` 4＋smoke 同檔 +2（英文斷言改 metadata 巢狀；review 後補 U4 護欄） | **36** |
-| P07 | 刪掉 smoke 6，新增 feature 7＋indexing 3＋bilingual 1 | **30** |
-| P08 | 0（不加需要真模型的測試） | **30** |
+| P07 | 刪 smoke 7；新增 `integration/test_upload_feature.py` 7＋`integration/test_upload_bilingual.py` 1＋`integration/test_upload_design_rules.py` 3（守衛自 smoke 承接；原規劃的 indexing 3 已由 P06 unit 檔涵蓋） | **40** |
+| P08 | 0（不加需要真模型的測試） | **40** |
 | P09 | `test_retrieval.py` 10 | **40** |
 | P10 | `test_workflow_route.py` 5 | **45** |
 | P11 | `test_ask_endpoint.py` 5 | **50** |
