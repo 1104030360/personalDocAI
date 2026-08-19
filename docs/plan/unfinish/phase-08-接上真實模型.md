@@ -2,13 +2,15 @@
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事；想「順便多做一點」的時候，答案一律是「不要」。
 
+> 🔄 **2026-08-19 開工前更新**：對照專案現況修訂——(1) 測試累計數 11 過時 → **40**（Phase 07 結束）；(2) 步驟 6 原假設 CLAUDE.md 的「## 指令」是佔位節——實際已是完整版（Phase 04 收尾時更新過），改為**在既有指令碼區塊補一行**煙霧測試指令，不再附加重複章節；(3) 驗收 7「停 Ollama」改為 `OLLAMA_BASE_URL` 指死埠法（不動使用者常駐的 Ollama）；(4) psql 指令一律帶 `-p 5433`（非互動 shell 沒有 ~/.zshrc 的 `PGPORT`）；(5) 步驟 2／4 各補一個備援（截圖權限受限 → qlmanage 渲染 HTML 假收據；沙箱擋 localhost → in-process 走真依賴）。
+
 **目標：** 把假的 AI 換成真的——用本機 Ollama 的 `gemma4` 真的看一張照片、用 `bge-m3` 真的產生向量，**實測 bge-m3 的向量維度**確認 `vector(1024)` 這個假設成立，並用中文與英文各跑一次向量確認多語能力。
 
 ---
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 7**（上傳規格 7 條 Rule 已全綠、測試累計 11）。
+- 需要已完成的 phase：**Phase 7**（上傳規格 7 條 Rule 已全綠、測試累計 **40**）。
 - 環境：Ollama 服務必須真的在跑，且 `gemma4` 與 `bge-m3` 都已下載完成。
   ```bash
   curl -s http://localhost:11434/api/tags | head -c 80
@@ -144,9 +146,9 @@ python scripts/check_embedding_dim.py
 # 假設實測是 768（示意）：
 # 1) app/core/config.py：EMBEDDING_DIM = 768
 # 2) db/schema.sql：vector(768)
-psql -d visual_memory      -f db/schema.sql
-psql -d visual_memory_test -f db/schema.sql
-pytest -q     # 重跑一次，確認 11 passed 仍然成立
+psql -p 5433 -d visual_memory      -f db/schema.sql
+psql -p 5433 -d visual_memory_test -f db/schema.sql
+pytest -q     # 重跑一次，確認 40 passed 仍然成立
 ```
 
 > `schema.sql` 開頭是 `DROP TABLE IF EXISTS photo;`，重跑會**清空資料表重建**。此時表裡只有測試留下的假資料，清掉沒有關係；假件測試會全數重跑，因為 `FakeEmbeddings` 的向量長度也是讀 `config.EMBEDDING_DIM`，所以會自動跟上新維度。
@@ -161,6 +163,21 @@ ls -lh /tmp/real_photo.png
 ```
 
 （如果你手邊有真的收據照片更好，把路徑換成那張即可。有中文收據和英文收據各一張最理想——可以親眼看到「描述語言跟著照片走」。）
+
+**備援（截圖權限受限、圖是全黑或 0 bytes 時）**：用 macOS 內建的 qlmanage 把一張 HTML「假收據」渲染成 PNG——內容可控，比截圖更像規格例子：
+
+```bash
+cat > /tmp/receipt.html <<'HTML'
+<html><body style="font-family:-apple-system;width:400px;padding:16px">
+<h2>Target</h2><p>2026-08-10</p>
+<table width="100%"><tr><td>可樂</td><td align="right">$25</td></tr>
+<tr><td>洋芋片</td><td align="right">$40</td></tr></table>
+<hr><p align="right"><b>總計 $65</b></p></body></html>
+HTML
+qlmanage -t -s 1024 -o /tmp /tmp/receipt.html   # 產生 /tmp/receipt.html.png
+cp /tmp/receipt.html.png /tmp/real_photo.png
+ls -lh /tmp/real_photo.png
+```
 
 ### 步驟 3：真的呼叫一次看圖
 
@@ -202,41 +219,44 @@ curl -s -X POST http://localhost:8000/photos \
 
 真模型看圖需要時間，這個請求可能要等幾十秒才回應，是正常的。
 
+**備援（環境擋 localhost 連線、curl 連不上時）**：改用 in-process 方式走**同一條**正式路徑（真 VLM、真 embedding、正式資料庫；只是少了 HTTP socket 這一層）：
+
+```bash
+python - <<'PY'
+from fastapi.testclient import TestClient
+from app.main import app   # 不覆寫任何依賴＝走真模型與正式資料庫
+
+with TestClient(app) as client:
+    with open("/tmp/real_photo.png", "rb") as f:
+        response = client.post(
+            "/photos", files={"file": ("real_photo.png", f, "image/png")}
+        )
+print(response.status_code)
+print(response.json())
+PY
+```
+
 ### 步驟 5：確認資料真的落地，而且向量是真的
 
 ```bash
-psql -d visual_memory -c \
+psql -p 5433 -d visual_memory -c \
   "SELECT id, left(text, 40) AS text_head, category, location, items, content_time, uploaded_at, vector_dims(embedding) AS dims FROM photo ORDER BY id DESC LIMIT 3;"
 ```
+
+（這筆是真實使用產生的資料，**保留**在正式庫即可——它就是產品的正常產出，之後的 phase 也用得上。）
 
 ### 步驟 6：記錄「真模型只做手動煙霧測試」的界線
 
 在 `tests/` 底下**不要**加任何需要真 Ollama 的測試。design.md §11 明訂：真模型只做少量手動煙霧測試（含至少一個英文提問例子），不進驗收與 CI。理由是真 AI 的輸出不是決定論的，放進驗收會讓測試時好時壞。
 
-把這件事寫進專案的 `CLAUDE.md`（供之後的人參考）。下面這段指令用了**四個反引號**包住整段內容，因為裡面本身還有一組三反引號的程式碼區塊——反引號數量少的那組會被當成內容，多的那組才是外框：
-
-````bash
-cd /Users/linjunting/personalDocAI
-cat >> CLAUDE.md <<'MD'
-
-## 指令（實作後回填）
+把這件事寫進專案的 `CLAUDE.md`（供之後的人參考）。`CLAUDE.md` 的「## 指令」一節**已是完整版**（Phase 04 收尾時更新過，含開工、依賴、uvicorn、pytest、psql），所以**不要附加重複章節**——只在既有的指令碼區塊裡、`pytest -q` 那組之後補上這兩行：
 
 ```bash
-cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-
-# 啟動服務
-uvicorn app.main:app --reload --port 8000
-
-# 跑全部驗收測試（全程使用假件，不需要 Ollama）
-pytest -q
-
 # 手動煙霧測試（需要 Ollama 真的在跑；真模型不寫自動化測試、不進驗收與 CI）
 python scripts/check_embedding_dim.py
 ```
-MD
-````
 
-（這裡寫進的是**專案資料夾裡的** `CLAUDE.md`，也就是 `/Users/linjunting/personalDocAI/CLAUDE.md`。這個檔案動工前就存在，開頭有一節佔位的「## 指令」還寫著「尚無可執行的指令」——現在先不動它，`cat >>` 只是把新內容附加在檔尾；Phase 13 收尾時會把兩處合併成最終版。）
+（直接編輯 `/Users/linjunting/personalDocAI/CLAUDE.md` 的指令碼區塊即可，其餘內容一字不動。）
 
 ---
 
@@ -281,15 +301,13 @@ MD
    ```bash
    pytest -q
    ```
-   預期：`11 passed`（**測試累計數：11**，本 phase 刻意不新增自動化測試）
+   預期：`40 passed`（**測試累計數：40**，本 phase 刻意不新增自動化測試）
 
-7. **停掉 Ollama，測試依然全綠**
+7. **不需要 Ollama，測試依然全綠**
    ```bash
-   brew services stop ollama
-   pytest -q
-   brew services start ollama
+   OLLAMA_BASE_URL=http://localhost:9 python -m pytest tests -q
    ```
-   預期：第二行 `11 passed`。三行分開執行——就算第二行測試失敗，也記得把第三行跑完，讓 Ollama 恢復運作。
+   預期：`40 passed`——把 Ollama 位址指到沒人聽的埠，測試依然全綠（AI 全部被假件取代）。這比停掉服務更乾淨，不影響本機常駐的 Ollama。（想真的停服務驗證也可以：`brew services stop ollama` → `pytest -q` → **務必** `brew services start ollama` 復原；若 Ollama 不是用 brew 管理，此法不適用。）
 
 ---
 
@@ -323,4 +341,4 @@ prompt 的語言規則沒被遵守，通常是小模型的能力問題。先確�
 
 ## 完成後的專案狀態
 
-系統已經能用**真的本機 AI** 完成一次完整上傳：真的看圖、真的產生向量、真的寫進資料庫；向量維度已用實測確認，`bge-m3` 的中英跨語言能力也用相似度量過。自動化驗收測試維持 **11** 個全綠且不依賴任何外部服務。上傳功能到此完全做完，接下來要做「詢問」。
+系統已經能用**真的本機 AI** 完成一次完整上傳：真的看圖、真的產生向量、真的寫進資料庫；向量維度已用實測確認，`bge-m3` 的中英跨語言能力也用相似度量過。自動化驗收測試維持 **40** 個全綠且不依賴任何外部服務。上傳功能到此完全做完，接下來要做「詢問」。

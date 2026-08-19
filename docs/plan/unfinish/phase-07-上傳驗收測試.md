@@ -2,14 +2,16 @@
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事；想「順便多做一點」的時候，答案一律是「不要」。
 
-**目標：** 用 pytest-bdd 直接把 `docs/spec/features/上傳照片.feature` 當測試跑，7 條 Rule（U1〜U7）全部通過；另外補上兩個規格沒涵蓋但設計有規定的單元測試檔（合併格式、英文照片不翻譯）。這是第一個驗收里程碑。
+> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫——(1) 測試累計數 11 過時：現況為 **36**（Phase 06 結束、含兩個 review 裁定加上的守衛測試），本 phase 完成後為 **40**；(2) 原計畫要新建的 `tests/test_indexing.py`（3 個合併格式測試）**已被 Phase 06 的 `tests/unit/test_indexing_service_unit.py` 覆蓋**——不再建立；(3) 煙霧測試檔刪除前先把 **3 個 `.feature` 沒涵蓋的設計守衛遷移**到 `tests/integration/test_upload_design_rules.py`（直接刪會丟掉 review 加上的防線）；(4) 測試檔依 dev-prompt 分目錄放 `tests/integration/`，`scenarios()` 路徑改 `../../`；(5) conftest 已有 `wire_fake_ai` 安全網——feature 測試的動態時鐘 fixture **顯式依賴它**以保證覆寫順序；(6) 「停 Ollama 驗收」改為 `OLLAMA_BASE_URL` 指死埠法（不動使用者的 Ollama 服務）。pytest-bdd **8.1.0 已安裝**，與 pytest 9.1.1 的 Rule／中文步驟／datatable 相容性已於 2026-08-19 用最小專案實證通過（見階段L report；官方文件 <https://pytest-bdd.readthedocs.io/>）。
+
+**目標：** 用 pytest-bdd 直接把 `docs/spec/features/上傳照片.feature` 當測試跑，7 條 Rule（U1〜U7）全部通過；把暫時性煙霧測試檔安全退役（守衛先遷移、替代測試先轉綠、才刪檔）；補上規格沒涵蓋但設計有規定的英文照片測試。這是第一個驗收里程碑。
 
 ---
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 6**（上傳流程完整跑通）。
-- 環境：**PostgreSQL 必須在跑**（沒在跑就先 `brew services start postgresql@17`），且測試資料庫 `visual_memory_test` 已建表；**不需要 Ollama**（全程用假件）。
+- 需要已完成的 phase：**Phase 6**（上傳流程完整跑通；`pytest -q` 現況 **36 passed**）。
+- 環境：**PostgreSQL 必須在跑**（沒在跑就先 `brew services start postgresql@17`），且測試資料庫 `visual_memory_test` 已建表；**不需要 Ollama**（全程用假件）。pytest-bdd 8.1.0 已在 `.venv`（requirements.txt 的 `pytest-bdd>=8.1`）。
 - 每次開工先執行：
   ```bash
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -25,7 +27,19 @@
 
 這個 phase 不寫任何產品程式碼，只寫測試。如果有 Rule 沒過，代表前面某個 phase 做錯了，要回頭修產品程式碼，**不能改規格檔**（`docs/spec/` 是唯讀的）。
 
-規格檔全部是中文，這是刻意的（design.md §11：不改動規格檔）。**雙語行為用額外的單元測試覆蓋**——所以本 phase 另外建一個 `tests/test_upload_bilingual.py`，驗「英文照片的描述與欄位原樣儲存、不翻譯」。
+規格檔全部是中文，這是刻意的（design.md §11：不改動規格檔）。**雙語行為用額外的測試覆蓋**——所以本 phase 另外建 `tests/integration/test_upload_bilingual.py`，驗「英文照片的描述與欄位原樣儲存、不翻譯」。
+
+**煙霧測試的退役規則**：`tests/integration/test_upload_smoke.py`（P05 建立、P06 擴充，現有 7 個測試）大部分行為已被 `.feature` 驗收取代，但其中 **3 個是 `.feature` 沒寫、design.md／review 裁定有規定的守衛**，必須先遷移到永久的家再刪檔：
+
+| smoke 測試 | 去向 |
+|---|---|
+| 看得懂的照片回傳理解結果 | 刪（U2／U6 Example 取代） |
+| 英文照片的描述保持英文不翻譯 | 刪（`test_upload_bilingual.py` 取代，且加驗 DB） |
+| 看不懂的照片回傳422且不儲存 | 刪（U7 Example 取代；422 訊息逐字由下面的 text 空白測試繼續把關） |
+| 非圖片格式不會呼叫看圖 | **遷移**（design.md §10「415 不進任何後續處理」，規格只驗結果不驗「沒呼叫」） |
+| 理解結果text全空白也回422且不儲存 | **遷移**（design.md §8.1「text 不會空」＋422 訊息逐字；規格無此例） |
+| 上傳成功會完整寫入並回201 | 刪（U2〜U6 五個 Example 合力取代） |
+| 向量由合併內容產生而非只有文字 | **遷移**（U4 護欄，規格只驗「不為空」；階段J review 裁定加上） |
 
 **名詞**：
 - **pytest**＝Python 最常用的測試框架，執行 `pytest` 就會找出所有測試並跑一遍。
@@ -49,7 +63,7 @@
               │
               │ pytest-bdd 的 scenarios() 讀進來
               ▼
- tests/test_upload_feature.py         （步驟定義：一句話 → 一段程式碼）
+ tests/integration/test_upload_feature.py  （步驟定義：一句話 → 一段程式碼）
    @given("VLM 無法理解上傳照片的內容")  → 準備 PhotoUnderstanding(understood=False)
                                           （When 上傳時再包進 FakeVLM）
    @when("使用者上傳照片")               → client.post("/photos", ...)
@@ -58,19 +72,22 @@
               │
               ▼
       真的呼叫 app（FastAPI）→ api/routers/photos.py → services → repositories
-              │  假件已注入：FakeVLM / FakeEmbeddings ＋ 固定「現在時間」
-              │  （design.md §11 的 FixedClock 角色，由覆寫 get_now 的 lambda 扮演）
+              │  假件已由 conftest 的 wire_fake_ai 注入：FakeVLM / FakeEmbeddings
+              │  ＋「現在時間」改接 context（Given 步驟可改，扮演 FixedClock 角色）
               ▼
       真的寫入 visual_memory_test 資料庫
 
- ── 規格檔沒寫、但設計有規定的行為，另外用單元測試補 ──
- tests/test_indexing.py         合併順序固定（中文＋英文）
- tests/test_upload_bilingual.py 英文照片描述與欄位原樣儲存、不翻譯
+ ── 規格檔沒寫、但設計有規定的行為，另外用測試補 ──
+ tests/unit/test_indexing_service_unit.py      合併順序固定（中英文）——P06 已存在，本 phase 不動
+ tests/integration/test_upload_bilingual.py    英文照片描述與欄位原樣儲存、不翻譯（本 phase 新建）
+ tests/integration/test_upload_design_rules.py 三個守衛（自煙霧測試遷移，本 phase 新建）
 ```
 
 ---
 
 ## 逐步驟操作
+
+（本 phase 只寫測試、不寫產品程式碼；替代測試先轉綠、才刪煙霧測試檔。任何一條規格例子紅燈＝前面 phase 的產品缺陷，回頭修 `app/`，**不得**改 `docs/spec/` 或弱化步驟斷言。）
 
 ### 步驟 1：在 `tests/fakes.py` 補上「文字 → 假理解結果」的對照
 
@@ -105,10 +122,10 @@ def understanding_for_text(text: str) -> PhotoUnderstanding:
 
 ### 步驟 2：在 `tests/conftest.py` 補上共用小工具
 
-放在 `conftest.py`（而不是測試檔裡）是因為 Phase 12 的詢問驗收測試也會用到 `split_items`。
+放在 `conftest.py`（而不是測試檔裡）是因為 Phase 12 的詢問驗收測試也會用到 `split_items`。接在檔案最後面（既有內容一字不動）：
 
 ```python
-# 接在 tests/conftest.py 既有內容後面
+# ---------- Phase 7 追加：Gherkin 表格小工具（P12 詢問驗收也會用） ----------
 
 
 def first_row(datatable: list[list[str]]) -> dict[str, str]:
@@ -123,7 +140,7 @@ def split_items(cell: str) -> list[str]:
     return [part for part in cell.split("、") if part] if cell else []
 ```
 
-### 步驟 3：建立 `tests/test_upload_feature.py`
+### 步驟 3：建立 `tests/integration/test_upload_feature.py`
 
 ```python
 """把 docs/spec/features/上傳照片.feature 當測試跑（7 條 Rule）。"""
@@ -135,15 +152,15 @@ from datetime import datetime
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from app.dependencies import get_embeddings, get_now, get_vlm
+from app.dependencies import get_now, get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
 from tests.conftest import first_row, split_items
-from tests.fakes import FakeEmbeddings, FakeVLM, understanding_for_text
+from tests.fakes import FakeVLM, understanding_for_text
 
-# 直接掛上規格原檔——不複製、不改寫
-scenarios("../docs/spec/features/上傳照片.feature")
+# 直接掛上規格原檔——不複製、不改寫（路徑相對於本檔所在資料夾 tests/integration/）
+scenarios("../../docs/spec/features/上傳照片.feature")
 
 # 假的照片內容。全程用假件，不會真的被拿去看圖
 PNG_BYTES = b"\x89PNG\r\n\x1a\n fake image bytes"
@@ -163,12 +180,14 @@ def context() -> dict:
 
 
 @pytest.fixture(autouse=True)
-def wire_fakes(context):
-    """把假件接到 app 上（真 AI 與真時鐘都不會被呼叫）。"""
-    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
+def wire_feature_clock(wire_fake_ai, context):
+    """把「現在時間」改接到 context——Given 步驟改 context["now"] 即時生效。
+
+    顯式依賴 conftest 的 wire_fake_ai（假 AI 已接好、測後統一 clear()），
+    保證本 fixture 在它之後執行，get_now 的覆寫以這裡為準。
+    """
     app.dependency_overrides[get_now] = lambda: context["now"]
     yield
-    app.dependency_overrides.clear()
 
 
 def _upload(context, client, filename="photo.png", content_type="image/png",
@@ -201,7 +220,7 @@ def vlm看不懂(context):
 @when("使用者上傳一個非圖片格式的檔案")
 def 上傳非圖片檔(context, client):
     _upload(context, client, filename="note.txt",
-            content_type="text/plain", payload=b"這不是圖片")
+            content_type="text/plain", payload="這不是圖片".encode())
 
 
 @when(parsers.parse('使用者上傳一張照片，VLM 理解其內容為 "{text}"'))
@@ -276,85 +295,31 @@ def 回應metadata為(context, datatable):
     assert (metadata["content_time"] or "") == expected["content_time"].strip()
 ```
 
-### 步驟 4：把暫時性的煙霧測試換成兩個正式的單元測試檔
-
-`tests/test_upload_smoke.py` 的內容幾乎都被上面的正式驗收取代了，只有兩件事是規格 `.feature` 沒驗、但 design.md 有規定的，要保留下來：
-
-- **合併順序固定**（design.md §9）：規格只驗「embedding 不為空」，沒驗合併格式。
-- **英文照片不翻譯**（design.md §8.1、§8.3）：規格全是中文例子，雙語行為靠額外測試覆蓋。
-
-做法：建兩個新檔案，再刪掉整個煙霧測試檔。
+寫完先跑一次：
 
 ```bash
-cd /Users/linjunting/personalDocAI
-rm tests/test_upload_smoke.py
+python -m pytest tests/integration/test_upload_feature.py -v
 ```
 
-建立 `tests/test_indexing.py`：
+預期 **7 passed**。（紅燈＝前面 phase 的產品缺陷：回頭修 `app/`，不得改規格、不得弱化步驟斷言。）
+
+### 步驟 4：建立兩個永久測試檔（替代煙霧測試中要保留的行為）
+
+**(a)** `tests/integration/test_upload_bilingual.py`（雙語守衛，比煙霧測試多驗 DB 落地）：
 
 ```python
-"""合併內容的格式必須固定：同輸入 → 同向量（design.md §9）。"""
+"""雙語：英文照片的描述與四個欄位原樣儲存，系統不做翻譯（design.md §8.1、§8.3）。
 
-from app.services.indexing_service import build_document
-
-
-def test_合併內容的順序固定():
-    document = build_document(
-        text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
-        category="收據",
-        location="Target",
-        items=["可樂", "洋芋片"],
-        content_time="2026-08-10",
-    )
-    assert document.page_content == (
-        "在 Target 購買可樂與洋芋片的收據，日期 2026-08-10\n"
-        "類別: 收據\n"
-        "地點: Target\n"
-        "物品: 可樂、洋芋片\n"
-        "時間: 2026-08-10"
-    )
-
-
-def test_空欄位會被省略():
-    document = build_document(
-        text="海邊的風景照", category="風景", location="海邊",
-        items=[], content_time=None,
-    )
-    assert document.page_content == "海邊的風景照\n類別: 風景\n地點: 海邊"
-
-
-def test_英文內容的欄位值保持原文標籤仍為中文():
-    """雙語：標籤是固定格式的一部分不變，值保持照片原文（不翻譯）。"""
-    document = build_document(
-        text="Receipt from Target with Cola and Chips",
-        category="Receipt", location="Target",
-        items=["Cola", "Chips"], content_time="2026-08-10",
-    )
-    assert document.page_content == (
-        "Receipt from Target with Cola and Chips\n"
-        "類別: Receipt\n"
-        "地點: Target\n"
-        "物品: Cola、Chips\n"
-        "時間: 2026-08-10"
-    )
-```
-
-建立 `tests/test_upload_bilingual.py`：
-
-```python
-"""雙語：英文照片的描述與四個欄位原樣儲存，系統不做翻譯（design.md §8.1、§8.3）。"""
+規格 .feature 全為中文且唯讀（design.md §11），雙語行為以本檔額外覆蓋。
+"""
 
 from __future__ import annotations
 
-from datetime import datetime
-
-import pytest
-
-from app.dependencies import get_embeddings, get_now, get_vlm
+from app.dependencies import get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeEmbeddings, FakeVLM
+from tests.fakes import FakeVLM
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n fake image bytes"
 
@@ -368,16 +333,10 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\n fake image bytes"
 )
 
 
-@pytest.fixture(autouse=True)
-def wire_fakes():
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(英文收據)
-    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
-    app.dependency_overrides[get_now] = lambda: datetime(2026, 8, 18, 10, 0)
-    yield
-    app.dependency_overrides.clear()
-
-
 def test_英文照片的描述與欄位原樣儲存不翻譯(client):
+    # 假 embedding／固定時鐘由 conftest 的 wire_fake_ai 自動接上，這裡只換看圖結果
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(英文收據)
+
     response = client.post(
         "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
     )
@@ -399,6 +358,118 @@ def test_英文照片的描述與欄位原樣儲存不翻譯(client):
     assert photo_repository.fetch_embedding(body["id"]) is not None
 ```
 
+**(b)** `tests/integration/test_upload_design_rules.py`（三個守衛，自煙霧測試逐字遷移）：
+
+```python
+"""design.md 規定、但規格 .feature 沒涵蓋的上傳行為守衛（自 Phase 5/6 煙霧測試承接）。
+
+- 415 之後不進任何後續處理（design.md §10 錯誤處理總表）
+- understood=True 但 text 全空白 → 一樣 422（design.md §8.1「失敗就不存，text 不會空」）
+- Rule U4 護欄：向量必須由「文字＋四欄位合併內容」產生（clarify 已否決「只用 text」方案）
+"""
+
+from __future__ import annotations
+
+import json
+
+from app.dependencies import get_vlm
+from app.main import app
+from app.repositories import photo_repository
+from app.services.indexing_service import build_document, embed_document
+from app.services.vlm_service import PhotoUnderstanding
+from tests.fakes import FakeEmbeddings, FakeVLM
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n fake image bytes"
+
+
+def test_非圖片格式不會呼叫看圖(client):
+    fake = FakeVLM()
+    app.dependency_overrides[get_vlm] = lambda: fake
+
+    response = client.post(
+        "/photos", files={"file": ("a.txt", b"hello", "text/plain")}
+    )
+
+    assert response.status_code == 415
+    assert fake.calls == 0  # 415 之後不會呼叫 understand()
+
+
+def test_理解結果text全空白也回422且不儲存(client):
+    """Rule U7 的另一半：understood=True 但 text 全空白，一樣視為無法理解。"""
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
+        PhotoUnderstanding(understood=True, text="   ")
+    )
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "VLM 無法理解照片內容，未儲存任何資料"
+    assert photo_repository.count_photos() == 0
+
+
+def test_向量由合併內容產生而非只有文字(client):
+    """Rule U4 的護欄：存入的向量＝「文字＋四欄位合併內容」的向量，
+    且不等於「只用 text」的向量（clarify 已否決的方案不得悄悄回歸）。
+
+    fixture 刻意讓 metadata 的詞（收據/Costco/咖啡/牛奶）不出現在 text 裡——
+    metadata 值若是 text 的子字串，假向量會分不出兩種實作。
+    """
+    理解結果 = PhotoUnderstanding(
+        understood=True,
+        text="超市購物的照片",
+        category="收據",
+        location="Costco",
+        items=["咖啡", "牛奶"],
+        content_time=None,
+    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(理解結果)
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+    assert response.status_code == 201
+
+    stored = json.loads(photo_repository.fetch_embedding(response.json()["id"]))
+    document = build_document(
+        text="超市購物的照片",
+        category="收據",
+        location="Costco",
+        items=["咖啡", "牛奶"],
+        content_time=None,
+    )
+    expected = embed_document(FakeEmbeddings(), document)
+    text_only = FakeEmbeddings().embed_query("超市購物的照片")
+
+    # 與期望向量逐元素比對（pgvector 以 float4 儲存，取 1e-6 容差）
+    assert max(abs(a - b) for a, b in zip(stored, expected)) < 1e-6
+    # 與「只用 text」的向量必須可區分——否則這個測試就守不住 U4
+    assert max(abs(a - b) for a, b in zip(stored, text_only)) > 1e-3
+```
+
+寫完跑全量（此時煙霧測試檔**還在**，新舊守衛並存是預期狀態）：
+
+```bash
+python -m pytest tests -q
+```
+
+預期 **47 passed**（36 ＋ feature 7 ＋ bilingual 1 ＋ design_rules 3）。
+
+第一個 commit：`test: Phase 07 規格驗收＋守衛遷移（47 passed，smoke 尚存）`。
+
+### 步驟 5：刪除暫時性煙霧測試檔（替代者已全綠才動手）
+
+```bash
+cd /Users/linjunting/personalDocAI
+rm tests/integration/test_upload_smoke.py
+python -m pytest tests -q
+```
+
+預期 **40 passed**。第二個 commit：`test: Phase 07 移除暫時性煙霧測試（40 passed）`。
+
+> 原計畫在此還要建 `tests/test_indexing.py`（3 個合併格式測試）——**不用了**：Phase 06 的 `tests/unit/test_indexing_service_unit.py` 已涵蓋同樣三個行為（固定順序、空欄位省略、英文值中文標籤）外加一個決定論測試，重建即重複。
+
 ---
 
 ## 驗收標準
@@ -406,7 +477,7 @@ def test_英文照片的描述與欄位原樣儲存不翻譯(client):
 1. **上傳規格 7 個例子全綠**
    ```bash
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-   pytest tests/test_upload_feature.py -v
+   pytest tests/integration/test_upload_feature.py -v
    ```
    預期最後一行：`7 passed`
    預期看到 7 個測試名稱，分別對應 7 條 Rule 底下的 Example（名稱取自 `.feature` 檔原文）：
@@ -422,35 +493,33 @@ def test_英文照片的描述與欄位原樣儲存不翻譯(client):
    ```bash
    pytest -q
    ```
-   預期最後一行：`11 passed`（規格 7 ＋ indexing 3 ＋ 雙語 1）（**測試累計數：11**）
+   預期最後一行：`40 passed`（**測試累計數：40** ＝ 36 − 煙霧 7 ＋ 規格 7 ＋ 雙語 1 ＋ 守衛 3；unit 12 ＋ integration 28）
 
 3. **沒有任何步驟沒對應到程式碼**
    ```bash
-   pytest tests/test_upload_feature.py 2>&1 | grep -i "StepDefinitionNotFound" || echo "所有步驟都有對應"
+   pytest tests/integration/test_upload_feature.py 2>&1 | grep -i "StepDefinitionNotFound" || echo "所有步驟都有對應"
    ```
    預期輸出：`所有步驟都有對應`
 
 4. **煙霧測試檔真的刪掉了**
    ```bash
-   ls tests/test_upload_smoke.py 2>/dev/null || echo "OK：暫時性檔案已移除"
+   ls tests/integration/test_upload_smoke.py 2>/dev/null || echo "OK：暫時性檔案已移除"
    ```
    預期輸出：`OK：暫時性檔案已移除`
 
 5. **測試沒有碰到正式資料庫**
    ```bash
-   psql -d visual_memory -c "SELECT count(*) FROM photo;"   # 記下這個數字
+   psql -p 5433 -d visual_memory -c "SELECT count(*) FROM photo;"   # 記下這個數字
    pytest -q
-   psql -d visual_memory -c "SELECT count(*) FROM photo;"   # 應該和剛剛記的一樣
+   psql -p 5433 -d visual_memory -c "SELECT count(*) FROM photo;"   # 應該和剛剛記的一樣
    ```
    預期：前後兩次的筆數**相同**——測試只碰 `visual_memory_test`（`conftest.py` 已把 `DATABASE_URL` 指向它），正式資料庫完全不受影響。
 
 6. **測試完全不需要 Ollama**
    ```bash
-   brew services stop ollama
-   pytest -q
-   brew services start ollama
+   OLLAMA_BASE_URL=http://localhost:9 python -m pytest tests -q
    ```
-   預期：Ollama 停掉的情況下測試仍然 `11 passed`（因為 AI 全部被假件取代）。三行分開執行——就算第二行測試失敗，也記得把第三行跑完，讓 Ollama 恢復運作。
+   預期：`40 passed`——把 Ollama 位址指到一個沒人聽的埠，測試依然全綠（AI 全部被假件取代）。這比停掉服務更乾淨，不影響本機常駐的 Ollama。（想真的停服務驗證也可以：`brew services stop ollama` → `pytest -q` → **務必** `brew services start ollama` 復原；若 Ollama 不是用 brew 管理，此法不適用。）
 
 7. **規格檔沒有被動過**
    ```bash
@@ -466,22 +535,25 @@ def test_英文照片的描述與欄位原樣儲存不翻譯(client):
 步驟字串必須和 `.feature` 檔**一字不差**，包含全形逗號「，」與空白。把 `.feature` 裡那一行複製貼上到 `@when(...)` 裡最保險。
 
 **Q2：`FeatureError` 或 `Rule` 不被支援。**
-`Rule` 與 `Example` 需要較新的 pytest-bdd（使用官方 Gherkin 解析器的版本）。執行 `uv pip install -U "pytest-bdd>=8.1"` 後再跑一次。
+`Rule` 與 `Example` 需要較新的 pytest-bdd（使用官方 Gherkin 解析器的版本）。本機已裝 8.1.0＋gherkin-official 29，且已實證可用；若在別的環境重建，執行 `uv pip install -U "pytest-bdd>=8.1"`。
 
 **Q3：找不到 feature 檔（`FileNotFoundError`）。**
-`scenarios("../docs/spec/features/上傳照片.feature")` 的路徑是相對於**測試檔所在資料夾**（`tests/`），跟你在哪個資料夾執行 `pytest` 無關。確認兩件事：測試檔真的放在 `tests/` 底下；專案根目錄底下真的有 `docs/spec/features/上傳照片.feature`（檔名一字不差）。
+`scenarios("../../docs/spec/features/上傳照片.feature")` 的路徑是相對於**測試檔所在資料夾**（`tests/integration/`），跟你在哪個資料夾執行 `pytest` 無關。確認兩件事：測試檔真的放在 `tests/integration/` 底下；專案根目錄底下真的有 `docs/spec/features/上傳照片.feature`（檔名一字不差）。
 
 **Q4：`照片的上傳時間為 "2026-08-18 10:00"` 這條過不了。**
-兩個常見原因：(a) `Given 現在時間為 …` 的步驟沒有在 When 之前生效——確認 `wire_fakes` 的 `get_now` 覆寫是讀 `context["now"]` 的 lambda，而不是在 fixture 建立當下就把值固定；(b) 比對方式錯誤——只能比對到「分」，不要比對整個 `datetime` 物件。
+兩個常見原因：(a) `Given 現在時間為 …` 的步驟沒有在 When 之前生效——確認 `wire_feature_clock` 的 `get_now` 覆寫是**讀 `context["now"]` 的 lambda**，而不是在 fixture 建立當下就把值固定；(b) 比對方式錯誤——只能比對到「分」（`strftime("%Y-%m-%d %H:%M")`），不要比對整個 `datetime` 物件（timestamptz 會帶時區偏移）。
 
 **Q5：測試之間互相影響（第二個測試看到第一個測試的資料）。**
-`conftest.py` 的 `clean_database` 是 `autouse=True`，每個測試前都會 `TRUNCATE`。若沒生效，確認這個 fixture 真的在 `tests/conftest.py` 裡，而且沒有被覆寫。
+`conftest.py` 的 `clean_photo_table` 是 `autouse=True`，每個測試前都會 TRUNCATE。若沒生效，確認這個 fixture 真的在 `tests/conftest.py` 裡，而且沒有被覆寫。
 
 **Q6：規格檔沒有英文例子，可不可以自己加一條英文 Rule？**
-**不可以。** `docs/spec/` 是唯讀的。design.md §11 明訂雙語行為用**額外的單元測試**覆蓋，這就是 `tests/test_upload_bilingual.py` 的存在理由。
+**不可以。** `docs/spec/` 是唯讀的。design.md §11 明訂雙語行為用**額外的測試**覆蓋，這就是 `tests/integration/test_upload_bilingual.py` 的存在理由。
+
+**Q7：為什麼 `wire_feature_clock` 要寫 `def wire_feature_clock(wire_fake_ai, context)`，直接 autouse 不行嗎？**
+同一 scope 的兩個 autouse fixture 誰先執行沒有可依賴的保證；顯式把 conftest 的 `wire_fake_ai` 列為參數，pytest 就必須先跑它——`get_now` 的覆寫才確定以 feature 檔這邊為準，teardown 也由它統一 `clear()`。
 
 ---
 
 ## 完成後的專案狀態
 
-第一個驗收里程碑達成：`上傳照片.feature` 的 7 條 Rule（U1〜U7）全部由自動化測試把關並通過，另外有 3 個合併格式測試與 1 個英文照片測試守住 design.md 規定但規格沒寫的行為，而且完全不依賴真的 AI 服務。系統的「上傳」功能在規格層面已經完成。測試累計 **11** 個。
+第一個驗收里程碑達成：`上傳照片.feature` 的 7 條 Rule（U1〜U7）全部由自動化測試把關並通過；規格沒寫的設計行為由 `unit/test_indexing_service_unit.py`（合併格式，P06 既有）、`integration/test_upload_bilingual.py`（英文不翻譯）、`integration/test_upload_design_rules.py`（三個守衛）續守；暫時性煙霧測試檔已安全退役。完全不依賴真的 AI 服務。系統的「上傳」功能在規格層面已經完成。測試累計 **40** 個（unit 12＋integration 28）。
