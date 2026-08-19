@@ -2,7 +2,8 @@
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事；想「順便多做一點」的時候，答案一律是「不要」。
 
-> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫步驟——(1) 全面改為 **TDD 順序**（步驟 0 先寫測試跑紅燈，再實作轉綠）；(2) 測試檔依 dev-prompt 指示分目錄：「合併順序固定」等純函式測試移到 `tests/unit/test_indexing_service_unit.py`，煙霧測試在 `tests/integration/test_upload_smoke.py`（Phase 5 已建）；(3) 原「步驟 5 在煙霧測試檔加 wire_fakes fixture」改為**擴充 conftest 既有的 `wire_fake_ai` 安全網**（Phase 5 建立；全套測試因此永不誤打真 Ollama——本 phase 接上 embeddings 後，Phase 5 改寫的兩個 201 測試若無安全網會真的呼叫 bge-m3）；(4) 測試累計數由 6 改為 **35**（Phase 5 結束為 30，含階段I review 後補的「text 全空白也 422」測試）。程式碼區塊（indexing_service／dependencies／fakes／photos）與原計畫一致。
+> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫步驟——(1) 全面改為 **TDD 順序**（步驟 0 先寫測試跑紅燈，再實作轉綠）；(2) 測試檔依 dev-prompt 指示分目錄：「合併順序固定」等純函式測試移到 `tests/unit/test_indexing_service_unit.py`，煙霧測試在 `tests/integration/test_upload_smoke.py`（Phase 5 已建）；(3) 原「步驟 5 在煙霧測試檔加 wire_fakes fixture」改為**擴充 conftest 既有的 `wire_fake_ai` 安全網**（Phase 5 建立；全套測試因此永不誤打真 Ollama——本 phase 接上 embeddings 後，Phase 5 改寫的兩個 201 測試若無安全網會真的呼叫 bge-m3）；(4) 測試累計數由 6 改為 **36**（Phase 5 結束為 30，含階段I review 後補的「text 全空白也 422」測試）。程式碼區塊（indexing_service／dependencies／fakes／photos）與原計畫一致。
+> 🔄 **2026-08-19 階段J review 後回修**：依 task review 的 Important 發現——smoke 加第 7 個測試「向量由合併內容產生而非只有文字」（U4 護欄：reviewer 以突變測試證明，原本退化成被否決的「只用 text 產向量」方案時全套測試仍全綠，因為既有 fixture 的 metadata 值都是 text 的子字串，假向量無法區分）。累計數 35→**36**。詳見階段J REP。
 
 **目標：** 把文字＋四個 metadata 欄位合併成一份 LangChain Document、轉成向量，經 repository 一次寫進資料庫，並回傳規格要求的 201 內容。上傳流程到此**完整跑通**。
 
@@ -340,6 +341,48 @@ def test_上傳成功會完整寫入並回201(client):
 
 第一行 `assert body["text"] == ...` 不用改。
 
+**(c)** 再加一個 U4 護欄測試（檔案最後；需要在檔案開頭 import 區補 `import json`、`from app.services.indexing_service import build_document, embed_document`、`from tests.fakes import FakeEmbeddings, FakeVLM`——FakeVLM 原本就有，合併成一行即可）：
+
+```python
+def test_向量由合併內容產生而非只有文字(client):
+    """Rule U4 的護欄：存入的向量＝「文字＋四欄位合併內容」的向量，
+    且不等於「只用 text」的向量（clarify 已否決的方案不得悄悄回歸）。
+
+    fixture 刻意讓 metadata 的詞（收據/Costco/咖啡/牛奶）不出現在 text 裡——
+    既有 fixture 的 metadata 值都是 text 的子字串，假向量分不出兩種實作。
+    """
+    理解結果 = PhotoUnderstanding(
+        understood=True,
+        text="超市購物的照片",
+        category="收據",
+        location="Costco",
+        items=["咖啡", "牛奶"],
+        content_time=None,
+    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(理解結果)
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+    assert response.status_code == 201
+
+    stored = json.loads(photo_repository.fetch_embedding(response.json()["id"]))
+    document = build_document(
+        text="超市購物的照片",
+        category="收據",
+        location="Costco",
+        items=["咖啡", "牛奶"],
+        content_time=None,
+    )
+    expected = embed_document(FakeEmbeddings(), document)
+    text_only = FakeEmbeddings().embed_query("超市購物的照片")
+
+    # 與期望向量逐元素比對（pgvector 以 float4 儲存，取 1e-6 容差）
+    assert max(abs(a - b) for a, b in zip(stored, expected)) < 1e-6
+    # 與「只用 text」的向量必須可區分——否則這個測試就守不住 U4
+    assert max(abs(a - b) for a, b in zip(stored, text_only)) > 1e-3
+```
+
 **影響面檢查（改完應該不用再動的檔案）**：`test_看得懂的照片回傳理解結果` 只斷言 201＋`text`＋呼叫次數 → 換成 `UploadResponse` 後依然成立，不用改；Phase 5 改寫的 `test_upload_png_understood_returns_201`／`test_upload_jpeg_understood_returns_201` 只斷言 201（＋`text`）→ 也不用改（它們如今會走完整寫入流程，靠 conftest 假件保持決定論）；`test_看不懂的照片回傳422且不儲存` 與 `test_理解結果text全空白也回422且不儲存` 走 422 短路（到不了轉向量），也不用改——而且從本 phase 起它們的 `count_photos() == 0` 斷言才真正有牙齒（Phase 5 時本來就沒有寫入路徑）。
 
 #### 步驟 0-5：跑紅燈留證據
@@ -556,7 +599,7 @@ def upload_photo(
 python -m pytest tests -q
 ```
 
-預期：**35 passed**。有紅就修到綠——但只准改「本 phase 動過的東西」，Phase 3〜5 的既有行為不得為了過測試而更動。
+預期：**36 passed**。有紅就修到綠——但只准改「本 phase 動過的東西」，Phase 3〜5 的既有行為不得為了過測試而更動。
 
 ---
 
@@ -567,7 +610,7 @@ python -m pytest tests -q
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
    pytest tests/integration/test_upload_smoke.py -v
    ```
-   預期最後一行：`6 passed`
+   預期最後一行：`7 passed`
 
 2. **indexing 單元測試全綠**
    ```bash
@@ -579,7 +622,7 @@ python -m pytest tests -q
    ```bash
    pytest -q
    ```
-   預期：`35 passed`（**測試累計數：35** ＝ Phase 5 的 30 ＋ unit 4 ＋ smoke 1）
+   預期：`36 passed`（**測試累計數：36** ＝ Phase 5 的 30 ＋ unit 4 ＋ smoke 2）
 
 4. **合併內容格式正確（中文）**（已由單元測試把關；此指令供人工複核）
    ```bash
@@ -681,4 +724,4 @@ python -m pytest tests -q
 
 ## 完成後的專案狀態
 
-`POST /photos` 已經完整可用：合格照片會被看圖、合併成 Document、轉成向量、經 repository 一次寫進資料庫，並回傳 `id`＋文字＋四欄位 metadata；中文與英文照片都能正確處理且不翻譯。規則 U1〜U7 的行為都已實作，只差用 `.feature` 檔正式驗收（Phase 7）。測試累計 **35** 個（unit 12＝8＋4；integration 23＝22＋1），全部不依賴 Ollama。
+`POST /photos` 已經完整可用：合格照片會被看圖、合併成 Document、轉成向量、經 repository 一次寫進資料庫，並回傳 `id`＋文字＋四欄位 metadata；中文與英文照片都能正確處理且不翻譯。規則 U1〜U7 的行為都已實作，只差用 `.feature` 檔正式驗收（Phase 7）。測試累計 **36** 個（unit 12＝8＋4；integration 24＝22＋2），全部不依賴 Ollama。

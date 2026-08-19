@@ -247,14 +247,14 @@ personalDocAI/
 **測試數量的累進**（每個 phase 的驗收都會叫你核對這個數字，對不上就代表漏做或多做）：
 
 > 🔄 **2026-08-19 更新（dev-prompt `phase0819.md`）**：改採 TDD——pytest 測試自 **P03** 起建立（原為 P05 起），並分 `tests/unit/` 與 `tests/integration/` 兩個子目錄；P05 之後各檔的歸屬子目錄，等各該 phase 開工前更新計畫時再定。P03/P04 之後的累計數已依此順移 +19。
-> 🔄 **2026-08-19 再更新（dev-prompt `phase0819-1.md`，P05/P06 開工前；階段I review 後 P05 smoke +1）**：P05／P06 兩列已依更新後計畫改定（TDD 單元測試計入、佔位測試改寫、conftest 假件安全網、review 後補「text 全空白也 422」），累計 **30／35**；**P07 起各列仍為舊制數字**，照慣例等各該 phase 開工前更新計畫時再重算。
+> 🔄 **2026-08-19 再更新（dev-prompt `phase0819-1.md`，P05/P06 開工前；階段I review 後 P05 smoke +1）**：P05／P06 兩列已依更新後計畫改定（TDD 單元測試計入、佔位測試改寫、conftest 假件安全網、review 後補「text 全空白也 422」），累計 **30／36**；**P07 起各列仍為舊制數字**，照慣例等各該 phase 開工前更新計畫時再重算。
 
 | Phase | 新增測試 | `pytest -q` 累計 |
 |---|---|---|
 | P03【TDD 提前】 | `unit/test_photo_repository_unit.py` 2＋`integration/test_photo_repository.py` 10 | **12** |
 | P04【TDD 提前】 | `integration/test_photos_upload.py` 7 | **19** |
 | P05 | `unit/test_vlm_service_unit.py` 6＋`integration/test_upload_smoke.py` 5（另改寫 upload 兩個佔位測試） | **30** |
-| P06 | `unit/test_indexing_service_unit.py` 4＋smoke 同檔 +1（英文斷言改 metadata 巢狀） | **35** |
+| P06 | `unit/test_indexing_service_unit.py` 4＋smoke 同檔 +2（英文斷言改 metadata 巢狀；review 後補 U4 護欄） | **36** |
 | P07 | 刪掉 smoke 6，新增 feature 7＋indexing 3＋bilingual 1 | **30** |
 | P08 | 0（不加需要真模型的測試） | **30** |
 | P09 | `test_retrieval.py` 10 | **40** |
