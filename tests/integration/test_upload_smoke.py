@@ -1,10 +1,13 @@
 """Phase 5 的暫時性測試：確認看圖有被呼叫、失敗會變成 422、中英文都能處理。"""
 
+import json
+
 from app.dependencies import get_vlm
 from app.main import app
 from app.repositories import photo_repository
+from app.services.indexing_service import build_document, embed_document
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeVLM
+from tests.fakes import FakeEmbeddings, FakeVLM
 
 PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n"  # 內容不重要，我們用假件，不會真的去看圖
@@ -119,3 +122,42 @@ def test_上傳成功會完整寫入並回201(client):
     assert row["items"] == ["可樂", "洋芋片"]
     assert row["uploaded_at"].strftime("%Y-%m-%d %H:%M") == "2026-08-18 10:00"
     assert photo_repository.fetch_embedding(body["id"]) is not None
+
+
+def test_向量由合併內容產生而非只有文字(client):
+    """Rule U4 的護欄：存入的向量＝「文字＋四欄位合併內容」的向量，
+    且不等於「只用 text」的向量（clarify 已否決的方案不得悄悄回歸）。
+
+    fixture 刻意讓 metadata 的詞（收據/Costco/咖啡/牛奶）不出現在 text 裡——
+    既有 fixture 的 metadata 值都是 text 的子字串，假向量分不出兩種實作。
+    """
+    理解結果 = PhotoUnderstanding(
+        understood=True,
+        text="超市購物的照片",
+        category="收據",
+        location="Costco",
+        items=["咖啡", "牛奶"],
+        content_time=None,
+    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(理解結果)
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+    assert response.status_code == 201
+
+    stored = json.loads(photo_repository.fetch_embedding(response.json()["id"]))
+    document = build_document(
+        text="超市購物的照片",
+        category="收據",
+        location="Costco",
+        items=["咖啡", "牛奶"],
+        content_time=None,
+    )
+    expected = embed_document(FakeEmbeddings(), document)
+    text_only = FakeEmbeddings().embed_query("超市購物的照片")
+
+    # 與期望向量逐元素比對（pgvector 以 float4 儲存，取 1e-6 容差）
+    assert max(abs(a - b) for a, b in zip(stored, expected)) < 1e-6
+    # 與「只用 text」的向量必須可區分——否則這個測試就守不住 U4
+    assert max(abs(a - b) for a, b in zip(stored, text_only)) > 1e-3
