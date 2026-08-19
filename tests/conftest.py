@@ -59,3 +59,18 @@ def client() -> TestClient:
     """可以直接呼叫自己 API 的測試用戶端（不需要真的啟動伺服器）。"""
     with TestClient(app) as test_client:
         yield test_client
+
+
+# ---------- Phase 7 追加：Gherkin 表格小工具（P12 詢問驗收也會用） ----------
+
+
+def first_row(datatable: list[list[str]]) -> dict[str, str]:
+    """把 Gherkin 表格的第一列資料轉成字典（第 0 列是欄位名）。"""
+    header, *rows = datatable
+    return dict(zip(header, rows[0]))
+
+
+def split_items(cell: str) -> list[str]:
+    """規格表格用「、」分隔多個物品，例如「可樂、洋芋片」。"""
+    cell = cell.strip()
+    return [part for part in cell.split("、") if part] if cell else []
