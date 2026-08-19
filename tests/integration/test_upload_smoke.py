@@ -80,4 +80,19 @@ def test_非圖片格式不會呼叫看圖(client):
     )
 
     assert response.status_code == 415
-    assert fake.calls == 0  # 415 之後完全不進入後續處理
+    assert fake.calls == 0  # 415 之後不會呼叫 understand()
+
+
+def test_理解結果text全空白也回422且不儲存(client):
+    """Rule U7 的另一半：understood=True 但 text 全空白，一樣視為無法理解（見常見問題 Q5）。"""
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
+        PhotoUnderstanding(understood=True, text="   ")
+    )
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "VLM 無法理解照片內容，未儲存任何資料"
+    assert photo_repository.count_photos() == 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import date, datetime
 from typing import Protocol
 
@@ -11,6 +12,8 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from app.core import config
+
+logger = logging.getLogger(__name__)
 
 
 class PhotoUnderstanding(BaseModel):
@@ -86,14 +89,17 @@ class OllamaVLM:
                 },
             ]
         )
-        # 失敗就再試一次；仍失敗一律視為「看不懂」
+        # 失敗就再試一次；仍失敗一律視為「看不懂」——但要留 log，
+        # 不然「Ollama 沒開」「模型名打錯」「格式驗證不過」全都無聲變成 422
         for _ in range(2):
             try:
                 result = self._model.invoke([message])
             except Exception:
+                logger.warning("VLM 呼叫失敗，視為看不懂", exc_info=True)
                 continue
             if isinstance(result, PhotoUnderstanding):
                 return result
+        logger.warning("VLM 未回傳有效的結構化結果，視為看不懂")
         return PhotoUnderstanding(understood=False)
 
 
