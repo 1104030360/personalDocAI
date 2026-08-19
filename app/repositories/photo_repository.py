@@ -1,14 +1,15 @@
 """全系統唯一寫 SQL 的模組：psycopg 3 ＋ 手寫 SQL。
 
 routers 與 services 一律呼叫這裡的函式，不得自己寫 SQL。
-（Phase 9 會在這個檔案加上兩條檢索查詢。）
+本檔含上傳寫入與兩條檢索查詢（search_by_metadata／search_by_vector，Phase 9 加入）。
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.core import config
 from app.db.session import get_connection
 
 # 每次查詢都取回的欄位，固定順序，避免各處寫法不一致
@@ -102,3 +103,87 @@ def clear_photos() -> None:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("TRUNCATE TABLE photo RESTART IDENTITY;")
+
+
+def search_by_metadata(
+    *,
+    category: str | None,
+    location: str | None,
+    item: str | None,
+    recent: bool,
+    today: date,
+) -> list[dict[str, Any]]:
+    """條件查詢：把 route 抽出來的條件全部用 AND 串起來。
+
+    沒有給的條件就不加進 WHERE；一個條件都沒有就等於查全部。
+
+    比對一律用 ILIKE（不分大小寫），所以 'target' 找得到 'Target'——
+    這是雙語支援的一部分（design.md §9）。ILIKE 不帶萬用字元時，
+    效果就是「不分大小寫的等於」，不會變成模糊比對。
+    """
+    conditions: list[str] = []
+    params: dict[str, Any] = {}
+
+    if category:
+        conditions.append("category ILIKE %(category)s")
+        params["category"] = category
+    if location:
+        conditions.append("location ILIKE %(location)s")
+        params["location"] = location
+    if item:
+        # items 是陣列：unnest 把它攤成一列一個元素，逐一做 ILIKE 比對
+        conditions.append(
+            "EXISTS (SELECT 1 FROM unnest(items) AS i WHERE i ILIKE %(item)s)"
+        )
+        params["item"] = item
+    if recent:
+        conditions.append(
+            "COALESCE(content_time, uploaded_at::date) >= %(since)s"
+        )
+        params["since"] = today - timedelta(days=config.RECENT_DAYS)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"SELECT {PHOTO_COLUMNS} FROM photo {where} ORDER BY id;"
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+def search_by_vector(
+    *,
+    embedding: list[float],
+    recent: bool,
+    today: date,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """語意查詢：找向量最接近問題的幾張照片。
+
+    <=> 是 pgvector 的 cosine 距離運算子，數字越小代表意思越接近。
+    因為向量是多語模型產生的，英文問題也可能撈到中文內容的照片。
+    """
+    params: dict[str, Any] = {
+        "qvec": to_vector_literal(embedding),
+        "limit": limit or config.TOP_K,
+    }
+    conditions: list[str] = []
+    if recent:
+        conditions.append(
+            "COALESCE(content_time, uploaded_at::date) >= %(since)s"
+        )
+        params["since"] = today - timedelta(days=config.RECENT_DAYS)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"""
+        SELECT {PHOTO_COLUMNS}
+        FROM photo
+        {where}
+        ORDER BY embedding <=> %(qvec)s::vector
+        LIMIT %(limit)s;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
