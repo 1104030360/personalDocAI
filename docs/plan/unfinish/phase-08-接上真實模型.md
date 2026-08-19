@@ -168,7 +168,7 @@ ls -lh /tmp/real_photo.png
 
 ```bash
 cat > /tmp/receipt.html <<'HTML'
-<html><body style="font-family:-apple-system;width:400px;padding:16px">
+<html><head><meta charset="utf-8"></head><body style="font-family:-apple-system;width:400px;padding:16px">
 <h2>Target</h2><p>2026-08-10</p>
 <table width="100%"><tr><td>可樂</td><td align="right">$25</td></tr>
 <tr><td>洋芋片</td><td align="right">$40</td></tr></table>
