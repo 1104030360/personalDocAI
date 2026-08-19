@@ -8,15 +8,23 @@ design.md §4.2：get_vlm / get_embeddings / get_now 是三個主要注入點；
 
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 
-from app.services import vlm_service
+from langchain_core.embeddings import Embeddings
+
+from app.services import indexing_service, vlm_service
 
 
 @lru_cache(maxsize=1)
 def _ollama_vlm() -> vlm_service.OllamaVLM:
     """只建立一次，之後重複使用（建立物件本身不會連線）。"""
     return vlm_service.OllamaVLM()
+
+
+@lru_cache(maxsize=1)
+def _ollama_embeddings() -> Embeddings:
+    return indexing_service.build_ollama_embeddings()
 
 
 def get_vlm() -> vlm_service.VLMClient:
@@ -26,3 +34,16 @@ def get_vlm() -> vlm_service.VLMClient:
     那個覆寫只活在測試裡，不影響 uvicorn。
     """
     return _ollama_vlm()
+
+
+def get_embeddings() -> Embeddings:
+    return _ollama_embeddings()
+
+
+def get_now() -> datetime | None:
+    """『現在時間』。
+
+    正式執行回傳 None，代表上傳時間交給資料庫的 now() 自動記錄。
+    測試需要固定時間時，用 dependency_overrides 換成 FixedClock。
+    """
+    return None

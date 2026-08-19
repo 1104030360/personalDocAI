@@ -1,22 +1,30 @@
 """上傳照片的 router：POST /photos。"""
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from langchain_core.embeddings import Embeddings
 
 from app.core import config
-from app.dependencies import get_vlm
-from app.services import vlm_service
+from app.dependencies import get_embeddings, get_now, get_vlm
+from app.repositories import photo_repository
+from app.schemas.photo import PhotoMetadata, UploadResponse
+from app.services import indexing_service, vlm_service
 
 router = APIRouter(tags=["photos"])
 
 
-@router.post("/photos", status_code=201)
+@router.post("/photos", status_code=201, response_model=UploadResponse)
 def upload_photo(
     file: UploadFile = File(...),
-    # Depends(get_vlm)＝請框架給一個會看圖的。正式是 OllamaVLM；
-    # 只有 pytest 才會覆寫成 FakeVLM。型別寫 VLMClient 只是合約，追程式看 OllamaVLM。
     vlm: vlm_service.VLMClient = Depends(get_vlm),
-) -> dict:
-    """上傳照片：格式檢查 → 看圖 →（Phase 6）轉向量、寫入、回 201。"""
+    embeddings: Embeddings = Depends(get_embeddings),
+    now: datetime | None = Depends(get_now),
+) -> UploadResponse:
+    """上傳照片：格式檢查 → 看圖 → 轉向量 → 寫入 → 回 201。
+
+    全程在同一個請求內完成；任何一步失敗＝整筆不存在。
+    """
     # ① 格式檢查
     if file.content_type not in config.ALLOWED_CONTENT_TYPES:
         raise HTTPException(
@@ -35,12 +43,37 @@ def upload_photo(
             detail="VLM 無法理解照片內容，未儲存任何資料",
         )
 
-    # TODO(Phase 6)：indexing_service 轉向量 → photo_repository 寫入 → 回 201 正式回應
-    return {
-        "understood": True,
-        "text": understanding.text,
-        "category": understanding.category,
-        "location": understanding.location,
-        "items": understanding.items,
-        "content_time": understanding.content_time,
-    }
+    # ③ 合併成 Document，再轉成向量
+    content_time = vlm_service.parse_content_time(understanding.content_time)
+    content_time_text = content_time.isoformat() if content_time else None
+    document = indexing_service.build_document(
+        text=understanding.text,
+        category=understanding.category,
+        location=understanding.location,
+        items=understanding.items,
+        content_time=content_time_text,
+    )
+    embedding = indexing_service.embed_document(embeddings, document)
+
+    # ④ 一條 INSERT 寫入
+    row = photo_repository.insert_photo(
+        text=understanding.text,
+        category=understanding.category,
+        location=understanding.location,
+        items=understanding.items,
+        content_time=content_time,
+        embedding=embedding,
+        uploaded_at=now,
+    )
+
+    # ⑤ 回 201
+    return UploadResponse(
+        id=row["id"],
+        text=row["text"],
+        metadata=PhotoMetadata(
+            category=row["category"],
+            location=row["location"],
+            items=row["items"],
+            content_time=row["content_time"].isoformat() if row["content_time"] else None,
+        ),
+    )
