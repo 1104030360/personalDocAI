@@ -7,6 +7,7 @@ import math
 from datetime import datetime
 
 from app.core import config
+from app.services.ask_workflow import RouteDecision
 from app.services.vlm_service import PhotoUnderstanding
 
 
@@ -118,3 +119,39 @@ def understanding_for_text(text: str) -> PhotoUnderstanding:
             "請到 tests/fakes.py 的 KNOWN_UNDERSTANDINGS 補一筆。"
         )
     return KNOWN_UNDERSTANDINGS[text]
+
+
+# 規格例子與雙語測試裡的問題 → 應該得到的判斷結果
+DEFAULT_ROUTE_DECISIONS: dict[str, RouteDecision] = {
+    # 規格 .feature 的兩個中文例子
+    "有哪些在 Target 拍的收據？": RouteDecision(
+        mode="metadata", category="收據", location="Target", recent=False
+    ),
+    "我最近買過什麼飲料？": RouteDecision(mode="vector", recent=True),
+    # 雙語測試用的英文問題
+    "What drinks did I buy recently?": RouteDecision(mode="vector", recent=True),
+    # 英文條件型問題：條件值照原文抽（小寫 target），交給 SQL 的 ILIKE 去比對。
+    # 注意這裡刻意沒抽 category="receipt"——抽了也對不到中文的「收據」，
+    # 因為系統不做跨語言翻譯對映（design.md §8.3 的已知限制）。
+    "Which receipts were taken at target?": RouteDecision(
+        mode="metadata", location="target", recent=False
+    ),
+}
+
+
+class FakeRouter:
+    """照例子指定回查法。
+
+    遇到沒登記過的問題（例如模糊問題「幫我找找之前那個」）就丟例外，
+    模擬「LLM 無法判斷」，用來驗證 fallback 一定會走語意查詢。
+    """
+
+    def __init__(self, decisions: dict[str, RouteDecision] | None = None) -> None:
+        self.decisions = (
+            DEFAULT_ROUTE_DECISIONS if decisions is None else decisions
+        )
+
+    def route(self, question: str) -> RouteDecision:
+        if question not in self.decisions:
+            raise RuntimeError(f"無法判斷問題類型：{question}")
+        return self.decisions[question]
