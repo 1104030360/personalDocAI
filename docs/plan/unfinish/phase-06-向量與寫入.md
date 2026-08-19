@@ -2,7 +2,7 @@
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事；想「順便多做一點」的時候，答案一律是「不要」。
 
-> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫步驟——(1) 全面改為 **TDD 順序**（步驟 0 先寫測試跑紅燈，再實作轉綠）；(2) 測試檔依 dev-prompt 指示分目錄：「合併順序固定」等純函式測試移到 `tests/unit/test_indexing_service_unit.py`，煙霧測試在 `tests/integration/test_upload_smoke.py`（Phase 5 已建）；(3) 原「步驟 5 在煙霧測試檔加 wire_fakes fixture」改為**擴充 conftest 既有的 `wire_fake_ai` 安全網**（Phase 5 建立；全套測試因此永不誤打真 Ollama——本 phase 接上 embeddings 後，Phase 5 改寫的兩個 201 測試若無安全網會真的呼叫 bge-m3）；(4) 測試累計數由 6 改為 **34**（Phase 5 結束為 29）。程式碼區塊（indexing_service／dependencies／fakes／photos）與原計畫一致。
+> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫步驟——(1) 全面改為 **TDD 順序**（步驟 0 先寫測試跑紅燈，再實作轉綠）；(2) 測試檔依 dev-prompt 指示分目錄：「合併順序固定」等純函式測試移到 `tests/unit/test_indexing_service_unit.py`，煙霧測試在 `tests/integration/test_upload_smoke.py`（Phase 5 已建）；(3) 原「步驟 5 在煙霧測試檔加 wire_fakes fixture」改為**擴充 conftest 既有的 `wire_fake_ai` 安全網**（Phase 5 建立；全套測試因此永不誤打真 Ollama——本 phase 接上 embeddings 後，Phase 5 改寫的兩個 201 測試若無安全網會真的呼叫 bge-m3）；(4) 測試累計數由 6 改為 **35**（Phase 5 結束為 30，含階段I review 後補的「text 全空白也 422」測試）。程式碼區塊（indexing_service／dependencies／fakes／photos）與原計畫一致。
 
 **目標：** 把文字＋四個 metadata 欄位合併成一份 LangChain Document、轉成向量，經 repository 一次寫進資料庫，並回傳規格要求的 201 內容。上傳流程到此**完整跑通**。
 
@@ -10,7 +10,7 @@
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 3**（`photo_repository.insert_photo` 可用）、**Phase 5**（看圖服務與 `POST /photos` 的前兩關；`pytest -q` 現況 **29 passed**；`tests/fakes.py`、conftest 的 `wire_fake_ai`／`client` fixture 已存在）。
+- 需要已完成的 phase：**Phase 3**（`photo_repository.insert_photo` 可用）、**Phase 5**（看圖服務與 `POST /photos` 的前兩關；`pytest -q` 現況 **30 passed**；`tests/fakes.py`、conftest 的 `wire_fake_ai`／`client` fixture 已存在）。
 - 現況檔案狀態：`app/services/indexing_service.py` 是空檔案（本 phase 填入）；`app/schemas/photo.py` 的 `UploadResponse`／`PhotoMetadata` **已在 Phase 2 寫好**（直接取用）。
 - 環境：pytest 仍然**不需要（也絕不可以）呼叫真的 Ollama**（本 phase 用假的 embedding）；但 **PostgreSQL 必須在跑**——本 phase 會真的把資料寫進測試資料庫。沒在跑就先執行 `brew services start postgresql@17`（Phase 1 裝的）。
 - 每次開工先執行：
@@ -336,7 +336,7 @@ def test_上傳成功會完整寫入並回201(client):
 
 第一行 `assert body["text"] == ...` 不用改。
 
-**影響面檢查（改完應該不用再動的檔案）**：`test_看得懂的照片回傳理解結果` 只斷言 201＋`text`＋呼叫次數 → 換成 `UploadResponse` 後依然成立，不用改；Phase 5 改寫的 `test_upload_png_understood_returns_201`／`test_upload_jpeg_understood_returns_201` 只斷言 201（＋`text`）→ 也不用改（它們如今會走完整寫入流程，靠 conftest 假件保持決定論）。
+**影響面檢查（改完應該不用再動的檔案）**：`test_看得懂的照片回傳理解結果` 只斷言 201＋`text`＋呼叫次數 → 換成 `UploadResponse` 後依然成立，不用改；Phase 5 改寫的 `test_upload_png_understood_returns_201`／`test_upload_jpeg_understood_returns_201` 只斷言 201（＋`text`）→ 也不用改（它們如今會走完整寫入流程，靠 conftest 假件保持決定論）；`test_看不懂的照片回傳422且不儲存` 與 `test_理解結果text全空白也回422且不儲存` 走 422 短路（到不了轉向量），也不用改——而且從本 phase 起它們的 `count_photos() == 0` 斷言才真正有牙齒（Phase 5 時本來就沒有寫入路徑）。
 
 #### 步驟 0-5：跑紅燈留證據
 
@@ -552,7 +552,7 @@ def upload_photo(
 python -m pytest tests -q
 ```
 
-預期：**34 passed**。有紅就修到綠——但只准改「本 phase 動過的東西」，Phase 3〜5 的既有行為不得為了過測試而更動。
+預期：**35 passed**。有紅就修到綠——但只准改「本 phase 動過的東西」，Phase 3〜5 的既有行為不得為了過測試而更動。
 
 ---
 
@@ -563,7 +563,7 @@ python -m pytest tests -q
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
    pytest tests/integration/test_upload_smoke.py -v
    ```
-   預期最後一行：`5 passed`
+   預期最後一行：`6 passed`
 
 2. **indexing 單元測試全綠**
    ```bash
@@ -575,7 +575,7 @@ python -m pytest tests -q
    ```bash
    pytest -q
    ```
-   預期：`34 passed`（**測試累計數：34** ＝ Phase 5 的 29 ＋ unit 4 ＋ smoke 1）
+   預期：`35 passed`（**測試累計數：35** ＝ Phase 5 的 30 ＋ unit 4 ＋ smoke 1）
 
 4. **合併內容格式正確（中文）**（已由單元測試把關；此指令供人工複核）
    ```bash
@@ -673,4 +673,4 @@ python -m pytest tests -q
 
 ## 完成後的專案狀態
 
-`POST /photos` 已經完整可用：合格照片會被看圖、合併成 Document、轉成向量、經 repository 一次寫進資料庫，並回傳 `id`＋文字＋四欄位 metadata；中文與英文照片都能正確處理且不翻譯。規則 U1〜U7 的行為都已實作，只差用 `.feature` 檔正式驗收（Phase 7）。測試累計 **34** 個（unit 12＝8＋4；integration 22＝21＋1），全部不依賴 Ollama。
+`POST /photos` 已經完整可用：合格照片會被看圖、合併成 Document、轉成向量、經 repository 一次寫進資料庫，並回傳 `id`＋文字＋四欄位 metadata；中文與英文照片都能正確處理且不翻譯。規則 U1〜U7 的行為都已實作，只差用 `.feature` 檔正式驗收（Phase 7）。測試累計 **35** 個（unit 12＝8＋4；integration 23＝22＋1），全部不依賴 Ollama。

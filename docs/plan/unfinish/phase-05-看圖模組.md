@@ -2,7 +2,8 @@
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事；想「順便多做一點」的時候，答案一律是「不要」。
 
-> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫步驟——(1) 全面改為 **TDD 順序**（步驟 0 先寫測試跑紅燈，再實作轉綠，沿用 Phase 3／4 慣例）；(2) `tests/conftest.py` **已存在**（Phase 3 版），本 phase 是「擴充」不是「建立」；(3) 測試檔依 dev-prompt 指示分目錄——整合測試放 `tests/integration/`、單元測試放 `tests/unit/`；(4) 新增「改寫兩個佔位 201 測試」與「conftest 假件安全網」兩個步驟（原計畫沒發現的陷阱，見步驟 0-3 與 0-6）；(5) 測試累計數由 4 改為 **29**（現況已有 19 個）。程式碼區塊（vlm_service／dependencies／photos／fakes）與原計畫一致，API 已於 2026-08-19 對 LangChain 官方文件複核（langchain-core 1.5.6／langchain-ollama 1.1.0，來源連結見階段H report）。
+> 🔄 **2026-08-19 開工前更新**：對照專案現況重寫步驟——(1) 全面改為 **TDD 順序**（步驟 0 先寫測試跑紅燈，再實作轉綠，沿用 Phase 3／4 慣例）；(2) `tests/conftest.py` **已存在**（Phase 3 版），本 phase 是「擴充」不是「建立」；(3) 測試檔依 dev-prompt 指示分目錄——整合測試放 `tests/integration/`、單元測試放 `tests/unit/`；(4) 新增「改寫兩個佔位 201 測試」與「conftest 假件安全網」兩個步驟（原計畫沒發現的陷阱，見步驟 0-3 與 0-6）；(5) 測試累計數由 4 改為 **30**（現況已有 19 個）。程式碼區塊（vlm_service／dependencies／photos／fakes）與原計畫一致，API 已於 2026-08-19 對 LangChain 官方文件複核（langchain-core 1.5.6／langchain-ollama 1.1.0，來源連結見階段H report）。
+> 🔄 **2026-08-19 階段I review 後回修**：依 task review 兩項 Important 發現——(a) 煙霧測試加第 5 個「text 全空白也 422」（該分支原本 mutation 存活、零覆蓋）；(b) `OllamaVLM` 失敗路徑加 `logger.warning`（行為不變，只補可觀測性，對齊 design.md「不吞錯，log 留原始錯誤」）。累計數 29→**30**。詳見階段I REP。
 
 **目標：** 寫出 `app/services/vlm_service.py`——把照片變成「文字描述＋四個 metadata 欄位」的服務，填入 `app/dependencies.py` 這個依賴注入點，並把「看不懂就 422、什麼都不存」接到 router 上。本 phase **測試**用假件驗收（不需要 Ollama 在跑）；正式程式裡的看圖實作已經是 `OllamaVLM`。
 
@@ -220,7 +221,7 @@ def test_parse_content_time_空值回None():
     assert parse_content_time("") is None
 ```
 
-#### 步驟 0-5：建立暫時的煙霧測試 `tests/integration/test_upload_smoke.py`（4 個）
+#### 步驟 0-5：建立暫時的煙霧測試 `tests/integration/test_upload_smoke.py`（5 個）
 
 （「煙霧測試」＝最粗略的「通電看會不會冒煙」測試。Phase 7 會被正式的規格測試取代，這個檔案屆時會被刪掉。放 `tests/integration/`——它打 API 且驗資料庫。）
 
@@ -307,7 +308,22 @@ def test_非圖片格式不會呼叫看圖(client):
     )
 
     assert response.status_code == 415
-    assert fake.calls == 0  # 415 之後完全不進入後續處理
+    assert fake.calls == 0  # 415 之後不會呼叫 understand()
+
+
+def test_理解結果text全空白也回422且不儲存(client):
+    """Rule U7 的另一半：understood=True 但 text 全空白，一樣視為無法理解（見常見問題 Q5）。"""
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
+        PhotoUnderstanding(understood=True, text="   ")
+    )
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "VLM 無法理解照片內容，未儲存任何資料"
+    assert photo_repository.count_photos() == 0
 ```
 
 #### 步驟 0-6：改寫 `tests/integration/test_photos_upload.py` 的兩個佔位測試
@@ -383,6 +399,7 @@ python -m pytest tests -q
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import date, datetime
 from typing import Protocol
 
@@ -391,6 +408,8 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from app.core import config
+
+logger = logging.getLogger(__name__)
 
 
 class PhotoUnderstanding(BaseModel):
@@ -466,14 +485,17 @@ class OllamaVLM:
                 },
             ]
         )
-        # 失敗就再試一次；仍失敗一律視為「看不懂」
+        # 失敗就再試一次；仍失敗一律視為「看不懂」——但要留 log，
+        # 不然「Ollama 沒開」「模型名打錯」「格式驗證不過」全都無聲變成 422
         for _ in range(2):
             try:
                 result = self._model.invoke([message])
             except Exception:
+                logger.warning("VLM 呼叫失敗，視為看不懂", exc_info=True)
                 continue
             if isinstance(result, PhotoUnderstanding):
                 return result
+        logger.warning("VLM 未回傳有效的結構化結果，視為看不懂")
         return PhotoUnderstanding(understood=False)
 
 
@@ -591,7 +613,7 @@ def upload_photo(
 python -m pytest tests -q
 ```
 
-預期：**29 passed**。有紅就修到綠——但只准改「本 phase 動過的東西」，Phase 3／4 的既有行為不得為了過測試而更動。
+預期：**30 passed**。有紅就修到綠——但只准改「本 phase 動過的東西」，Phase 3／4 的既有行為不得為了過測試而更動。
 
 ---
 
@@ -602,7 +624,7 @@ python -m pytest tests -q
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
    pytest tests/integration/test_upload_smoke.py -v
    ```
-   預期最後一行：`4 passed`
+   預期最後一行：`5 passed`
 
 2. **單元測試全綠**
    ```bash
@@ -614,7 +636,7 @@ python -m pytest tests -q
    ```bash
    pytest -q
    ```
-   預期：`29 passed`（**測試累計數：29** ＝ 原 19〔其中 2 個佔位測試改寫〕＋ unit 6 ＋ smoke 4）
+   預期：`30 passed`（**測試累計數：30** ＝ 原 19〔其中 2 個佔位測試改寫〕＋ unit 6 ＋ smoke 5）
 
 4. **`PhotoUnderstanding` 真的只有六個欄位**（已由單元測試把關；此指令供人工複核）
    ```bash
@@ -688,4 +710,4 @@ PostgreSQL 沒在跑（conftest 的 `clean_photo_table` 是 `autouse=True`，每
 
 ## 完成後的專案狀態
 
-上傳流程已經走到第二關：格式合格的照片會交給 `services/vlm_service.py`，看不懂／呼叫失敗一律 422 且資料庫維持 0 筆（規則 U7 已經成立）；看得懂的照片能拿到結構化結果，**中英文照片都用自己的語言描述**，但還沒轉成向量、也還沒寫進資料庫。測試累計 **29** 個（unit 8＝原 2＋新 6；integration 21＝原 17〔含 2 個改寫〕＋smoke 4），全部不依賴 Ollama。
+上傳流程已經走到第二關：格式合格的照片會交給 `services/vlm_service.py`，看不懂／呼叫失敗一律 422 且資料庫維持 0 筆（規則 U7 已經成立）；看得懂的照片能拿到結構化結果，**中英文照片都用自己的語言描述**，但還沒轉成向量、也還沒寫進資料庫。測試累計 **30** 個（unit 8＝原 2＋新 6；integration 22＝原 17〔含 2 個改寫〕＋smoke 5），全部不依賴 Ollama。
