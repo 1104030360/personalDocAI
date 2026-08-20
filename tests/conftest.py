@@ -4,7 +4,7 @@ import os
 
 # 一定要在 import app.* 之前設定：app/core/config.py 在 import 時讀環境變數，
 # 而 load_dotenv() 不會覆蓋已存在的環境變數，所以這裡先寫入的測試庫 URL 會生效。
-TEST_DATABASE_URL = "postgresql://localhost:5433/visual_memory_test"
+TEST_DATABASE_URL = "postgresql://localhost:5433/PersonalDocAI_test"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 import pytest  # noqa: E402  （import 順序刻意如此，見上方註解）
@@ -18,8 +18,8 @@ config.DATABASE_URL = TEST_DATABASE_URL
 @pytest.fixture(autouse=True)
 def clean_photo_table():
     """每個測試開始前清空 photo 表，確保測試彼此獨立。"""
-    # 絕不清到正式庫：URL 必須含 visual_memory_test 才動手
-    assert "visual_memory_test" in config.DATABASE_URL
+    # 絕不清到正式庫：URL 必須含 PersonalDocAI_test 才動手
+    assert "PersonalDocAI_test" in config.DATABASE_URL
     from app.repositories import photo_repository as repo
 
     repo.clear_photos()
@@ -32,9 +32,9 @@ from datetime import datetime  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.dependencies import get_embeddings, get_now, get_vlm  # noqa: E402
+from app.dependencies import get_answerer, get_embeddings, get_now, get_router, get_vlm  # noqa: E402
 from app.main import app  # noqa: E402
-from tests.fakes import FakeEmbeddings, FakeVLM, FixedClock  # noqa: E402
+from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter, FakeVLM, FixedClock  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -46,10 +46,14 @@ def wire_fake_ai():
     - get_vlm 預設「看不懂」假件（要看得懂就覆寫成 FakeVLM(某理解結果)）
     - get_embeddings 預設 FakeEmbeddings（決定論向量）
     - get_now 預設固定時鐘 2026-08-18 10:00（對應規格 Given 的現在時間）
+    - get_router 預設 FakeRouter（照登記的問題回查法，沒登記就丟例外模擬無法判斷）
+    - get_answerer 預設 FakeAnswerLLM（拿檢索結果模板化回答，不呼叫真 LLM）
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM()
     app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
     app.dependency_overrides[get_now] = FixedClock(datetime(2026, 8, 18, 10, 0))
+    app.dependency_overrides[get_router] = lambda: FakeRouter()
+    app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
     yield
     app.dependency_overrides.clear()
 

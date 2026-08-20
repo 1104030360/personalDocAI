@@ -84,6 +84,57 @@ class OllamaRouter:
         return self._model.invoke([message])
 
 
+ANSWER_PROMPT = """你要根據「檢索到的照片內容」回答使用者的問題。
+
+三條鐵律：
+1. 只能依據下面提供的照片內容回答，不得使用任何外部知識補充。
+2. 如果下面沒有任何照片內容，就直接回覆「查無相關照片」的意思，
+   絕對不可以虛構任何照片或內容。
+3. **回答語言必須跟隨使用者提問的語言**：
+   - 使用者用中文問 → 用繁體中文回答。
+   - 使用者用英文問（例如 "What drinks did I buy recently?"）→ 用英文回答。
+   照片內容本身是什麼語言就照抄什麼語言，不要翻譯照片內容；
+   只有你自己寫的句子要跟隨提問語言。
+   直接回答，不要說明你的推理過程。
+
+使用者的問題：{question}
+
+檢索到的照片內容：
+{context}
+"""
+
+
+class AnswerClient(Protocol):
+    """產生回答的介面。正式用 OllamaAnswerer，測試用 FakeAnswerLLM。"""
+
+    def answer(self, question: str, documents: list[Document]) -> str:
+        ...
+
+
+class OllamaAnswerer:
+    """用本機 Ollama 的模型依照片內容產生回答。"""
+
+    def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
+        self._model = ChatOllama(
+            model=model or config.LLM_MODEL,
+            base_url=base_url or config.OLLAMA_BASE_URL,
+            temperature=0,
+        )
+
+    def answer(self, question: str, documents: list[Document]) -> str:
+        if documents:
+            context = "\n\n".join(
+                f"[照片 {doc.metadata['id']}]\n{doc.page_content}" for doc in documents
+            )
+        else:
+            context = "（沒有找到任何照片 / no photos found）"
+
+        message = HumanMessage(
+            content=ANSWER_PROMPT.format(question=question, context=context)
+        )
+        return self._model.invoke([message]).text
+
+
 # ------------------------------ 流程狀態 ------------------------------
 class AskState(TypedDict):
     """在流程圖裡一路傳下去的資料。"""
@@ -100,6 +151,7 @@ class AskDeps:
     """詢問流程要用到的外部相依，全部從外面注入，測試才好換成假件。"""
 
     router: RouterClient
+    answerer: AnswerClient
     embeddings: Embeddings
     today: date                  # 詢問當下的日期，供 30 天過濾使用
 
@@ -150,10 +202,15 @@ def build_workflow(deps: AskDeps):
     def retrieve_vector_node(state: AskState) -> dict[str, Any]:
         return _retrieve(state, "vector")
 
+    def generate_node(state: AskState) -> dict[str, Any]:
+        """只依撈到的照片內容產生回答；撈不到就由 LLM 回覆查無相關照片。"""
+        return {"answer": deps.answerer.answer(state["question"], state["retrieved"])}
+
     graph = StateGraph(AskState)
     graph.add_node("route", route_node)
     graph.add_node("retrieve_metadata", retrieve_metadata_node)
     graph.add_node("retrieve_vector", retrieve_vector_node)
+    graph.add_node("generate", generate_node)
 
     graph.add_edge(START, "route")
     graph.add_conditional_edges(
@@ -161,9 +218,9 @@ def build_workflow(deps: AskDeps):
         pick_branch,
         {"metadata": "retrieve_metadata", "vector": "retrieve_vector"},
     )
-    # TODO(Phase 11)：兩條查詢接到 generate 節點，再進 END
-    graph.add_edge("retrieve_metadata", END)
-    graph.add_edge("retrieve_vector", END)
+    graph.add_edge("retrieve_metadata", "generate")
+    graph.add_edge("retrieve_vector", "generate")
+    graph.add_edge("generate", END)
 
     return graph.compile()
 

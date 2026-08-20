@@ -8,7 +8,11 @@
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 12**（12 條 Rule 全綠、測試累計 38）。
+- 需要已完成的 phase：**Phase 12**（12 條 Rule 全綠、測試累計 **67**）。
+- 開工前基線（2026-08-19 實查）：`pytest -q` = 67 passed；步驟 2 檢查腳本引用的事實全數核對過（`db/schema.sql` 存在、requirements 無雲端關鍵字、`PhotoMetadata` 恰四欄、ILIKE 3 處、端點恰 3 個、空殼三者不存在、`app/` 無 user 字樣）；conftest 的 `wire_fake_ai` 安全網已涵蓋**五個**注入點（P12 步驟 0 完成）；CLAUDE.md「指令」章節**已是整併後的最終版**；本機 Ollama 為 **App 版**（不歸 brew services 管）。
+- 📌 **來自 P11/P12 輪（2026-08-19 階段U/V 獨立 review）的遞延事項，已轉為本計畫步驟 0**：
+  1. 【Important】`search_by_metadata` 的 `category ILIKE` 過濾目前全套件無任何斷言守護（變異測試強制 `category=None` 仍全綠）——以**獨立新測試**補洞（自備資料、不動既有 `三張規格照片` fixture，避免連鎖影響既有 10 個檢索測試）。
+  2. 【Minor 清理】`tests/integration/test_ask_feature.py` 的 embed 等價複製、冗餘覆寫兩行、`app/services/ask_workflow.py` 三處施工期註記。
 - 環境：測試資料庫可用；最後的煙霧測試需要 Ollama 真的在跑。
 - 每次開工先執行：
   ```bash
@@ -53,33 +57,47 @@
 
 ## 逐步驟操作
 
-### 步驟 1：建立 `tests/test_error_paths.py`
+### 步驟 0：P11/P12 輪遞延事項收整（先做；改完全量 67 → **68 passed**）
+
+1. **補 category 過濾的守護測試**（📌ᵢ）：在 `tests/integration/test_retrieval.py` 檔尾加一個**獨立**測試（`_insert`／`metadata_search`／`QueryFilters`／`TODAY`／`NOW`／`date` 皆為該檔既有名稱，不需新 import）：
+
+```python
+def test_條件查詢依category過濾():
+    """守住 search_by_metadata 的 category ILIKE——P11/P12 輪變異測試揭露此前無人守護。"""
+    收據id = _insert("在 Target 購買可樂的收據", "收據", "Target",
+                     ["可樂"], date(2026, 8, 10), NOW)
+    _insert("海邊的風景照", "風景", "海邊", [], None, NOW)
+
+    documents = metadata_search(QueryFilters(category="收據"), TODAY)
+
+    assert [doc.metadata["id"] for doc in documents] == [收據id]
+```
+
+2. **三項 Minor 清理**（📌ᵢᵢ；全部零行為差異，改完全量必須仍綠）：
+   - `tests/integration/test_ask_feature.py` 的 `建立照片`：`embedding=embeddings.embed_query(document.page_content)` 改為 `embedding=indexing_service.embed_document(embeddings, document)`，上一行註解改成「向量的產生直接復用上傳路徑的 embed_document，讓一致性由程式保證」。
+   - 同檔 `wire_ask_fakes`：刪掉與 conftest 安全網重複的 `get_router`／`get_answerer` 兩行覆寫（保留 `get_now` 接 context 那行），docstring 對應改寫；import 行同步刪掉因此不再使用的名稱（`get_answerer`、`get_router`、`FakeAnswerLLM`、`FakeRouter`；`FakeEmbeddings` 仍在 `建立照片` 使用要留下）。
+   - `app/services/ask_workflow.py`：刪三處施工期註記（`# ← 本 phase 新增`、`# ← 新增`、兩行 `# ← 改成接到 generate`）——**只刪註解，程式一字不動**。
+
+3. 跑 `pytest -q` 確認 **68 passed**（67＋category 守護 1；三項清理零增減）。
+
+### 步驟 1：建立 `tests/integration/test_error_paths.py`
 
 ```python
 """design.md §10 錯誤處理總表的逐列驗證。"""
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core import config
-from app.dependencies import (
-    get_answerer,
-    get_embeddings,
-    get_now,
-    get_router,
-    get_vlm,
-)
+from app.dependencies import get_embeddings, get_router, get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter, FakeVLM
-
-NOW = datetime(2026, 8, 18, 10, 0)
+from tests.fakes import FakeVLM
 
 TARGET_RECEIPT = PhotoUnderstanding(
     understood=True,
@@ -90,15 +108,14 @@ TARGET_RECEIPT = PhotoUnderstanding(
 
 
 @pytest.fixture(autouse=True)
-def wire_fakes():
-    """把五種假件全部接上 app——真 AI 與真時鐘都不會被呼叫，測試結果才可預期。"""
+def wire_error_fakes(wire_fake_ai):
+    """把 VLM 換成「看得懂」的假件；其餘假件與固定時鐘由 conftest 的 wire_fake_ai 統一接管。
+
+    顯式依賴 wire_fake_ai 保證本 fixture 在它之後執行、測後由它統一 clear()。
+    個別測試要更壞的行為（看不懂／壞掉的 router／壞掉的 embeddings）就在測試裡再覆寫。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(TARGET_RECEIPT)
-    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
-    app.dependency_overrides[get_router] = lambda: FakeRouter()
-    app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
-    app.dependency_overrides[get_now] = lambda: NOW
     yield
-    app.dependency_overrides.clear()
 
 
 # 下面測試用的 `client` fixture 來自 tests/conftest.py（Phase 5 建立），直接沿用。
@@ -143,8 +160,9 @@ def test_大檔案照樣可以上傳(client):
 
 
 def test_程式碼裡沒有任何檔案大小上限檢查():
-    # 用「這個測試檔的位置」推回專案根目錄，跑測試時不管人在哪個目錄都找得到檔案
-    專案根目錄 = Path(__file__).resolve().parent.parent
+    # 用「這個測試檔的位置」推回專案根目錄（tests/integration/ → 上兩層），
+    # 跑測試時不管人在哪個目錄都找得到檔案
+    專案根目錄 = Path(__file__).resolve().parents[2]
     source = (
         (專案根目錄 / "app" / "api" / "routers" / "photos.py").read_text(encoding="utf-8")
         + (專案根目錄 / "app" / "services" / "vlm_service.py").read_text(encoding="utf-8")
@@ -274,40 +292,25 @@ echo "== 不得有全域例外捕捉（500 要不吞錯，見常見問題 Q3）=
 grep -rnE "exception_handler" app/ --include="*.py" || echo "OK：沒有全域捕捉"
 ```
 
-### 步驟 3：把 `CLAUDE.md` 的「指令」章節整理成最終版
+### 步驟 3：核對 `CLAUDE.md` 的「指令」章節是最終版（歷輪已整併，只補兩個示例）
 
-`CLAUDE.md` 現在有兩處和指令有關的內容：開頭有一節佔位的「## 指令」（還寫著「尚無可執行的 build / lint / test 指令」），Phase 8 步驟 6 又在檔尾補過一段「## 指令（實作後回填）」。後端完成了，把兩處**合併成一節**。
+歷輪收尾時已把指令章節整併成單一「## 指令」（原佔位段與 Phase 8 回填段皆已不存在），「現況」段也已隨每輪校正——**不需要**再做合併或改寫 greenfield 敘述。本步驟只做核對＋兩個小補充：
 
-用編輯器打開 `/Users/linjunting/personalDocAI/CLAUDE.md`：
-
-1. 刪掉檔尾 Phase 8 加的整段「## 指令（實作後回填）」。
-2. 把開頭「## 指令」一節的內容（原本那句「尚無可執行的…」）換成下面這樣（外框用**四個反引號**，因為裡面本身有一組三反引號的區塊）：
-
-````markdown
-## 指令
+1. 核對「## 指令」一節已包含：開工（venv）、安裝依賴（uv）、啟動服務、`pytest -q`、真模型煙霧腳本、psql 兩庫——**已在則不動**。
+2. 在 `pytest -q` 那組指令之後補一段「只跑兩份規格檔」示例：
 
 ```bash
-cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-
-# 啟動服務
-uvicorn app.main:app --reload --port 8000
-
-# 全部自動化測試（12 條 Rule 驗收＋雙語、單元與錯誤路徑測試；全程使用假件，不需要 Ollama）
-pytest -q
-
 # 只跑兩份規格檔（12 條 Rule、14 個例子）
-pytest tests/test_upload_feature.py tests/test_ask_feature.py -v
+pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py -v
+```
 
-# 手動煙霧測試（需要 Ollama 真的在跑；不進 CI）
-python scripts/check_embedding_dim.py
+3. 在 psql 兩行之前補「資料庫建表」示例：
 
-# 資料庫建表
+```bash
+# 資料庫建表（schema.sql 開頭是 DROP TABLE IF EXISTS，重跑＝清空重建）
 psql -d visual_memory      -f db/schema.sql   # 正式庫
 psql -d visual_memory_test -f db/schema.sql   # 測試庫
 ```
-````
-
-3. 順手把 `CLAUDE.md` 裡已經過時的「現況：greenfield……沒有任何程式碼」與「`docs/design/design.md` 目前是空檔」等敘述改成現況（後端程式碼已完成、design 已定稿到 v4）——它們描述的是動工前的狀態，留著會誤導之後打開這個專案的人（或 AI）。
 
 ### 步驟 4：全量回歸
 
@@ -321,10 +324,10 @@ pytest -q
 這一步**全程手動**：在終端機照著打、用眼睛核對結果就好，**不要寫成 pytest 測試、不進 CI**。design.md §11 明訂真模型只做少量手動煙霧測試（**含至少一個英文提問例子**）——真 AI 的輸出不是決定論的，放進自動化測試會時好時壞（Phase 8 步驟 6 已立下這條界線，這裡再確認一次）。
 
 ```bash
-# 0) 前置：Ollama 在跑、正式資料庫已建表
+# 0) 前置：Ollama 在跑（本機為 App 版，不歸 brew services 管）、正式資料庫已建表
 #    注意：schema.sql 開頭是 DROP TABLE IF EXISTS，重跑會「清空重建」資料表——
-#    正好把 Phase 8 煙霧測試留下的舊資料清掉，從乾淨狀態開始
-brew services start ollama
+#    正好把先前煙霧測試留下的舊資料清掉，從乾淨狀態開始
+pgrep -fl "ollama serve" || open -a Ollama
 psql -d visual_memory -f db/schema.sql
 
 # 1) 啟動服務（視窗 A；先 cd ＋啟用虛擬環境）
@@ -334,7 +337,8 @@ uvicorn app.main:app --port 8000
 ```bash
 # 視窗 B（一樣先 cd ＋啟用虛擬環境）
 
-# 2) 上傳一張真的照片
+# 2) 上傳一張真的照片（手邊有現成 JPEG/PNG 就用現成的；沒有的話
+#    screencapture 抓螢幕、或用 PIL 畫一張測試收據圖都可以）
 screencapture -x /tmp/real_photo.png
 curl -s -X POST http://localhost:8000/photos \
   -F "file=@/tmp/real_photo.png;type=image/png" | python -m json.tool
@@ -371,7 +375,7 @@ curl -s -X POST http://localhost:8000/ask -H "Content-Type: application/json" \
 
 1. **錯誤路徑測試全綠**
    ```bash
-   pytest tests/test_error_paths.py -v
+   pytest tests/integration/test_error_paths.py -v
    ```
    預期最後一行：`11 passed`（檔案裡是 10 個測試函式，其中「問題缺漏或空字串」帶 2 組參數，pytest 會算成 2 個測試）
 
@@ -379,24 +383,28 @@ curl -s -X POST http://localhost:8000/ask -H "Content-Type: application/json" \
    ```bash
    pytest -q
    ```
-   預期：`49 passed`（**測試累計數：49**）
+   預期：`79 passed`（**測試累計數：79**＝ Phase 12 的 67 ＋ 步驟 0 的 1 ＋ 本 phase 錯誤路徑的 11）
    組成：
    | 檔案 | 個數 |
    |---|---|
-   | `test_upload_feature.py`（規格 U1〜U7） | 7 |
-   | `test_ask_feature.py`（規格 Q1〜Q5） | 7 |
-   | `test_indexing.py` | 3 |
-   | `test_upload_bilingual.py` | 1 |
-   | `test_retrieval.py` | 10 |
-   | `test_workflow_route.py` | 5 |
-   | `test_ask_endpoint.py` | 5 |
-   | `test_error_paths.py` | 11 |
-   | **合計** | **49** |
-   （若你在前面 phase 多寫或少寫了測試，數字會不同——以實際數字為準，驗收重點是「恰好比 Phase 12 的 38 多出本 phase 的 11 條錯誤路徑測試，而且全部通過」。）
+   | `unit/test_photo_repository_unit.py` | 2 |
+   | `unit/test_vlm_service_unit.py` | 6 |
+   | `unit/test_indexing_service_unit.py` | 4 |
+   | `integration/test_photo_repository.py` | 10 |
+   | `integration/test_photos_upload.py` | 7 |
+   | `integration/test_upload_feature.py`（規格 U1〜U7） | 7 |
+   | `integration/test_upload_bilingual.py` | 1 |
+   | `integration/test_upload_design_rules.py` | 3 |
+   | `integration/test_retrieval.py`（含步驟 0 的 category 守護） | 11 |
+   | `integration/test_workflow_route.py` | 5 |
+   | `integration/test_ask_endpoint.py` | 5 |
+   | `integration/test_ask_feature.py`（規格 Q1〜Q5） | 7 |
+   | `integration/test_error_paths.py` | 11 |
+   | **合計** | **79** |
 
 3. **12 條 Rule 全部有對應的測試名稱**
    ```bash
-   pytest tests/test_upload_feature.py tests/test_ask_feature.py -v | grep -cE "PASSED"
+   pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py -v | grep -cE "PASSED"
    ```
    預期輸出：`14`（兩份規格共 14 個例子）。
 
@@ -404,7 +412,7 @@ curl -s -X POST http://localhost:8000/ask -H "Content-Type: application/json" \
    ```bash
    pytest -k "英文 or 大小寫" -v | tail -3
    ```
-   預期最後一行：`7 passed, 42 deselected`——**7 個**雙語測試被選中且全部通過：英文照片上傳（P07）、英文合併格式（P07）、地點大小寫與物品大小寫（P09）、英文路由（P10）、英文回答（P11）、英文查無回覆（P13）。
+   預期最後一行：`7 passed, 72 deselected`——**7 個**雙語測試被選中且全部通過：英文值保持原文（P06 unit）、英文照片上傳（P07）、地點大小寫與物品大小寫（P09）、英文路由（P10）、英文回答（P11）、英文查無回覆（P13）。
 
 5. **「明確不做」的檢查全數通過**
    步驟 2 的腳本輸出中：
@@ -431,11 +439,11 @@ curl -s -X POST http://localhost:8000/ask -H "Content-Type: application/json" \
    | 7 條件型詢問（英） | 回 200，`answer` 是**英文**句子（`retrieved_photo_ids` 可能是空的——見常見問題 Q6） |
    | 8 模糊問題 | 回 200，`search_mode` 為 `"vector semantic search"` |
 
-7. **停掉 Ollama，所有自動化測試仍全綠**
+7. **不需要 Ollama，所有自動化測試仍全綠**（本機 Ollama 是 App 版、不停真服務——把位址指向沒有服務在聽的埠，若有測試偷打真模型就會連線爆錯）
    ```bash
-   brew services stop ollama && pytest -q && brew services start ollama
+   OLLAMA_BASE_URL=http://localhost:9 pytest -q
    ```
-   預期：`49 passed`。（`&&` 遇到失敗會中斷——若 pytest 沒全過，Ollama 會停在關閉狀態，修好後記得手動 `brew services start ollama`。）
+   預期：`79 passed`。
 
 ---
 
@@ -460,7 +468,7 @@ curl -s -X POST http://localhost:8000/ask -H "Content-Type: application/json" \
 不是。如果 router 抽出的是英文的 `category="receipt"`，而資料庫裡存的是中文「收據」，`ILIKE` 對不上是**預期行為**——design.md §8.3 的已知限制：不做跨語言翻譯對映。回答仍會是 200 且是英文的「查無」句。想看到結果，先上傳一張英文收據照片再問。
 
 **Q7：這裡就是最後一個 phase 了嗎？**
-不是。後端到此完成，還有 **Phase 14：極簡網頁介面**（design.md v4 新增）——兩個純 HTML 頁面，讓你不用 curl 也能操作這兩個 API。它不新增任何後端端點，也不影響本 phase 的 49 個測試。
+不是。後端到此完成，還有 **Phase 14：極簡網頁介面**（design.md v4 新增）——兩個純 HTML 頁面，讓你不用 curl 也能操作這兩個 API。它不新增任何後端端點，也不影響本 phase 的 79 個測試。
 
 ---
 
@@ -470,6 +478,6 @@ curl -s -X POST http://localhost:8000/ask -H "Content-Type: application/json" \
 
 - `POST /photos`：JPEG/PNG 檢查（415）→ 本機 VLM 看圖（看不懂 422、什麼都不存；描述用照片主要語言）→ 文字＋四欄位合併成 Document → `bge-m3` 轉向量 → 一條 INSERT 寫入（上傳時間自動記）→ 回 201。
 - `POST /ask`：LangGraph 流程圖，LLM 判斷查法與條件（中英文皆可，失敗一律 fallback 語意查詢）→ 條件查詢（ILIKE）或語意查詢（含「最近 30 天、內容時間優先」過濾）→ LLM 只依撈到的照片內容回答（**語言跟隨提問**、查無就說查無、不編造）→ 回 200 含 `answer`／`search_mode`／`retrieved_photo_ids`。
-- 兩份 `.feature` 共 12 條 Rule、14 個例子全綠；錯誤處理總表七列全部有測試把關；雙語行為有 7 個額外測試守著；全部 **49** 個測試不依賴任何外部服務。
+- 兩份 `.feature` 共 12 條 Rule、14 個例子全綠；錯誤處理總表七列全部有測試把關；雙語行為有 7 個額外測試守著；全部 **79** 個測試不依賴任何外部服務。
 
 下一步（也是最後一步）是 Phase 14：給它一個能用瀏覽器操作的極簡介面。

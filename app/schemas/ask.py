@@ -1,12 +1,15 @@
 """自然語言詢問的 API 資料格式（Pydantic 模型）。"""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AskRequest(BaseModel):
-    """POST /ask 的請求內容。問題可以是中文或英文。"""
+    """POST /ask 的請求內容。問題可以是中文或英文。
 
-    question: str
+    question 缺漏或空字串 → 由框架回既有的 422，不另外發明行為。
+    """
+
+    question: str = Field(min_length=1)
 
 
 class AskResponse(BaseModel):

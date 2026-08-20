@@ -1,0 +1,162 @@
+"""design.md §10 錯誤處理總表的逐列驗證。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core import config
+from app.dependencies import get_embeddings, get_router, get_vlm
+from app.main import app
+from app.repositories import photo_repository
+from app.services.vlm_service import PhotoUnderstanding
+from tests.fakes import FakeVLM
+
+TARGET_RECEIPT = PhotoUnderstanding(
+    understood=True,
+    text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
+    category="收據", location="Target",
+    items=["可樂", "洋芋片"], content_time="2026-08-10",
+)
+
+
+@pytest.fixture(autouse=True)
+def wire_error_fakes(wire_fake_ai):
+    """把 VLM 換成「看得懂」的假件；其餘假件與固定時鐘由 conftest 的 wire_fake_ai 統一接管。
+
+    顯式依賴 wire_fake_ai 保證本 fixture 在它之後執行、測後由它統一 clear()。
+    個別測試要更壞的行為（看不懂／壞掉的 router／壞掉的 embeddings）就在測試裡再覆寫。
+    """
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(TARGET_RECEIPT)
+    yield
+
+
+# 下面測試用的 `client` fixture 來自 tests/conftest.py（Phase 5 建立），直接沿用。
+
+
+@pytest.fixture
+def 不擲出例外的client():
+    """raise_server_exceptions=False：讓伺服器內部錯誤變成 500 回應，方便驗證。"""
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
+
+
+# ---- 415：上傳非圖片格式 ----
+def test_非圖片格式回415且不寫入(client):
+    response = client.post("/photos", files={"file": ("a.txt", b"hi", "text/plain")})
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "上傳檔案必須為常見圖片格式（如 JPEG、PNG）"
+    assert photo_repository.count_photos() == 0
+
+
+# ---- 422：VLM 看不懂 ----
+def test_vlm看不懂回422且不寫入(client):
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
+        PhotoUnderstanding(understood=False)
+    )
+
+    response = client.post("/photos", files={"file": ("a.png", b"\x89PNG", "image/png")})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "VLM 無法理解照片內容，未儲存任何資料"
+    assert photo_repository.count_photos() == 0
+
+
+# ---- 沒有「檔案太大」這個錯誤路徑 ----
+def test_大檔案照樣可以上傳(client):
+    大檔案 = b"\x89PNG\r\n\x1a\n" + b"0" * (12 * 1024 * 1024)   # 約 12 MB
+
+    response = client.post("/photos", files={"file": ("big.png", 大檔案, "image/png")})
+
+    assert response.status_code == 201, "規格明訂不設檔案大小上限"
+
+
+def test_程式碼裡沒有任何檔案大小上限檢查():
+    # 用「這個測試檔的位置」推回專案根目錄（tests/integration/ → 上兩層），
+    # 跑測試時不管人在哪個目錄都找得到檔案
+    專案根目錄 = Path(__file__).resolve().parents[2]
+    source = (
+        (專案根目錄 / "app" / "api" / "routers" / "photos.py").read_text(encoding="utf-8")
+        + (專案根目錄 / "app" / "services" / "vlm_service.py").read_text(encoding="utf-8")
+    )
+    for 關鍵字 in ("max_size", "MAX_SIZE", "413", "too large"):
+        assert 關鍵字 not in source, f"不該出現大小限制相關程式碼：{關鍵字}"
+
+
+# ---- 422：問題缺漏／空字串（框架既有行為）----
+# parametrize：同一個測試函式跑兩組輸入（缺 question／空字串），pytest 會算成 2 個測試
+@pytest.mark.parametrize("payload", [{}, {"question": ""}])
+def test_問題缺漏或空字串回422(client, payload):
+    assert client.post("/ask", json=payload).status_code == 422
+
+
+# ---- 200：路由 AI 失敗仍然回答 ----
+def test_路由失敗仍回200並走語意查詢(client):
+    class 一定壞掉的Router:
+        def route(self, question):
+            raise RuntimeError("模型爆炸了")
+
+    app.dependency_overrides[get_router] = lambda: 一定壞掉的Router()
+
+    response = client.post("/ask", json={"question": "有哪些在 Target 拍的收據？"})
+
+    assert response.status_code == 200
+    assert response.json()["search_mode"] == "vector semantic search"
+
+
+# ---- 200：查無相關照片（中英文各驗一次語言跟隨）----
+def test_查無照片回200且不編造(client):
+    response = client.post("/ask", json={"question": "有哪些在 Target 拍的收據？"})
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["retrieved_photo_ids"] == []
+    assert "查無相關照片" in body["answer"]
+
+
+def test_英文提問查無照片時用英文回覆(client):
+    """雙語：查無結果的回覆語言也要跟隨提問語言。"""
+    response = client.post(
+        "/ask", json={"question": "What drinks did I buy recently?"}
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["retrieved_photo_ids"] == []
+    assert "No matching photos found." in body["answer"]
+
+
+# ---- 500：embedding 呼叫失敗（例如 Ollama 沒開）不吞錯 ----
+def test_embedding失敗回500(不擲出例外的client):
+    class 壞掉的Embeddings:
+        def embed_query(self, text):
+            raise RuntimeError("Ollama 沒有回應")
+
+        def embed_documents(self, texts):
+            raise RuntimeError("Ollama 沒有回應")
+
+    app.dependency_overrides[get_embeddings] = lambda: 壞掉的Embeddings()
+
+    response = 不擲出例外的client.post(
+        "/photos", files={"file": ("a.png", b"\x89PNG", "image/png")}
+    )
+
+    assert response.status_code == 500
+    assert photo_repository.count_photos() == 0, "失敗時不可以留下半筆資料"
+
+
+# ---- 500：資料庫掛掉不吞錯 ----
+def test_資料庫掛掉回500(不擲出例外的client, monkeypatch):
+    # monkeypatch：pytest 內建 fixture，暫時改掉某個屬性，測試結束會自動還原。
+    # db/session.py 每次連線都重新讀 config.DATABASE_URL（Phase 3 的寫法），
+    # 所以這裡改了就會生效。
+    monkeypatch.setattr(
+        config, "DATABASE_URL", "postgresql://localhost:5433/根本不存在的資料庫"
+    )
+
+    response = 不擲出例外的client.post("/ask", json={"question": "隨便問"})
+
+    assert response.status_code == 500

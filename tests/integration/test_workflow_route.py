@@ -8,14 +8,19 @@ import pytest
 
 from app.repositories import photo_repository
 from app.services.ask_workflow import AskDeps, run_ask
-from tests.fakes import FakeEmbeddings, FakeRouter
+from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter
 
 TODAY = date(2026, 8, 18)
 
 
 @pytest.fixture
 def deps() -> AskDeps:
-    return AskDeps(router=FakeRouter(), embeddings=FakeEmbeddings(), today=TODAY)
+    return AskDeps(
+        router=FakeRouter(),
+        answerer=FakeAnswerLLM(),
+        embeddings=FakeEmbeddings(),
+        today=TODAY,
+    )
 
 
 @pytest.fixture
@@ -70,7 +75,12 @@ def test_路由回傳格式不對也走語意查詢(一張Target收據):
         def route(self, question):
             return {"mode": "metadata"}      # 不是 RouteDecision，格式不符
 
-    deps = AskDeps(router=壞掉的Router(), embeddings=FakeEmbeddings(), today=TODAY)
+    deps = AskDeps(
+        router=壞掉的Router(),
+        answerer=FakeAnswerLLM(),
+        embeddings=FakeEmbeddings(),
+        today=TODAY,
+    )
     state = run_ask("有哪些在 Target 拍的收據？", deps)
 
     assert state["mode"] == "vector"

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>上傳照片 — PersonalDocAI</title>
+<style>
+  body { font-family: system-ui, "PingFang TC", sans-serif;
+         max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+  nav a { margin-right: 1rem; }
+  form { margin: 1rem 0; }
+  button { padding: 0.4rem 1rem; }
+  pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap;
+        word-break: break-word; min-height: 4rem; }
+</style>
+</head>
+<body>
+
+<h1>PersonalDocAI</h1>
+<nav>
+  <a href="/ui/upload.html">上傳照片</a>
+  <a href="/ui/ask.html">問問題</a>
+</nav>
+<hr>
+
+<h2>上傳照片</h2>
+<p>選一張 JPEG 或 PNG，AI 會看圖並存成文字描述＋四個欄位。原始照片檔不會被保留。</p>
+
+<form id="upload-form">
+  <input type="file" id="file-input" accept="image/jpeg,image/png" required>
+  <button type="submit" id="submit-button">上傳</button>
+</form>
+
+<pre id="result">（尚未上傳）</pre>
+
+<script>
+const form = document.getElementById("upload-form");
+const fileInput = document.getElementById("file-input");
+const button = document.getElementById("submit-button");
+const result = document.getElementById("result");
+
+// 沒有值的欄位顯示成「（無）」，比顯示 null 好懂
+function orNone(value) {
+  return (value === null || value === undefined || value === "") ? "（無）" : value;
+}
+
+form.addEventListener("submit", async function (event) {
+  event.preventDefault();               // 不要讓瀏覽器用傳統方式送出表單並跳頁
+
+  const file = fileInput.files[0];
+  if (!file) {
+    result.textContent = "請先選一個檔案。";
+    return;
+  }
+
+  button.disabled = true;
+  result.textContent = "上傳中…（本機模型看圖可能要等 10〜60 秒，請耐心等候）";
+
+  // FormData 會自動組成 multipart/form-data，欄位名必須是 file
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const response = await fetch("/photos", { method: "POST", body: formData });
+    const body = await response.json();
+
+    if (response.status === 201) {
+      const m = body.metadata;
+      const items = (m.items && m.items.length > 0) ? m.items.join("、") : "（無）";
+      result.textContent = [
+        "✅ 上傳成功（HTTP 201）",
+        "照片 id：" + body.id,
+        "文字描述：" + body.text,
+        "類別：" + orNone(m.category),
+        "地點：" + orNone(m.location),
+        "物品：" + items,
+        "內容時間：" + orNone(m.content_time)
+      ].join("\n");
+    } else {
+      // 415＝不是 JPEG/PNG；422＝VLM 看不懂（什麼都沒存）；其他＝伺服器問題
+      const detail = (typeof body.detail === "string")
+        ? body.detail : JSON.stringify(body.detail);
+      result.textContent = "❌ 失敗（HTTP " + response.status + "）\n" + detail;
+    }
+  } catch (error) {
+    result.textContent = "❌ 請求失敗：" + error
+      + "\n最常見原因：uvicorn 沒在跑，或網址、埠號不對。"
+      + "\n若 uvicorn 其實在跑，改看它的終端機視窗印出的錯誤訊息。";
+  } finally {
+    button.disabled = false;
+  }
+});
+</script>
+
+</body>
+</html>

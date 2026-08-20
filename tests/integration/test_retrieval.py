@@ -156,3 +156,14 @@ def test_自訂retriever兩種模式都能用(三張規格照片):
     assert len(vector_result) >= 1
     # 回傳的是 LangChain 的 Document，內容格式與寫入時一致
     assert vector_result[0].page_content.startswith("在 ")
+
+
+def test_條件查詢依category過濾():
+    """守住 search_by_metadata 的 category ILIKE——P11/P12 輪變異測試揭露此前無人守護。"""
+    收據id = _insert("在 Target 購買可樂的收據", "收據", "Target",
+                     ["可樂"], date(2026, 8, 10), NOW)
+    _insert("海邊的風景照", "風景", "海邊", [], None, NOW)
+
+    documents = metadata_search(QueryFilters(category="收據"), TODAY)
+
+    assert [doc.metadata["id"] for doc in documents] == [收據id]

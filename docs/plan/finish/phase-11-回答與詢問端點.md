@@ -8,7 +8,8 @@
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 10**（流程圖與 route 節點、測試累計 26）。
+- 需要已完成的 phase：**Phase 10**（流程圖與 route 節點、測試累計 **55**）。
+- 開工前基線（2026-08-19 實查）：`pytest -q` = 55 passed；langchain-core **1.5.6**／langchain-ollama 1.1.0／langgraph 1.2.11 已裝；`config.SEARCH_MODE_LABELS`、conftest 的 `client` fixture 與 `wire_fake_ai` 假件安全網、retriever Document 的 `id`／`items` metadata 皆已在，本計畫的程式碼引用全部核對過。
 - 環境：測試資料庫可用；本 phase 的測試**不需要 Ollama**（用假件）。
 - 每次開工先執行：
   ```bash
@@ -72,6 +73,8 @@ Prompt 有三條鐵律（design.md §8.3）：
 ---
 
 ## 逐步驟操作
+
+> 🧪 **TDD 執行順序（紅→綠）**：先做**步驟 9** 建 `tests/integration/test_ask_endpoint.py` 看紅（該檔 import 的 `get_answerer`／`FakeAnswerLLM` 都還不存在 → 只有這個檔收集失敗，其餘 55 個不受影響；注意 pytest 預設遇收集錯誤會直接中斷（Interrupted）只印 1 error，想看到「55 passed＋1 error」的全貌要加 `--continue-on-collection-errors`）。轉綠依序：**步驟 7**（`FakeAnswerLLM` 只依賴 langchain 的 `Document`，先加不會弄壞任何東西）→ **步驟 1** → **步驟 2 與步驟 8 必須一起做**（⚠️ 順序陷阱：`AskDeps` 加上**必填**欄位 `answerer` 的當下，`tests/integration/test_workflow_route.py` 既有 5 個測試會立刻因缺參數而壞，所以改完 `AskDeps` 馬上補步驟 8）→ 步驟 3〜6 → 全綠。步驟編號維持閱讀順序，不重排。
 
 ### 步驟 1：在 `app/services/ask_workflow.py` 加上回答用的元件
 
@@ -196,13 +199,11 @@ class AskRequest(BaseModel):
 
 ### 步驟 4：在 `app/dependencies.py` 加上詢問流程的三個注入點
 
-把檔案改成下面這樣（新增最下面三組；上半部 Phase 5／6 已寫好的維持不變）：
+**用增量修改，不要整檔重寫**（既有的模組 docstring 與 `get_vlm`／`get_now` 的說明都要原樣保留）。三個動作：
+
+1. 檔頂 import 區補齊（`datetime` 那行加上 `date`；`Depends` 與 `ask_workflow` 是新的）：
 
 ```python
-"""依賴注入點：router 用 Depends(...) 取用，測試用 dependency_overrides 換成假件。"""
-
-from __future__ import annotations
-
 from datetime import date, datetime
 from functools import lru_cache
 
@@ -210,19 +211,13 @@ from fastapi import Depends
 from langchain_core.embeddings import Embeddings
 
 from app.services import ask_workflow, indexing_service, vlm_service
+```
 
+2. 模組 docstring 最後一句的「（Phase 11 補上）」改成「（Phase 11 已補上）」。
 
-@lru_cache(maxsize=1)
-def _ollama_vlm() -> vlm_service.OllamaVLM:
-    """只建立一次，之後重複使用（建立物件本身不會連線）。"""
-    return vlm_service.OllamaVLM()
+3. 檔案最下面加上三組注入點（其餘既有內容一字不動）：
 
-
-@lru_cache(maxsize=1)
-def _ollama_embeddings() -> Embeddings:
-    return indexing_service.build_ollama_embeddings()
-
-
+```python
 @lru_cache(maxsize=1)
 def _ollama_router() -> ask_workflow.OllamaRouter:
     return ask_workflow.OllamaRouter()
@@ -231,23 +226,6 @@ def _ollama_router() -> ask_workflow.OllamaRouter:
 @lru_cache(maxsize=1)
 def _ollama_answerer() -> ask_workflow.OllamaAnswerer:
     return ask_workflow.OllamaAnswerer()
-
-
-def get_vlm() -> vlm_service.VLMClient:
-    return _ollama_vlm()
-
-
-def get_embeddings() -> Embeddings:
-    return _ollama_embeddings()
-
-
-def get_now() -> datetime | None:
-    """『現在時間』。
-
-    正式執行回傳 None，代表上傳時間交給資料庫的 now() 自動記錄。
-    測試需要固定時間時，用 dependency_overrides 換成 FixedClock。
-    """
-    return None
 
 
 def get_router() -> ask_workflow.RouterClient:
@@ -308,7 +286,7 @@ def ask(
 
 ### 步驟 6：在 `app/main.py` 掛上第二個 router
 
-把 Phase 4 寫的 `main.py` 改成下面這樣（差別：import 多了 `ask`、多掛一行 `app.include_router(ask.router)`、刪掉 `# TODO(Phase 11)` 那行註解，docstring 也順手更新）：
+把 Phase 4 寫的 `main.py` 改成下面這樣（差別：import 多了 `ask`、多掛一行 `app.include_router(ask.router)`、刪掉 `# TODO(Phase 11)` 那行註解，docstring 也順手更新；`title` 維持現有的 `personalDocAI` 不要動）：
 
 ```python
 """FastAPI app 組裝：掛上兩個 router。"""
@@ -317,7 +295,7 @@ from fastapi import FastAPI
 
 from app.api.routers import ask, photos
 
-app = FastAPI(title="Visual Memory RAG")
+app = FastAPI(title="personalDocAI")
 
 app.include_router(photos.router)
 app.include_router(ask.router)
@@ -333,7 +311,8 @@ def health() -> dict[str, str]:
 
 ```python
 # 接在 tests/fakes.py 既有內容後面
-from langchain_core.documents import Document
+#（`from langchain_core.documents import Document` 放檔頂 import 區、
+#  `from app.core import config` 之前——循檔內既有慣例，不放中段）
 
 
 def _looks_english(text: str) -> bool:
@@ -378,7 +357,7 @@ class FakeAnswerLLM:
 
 ### 步驟 8：把 `AskDeps` 的新欄位補進既有測試
 
-`tests/test_workflow_route.py` 裡建立 `AskDeps` 的地方要補上 `answerer`：
+`tests/integration/test_workflow_route.py` 裡建立 `AskDeps` 的地方要補上 `answerer`：
 
 ```python
 from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter
@@ -395,7 +374,7 @@ def deps() -> AskDeps:
 
 （`test_路由回傳格式不對也走語意查詢` 裡自建的 `AskDeps` 也要一起補。）
 
-### 步驟 9：建立 `tests/test_ask_endpoint.py`
+### 步驟 9：建立 `tests/integration/test_ask_endpoint.py`
 
 ```python
 """POST /ask 端點的基本行為＋雙語回答（規格驗收在 Phase 12）。"""
@@ -406,22 +385,25 @@ from datetime import date, datetime
 
 import pytest
 
-from app.dependencies import get_answerer, get_embeddings, get_now, get_router
+from app.dependencies import get_answerer, get_router
 from app.main import app
 from app.repositories import photo_repository
 from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter
 
+# conftest 的 wire_fake_ai 已把固定時鐘設成同一時間；這個常數拿來組測試資料
 NOW = datetime(2026, 8, 18, 10, 0)
 
 
 @pytest.fixture(autouse=True)
-def wire_fakes():
+def wire_ask_fakes(wire_fake_ai):
+    """接上詢問用的兩個假件（embeddings 與固定時鐘由 conftest 的 wire_fake_ai 統一接管）。
+
+    顯式依賴 wire_fake_ai 保證本 fixture 在它之後執行、測後由它統一 clear()——
+    沿用 test_upload_feature.py 的既有慣例。
+    """
     app.dependency_overrides[get_router] = lambda: FakeRouter()
     app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
-    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
-    app.dependency_overrides[get_now] = lambda: NOW
     yield
-    app.dependency_overrides.clear()
 
 
 def _一張Target收據() -> int:
@@ -491,7 +473,7 @@ def test_問題缺漏或空字串回422(client):
 1. **端點測試全綠**
    ```bash
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-   pytest tests/test_ask_endpoint.py -v
+   pytest tests/integration/test_ask_endpoint.py -v
    ```
    預期最後一行：`5 passed`
 
@@ -499,7 +481,7 @@ def test_問題缺漏或空字串回422(client):
    ```bash
    pytest -q
    ```
-   預期：`31 passed`（**測試累計數：31**＝ Phase 10 的 26 ＋ 本 phase 的 5）
+   預期：`60 passed`（**測試累計數：60**＝ Phase 10 的 55 ＋ 本 phase 的 5）
 
 3. **generate prompt 真的寫了「回答語言跟隨提問語言」鐵律**
    ```bash
@@ -558,7 +540,7 @@ def test_問題缺漏或空字串回422(client):
 ## 常見問題
 
 **Q1：`AttributeError: 'AIMessage' object has no attribute 'text'` 或 `'method' object ...`。**
-LangChain 版本差異。1.x 的 `response.text` 是屬性（不加括號）；0.x 是方法 `response.text()`。用 `uv pip show langchain-core` 看版本，照版本寫；或改用最保險的 `str(response.content)`。
+LangChain 版本差異。1.x 的 `response.text` 是屬性（不加括號）；0.x 是方法 `response.text()`。用 `uv pip show langchain-core` 看版本，照版本寫；或改用最保險的 `str(response.content)`。本專案現裝 **langchain-core 1.5.6**（已實測 `.text` 屬性可用），計畫程式碼照寫即可。
 
 **Q2：`TypeError: AskDeps.__init__() missing 1 required positional argument: 'answerer'`。**
 步驟 8 漏做了。所有建立 `AskDeps` 的地方（產品程式碼與測試）都要補上 `answerer`。
@@ -582,4 +564,4 @@ LangChain 版本差異。1.x 的 `response.text` 是屬性（不加括號）；0
 
 ## 完成後的專案狀態
 
-兩個 API 都完整了：`POST /photos` 能上傳，`POST /ask` 能判斷查法、檢索照片、產生回答（**語言跟隨提問**），並回傳可被黑箱驗證的 `search_mode` 與 `retrieved_photo_ids`。規則 Q1、Q4、Q5 的行為已實作，只差用 `.feature` 檔正式驗收。測試累計 **31** 個。
+兩個 API 都完整了：`POST /photos` 能上傳，`POST /ask` 能判斷查法、檢索照片、產生回答（**語言跟隨提問**），並回傳可被黑箱驗證的 `search_mode` 與 `retrieved_photo_ids`。規則 Q1、Q4、Q5 的行為已實作，只差用 `.feature` 檔正式驗收。測試累計 **60** 個。

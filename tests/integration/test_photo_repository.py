@@ -1,4 +1,4 @@
-"""photo_repository 的整合測試：連 visual_memory_test 真測試庫。
+"""photo_repository 的整合測試：連 PersonalDocAI_test 真測試庫。
 
 BDD 對應（docs/spec/features/上傳照片.feature，本階段可落地的資料層行為）：
 - U2/U3：文字與四欄位寫入後可原樣讀回（中英文皆可）

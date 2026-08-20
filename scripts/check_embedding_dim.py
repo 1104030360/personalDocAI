@@ -46,8 +46,8 @@ def main() -> None:
         print("❌ 維度不一致！請照下面兩步修正：")
         print(f"   1. 把 app/core/config.py 的 EMBEDDING_DIM 改成 {len(中文向量)}")
         print(f"   2. 把 db/schema.sql 的 vector(1024) 改成 vector({len(中文向量)})，")
-        print("      再執行 psql -d visual_memory -f db/schema.sql")
-        print("      與 psql -d visual_memory_test -f db/schema.sql")
+        print("      再執行 psql -d PersonalDocAI -f db/schema.sql")
+        print("      與 psql -d PersonalDocAI_test -f db/schema.sql")
 
 
 if __name__ == "__main__":

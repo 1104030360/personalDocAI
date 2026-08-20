@@ -8,11 +8,11 @@
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 13**（後端完成、49 個測試全綠）。
+- 需要已完成的 phase：**Phase 13**（後端完成、**79** 個測試全綠）。
 - 環境：Ollama 與 PostgreSQL 都要真的在跑（這個 phase 是**手動用瀏覽器操作**，走的是真模型那條路）。
   ```bash
-  brew services start postgresql@17
-  brew services start ollama
+  brew services start postgresql@17            # PostgreSQL@17（5433 埠）
+  pgrep -fl "ollama serve" || open -a Ollama   # Ollama 是 App 版，不歸 brew services 管
   ```
 - 每次開工先執行：
   ```bash
@@ -35,7 +35,7 @@
 - **純 HTML ＋ 原生 JavaScript**——用瀏覽器內建的 `fetch()` 呼叫 API。
 - **零框架**（不用 React／Vue／jQuery）、**零打包工具**（不用 npm、webpack、vite）、**零 CSS 框架**。
 - **零新增端點**——後端只多一行 `app.mount(...)` 把 `app/static/` 這個資料夾當靜態檔案送出去。
-- **零新增自動化測試**——頁面驗收是手動用瀏覽器點一點（design.md §6「頁面驗收以手動瀏覽器操作為準」）。`pytest -q` 仍然是 **49 passed**，一個都不會變。
+- **零新增自動化測試**——頁面驗收是手動用瀏覽器點一點（design.md §6「頁面驗收以手動瀏覽器操作為準」）。`pytest -q` 仍然是 **79 passed**，一個都不會變。
 
 **頁面醜沒關係，能用就好。** 這是 side project 的網頁介面，不是產品。想加深色模式、動畫、上傳進度條、拖放上傳、照片預覽的時候，答案一律是「不要」。
 
@@ -145,7 +145,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import ask, photos
 
-app = FastAPI(title="Visual Memory RAG")
+app = FastAPI(title="personalDocAI")
 
 app.include_router(photos.router)
 app.include_router(ask.router)
@@ -450,7 +450,7 @@ uvicorn app.main:app --reload --port 8000
    cd /Users/linjunting/personalDocAI && source .venv/bin/activate
    pytest -q
    ```
-   預期：`49 passed`——本 phase 不新增、不修改任何自動化測試。
+   預期：`79 passed`——本 phase 不新增、不修改任何自動化測試。
 
 10. **沒有新增後端端點**
     ```bash
@@ -510,4 +510,4 @@ uvicorn app.main:app --reload --port 8000
 - `http://localhost:8000/ui/upload.html`：選檔 → 上傳 → 看到 AI 的理解結果（或 415／422 的錯誤訊息）。
 - `http://localhost:8000/ui/ask.html`：打字提問（中文或英文）→ 看到回答、`search_mode` 與依據照片 id。
 - 實作方式：`app/static/` 兩個純 HTML 檔（內含原生 JS）＋ `main.py` 一行 `app.mount("/ui", StaticFiles(...))`。**零框架、零打包工具、零新增端點、零新增測試**。
-- 自動化測試維持 **49 passed** 且不依賴任何外部服務；12 條 Gherkin Rule 全綠；雙語行為有 7 個額外測試守著。
+- 自動化測試維持 **79 passed** 且不依賴任何外部服務；12 條 Gherkin Rule 全綠；雙語行為有 7 個額外測試守著。

@@ -6,6 +6,8 @@ import hashlib
 import math
 from datetime import datetime
 
+from langchain_core.documents import Document
+
 from app.core import config
 from app.services.ask_workflow import RouteDecision
 from app.services.vlm_service import PhotoUnderstanding
@@ -155,3 +157,41 @@ class FakeRouter:
         if question not in self.decisions:
             raise RuntimeError(f"無法判斷問題類型：{question}")
         return self.decisions[question]
+
+
+def _looks_english(text: str) -> bool:
+    """粗略判斷一段文字是不是英文：完全沒有中日韓漢字就當英文。
+
+    這只是假件用的簡易規則，用來重現「回答語言跟隨提問語言」的行為；
+    產品程式碼裡沒有、也不需要這種判斷（真模型看得懂提問語言）。
+    """
+    return not any("一" <= ch <= "鿿" for ch in text)
+
+
+class FakeAnswerLLM:
+    """拿檢索結果模板化回答；空結果回查無句式。回答語言跟隨提問語言。
+
+    行為固定，讓「回答提及可樂」「使用者獲得查無相關照片的回覆」
+    「英文問題得到英文回答」都可以被驗證。
+    """
+
+    def answer(self, question: str, documents: list[Document]) -> str:
+        english = _looks_english(question)
+
+        if not documents:
+            return "No matching photos found." if english else "查無相關照片。"
+
+        pieces = []
+        for document in documents:
+            first_line = document.page_content.splitlines()[0]
+            items = document.metadata.get("items") or []
+            if english:
+                item_text = ", ".join(items) if items else "none"
+                pieces.append(f"{first_line} (items: {item_text})")
+            else:
+                item_text = "、".join(items) if items else "無"
+                pieces.append(f"{first_line}（物品：{item_text}）")
+
+        if english:
+            return "Based on the photos: " + "; ".join(pieces)
+        return "依照片內容回答：" + "；".join(pieces)

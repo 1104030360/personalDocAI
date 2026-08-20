@@ -223,25 +223,25 @@ personalDocAI/
 │   └── check_embedding_dim.py # 實測 bge-m3 向量維度（P08）
 └── tests/
     ├── __init__.py
-    ├── conftest.py            # 測試共用設定：指向測試庫＋每測清空 photo 表（P03 起；P05/P06 擴充假件安全網與 client fixture、P07 擴充表格小工具）
+    ├── conftest.py            # 測試共用設定：指向測試庫＋每測清空 photo 表（P03 起；P05/P06 擴充假件安全網與 client fixture、P07 擴充表格小工具、P12 安全網併入詢問假件 router／answerer）
     ├── fakes.py               # FakeVLM / FakeEmbeddings / FakeRouter / FakeAnswerLLM / FixedClock（P05、P06、P07、P10、P11）
     ├── unit/                  # 【2026-08-19 起】單元測試：純函式與資料模型
     │   ├── __init__.py
     │   ├── test_photo_repository_unit.py  # to_vector_literal（P03）
     │   ├── test_vlm_service_unit.py       # 六欄位、prompt 雙語規則、日期解析（P05）
     │   └── test_indexing_service_unit.py  # Document 合併順序固定（中英文）＋決定論（P06；原 P07 的 test_indexing.py 由此涵蓋）
-    ├── integration/           # 【2026-08-19 起】整合測試：連 visual_memory_test 測試庫
-    │   ├── __init__.py
-    │   ├── test_photo_repository.py       # repository 五操作＋U4/U5 資料層（P03）
-    │   ├── test_photos_upload.py          # POST /photos 格式檢查＝Rule U1（P04；P05 改寫佔位測試）
-    │   ├── test_upload_feature.py         # 掛 docs/spec/features/上傳照片.feature（P07）
-    │   ├── test_upload_bilingual.py       # 英文照片描述與欄位原樣儲存（P07）
-    │   ├── test_upload_design_rules.py    # 三個設計守衛：415 不進後續／text 空白 422／U4 向量護欄（P07，自煙霧測試承接）
-    │   ├── test_retrieval.py              # 兩條查詢＋30 天邊界＋ILIKE 大小寫（P09）
-    │   └── test_workflow_route.py         # route 節點＋fallback＋英文提問（P10）
-    ├── test_ask_endpoint.py   # POST /ask 基本行為＋英文回答（P11；歸屬子目錄屆時再定）
-    ├── test_ask_feature.py    # 掛 docs/spec/features/自然語言詢問.feature（P12；同上）
-    └── test_error_paths.py    # 錯誤處理總表逐列驗證（P13；同上）
+    └── integration/           # 【2026-08-19 起】整合測試：連 visual_memory_test 測試庫
+        ├── __init__.py
+        ├── test_photo_repository.py       # repository 五操作＋U4/U5 資料層（P03）
+        ├── test_photos_upload.py          # POST /photos 格式檢查＝Rule U1（P04；P05 改寫佔位測試）
+        ├── test_upload_feature.py         # 掛 docs/spec/features/上傳照片.feature（P07）
+        ├── test_upload_bilingual.py       # 英文照片描述與欄位原樣儲存（P07）
+        ├── test_upload_design_rules.py    # 三個設計守衛：415 不進後續／text 空白 422／U4 向量護欄（P07，自煙霧測試承接）
+        ├── test_retrieval.py              # 兩條查詢＋30 天邊界＋ILIKE 大小寫（P09；P13 補 category 守護）
+        ├── test_workflow_route.py         # route 節點＋fallback＋英文提問（P10）
+        ├── test_ask_endpoint.py           # POST /ask 基本行為＋英文回答（P11）
+        ├── test_ask_feature.py            # 掛 docs/spec/features/自然語言詢問.feature（P12）
+        └── test_error_paths.py            # 錯誤處理總表逐列驗證（P13）
 ```
 
 > 過程中還會出現一個**暫時性**檔案 `tests/integration/test_upload_smoke.py`（P05 建立、P06 擴充、**P07 刪除**）。它不在最終結構裡。
@@ -252,6 +252,8 @@ personalDocAI/
 > 🔄 **2026-08-19 再更新（dev-prompt `phase0819-1.md`，P05/P06 開工前；階段I review 後 P05 smoke +1）**：P05／P06 兩列已依更新後計畫改定（TDD 單元測試計入、佔位測試改寫、conftest 假件安全網、review 後補「text 全空白也 422」），累計 **30／36**；**P07 起各列仍為舊制數字**，照慣例等各該 phase 開工前更新計畫時再重算。
 > 🔄 **2026-08-19 三度更新（dev-prompt `phase0819-2.md`，P07/P08 開工前）**：P07／P08 兩列已依更新後計畫改定（三個守衛自 smoke 遷移至 `integration/test_upload_design_rules.py`、原規劃的 indexing 測試由 P06 unit 檔涵蓋），累計 **40／40**；**P09 起各列仍為舊制數字**，照慣例開工前再重算。
 > 🔄 **2026-08-19 四度更新（dev-prompt `phase1819-3.md`，P09/P10 開工前）**：P09／P10 兩列已依更新後計畫改定（兩個測試檔歸 `tests/integration/`），累計 **50／55**；**P11 起各列仍為舊制數字**，照慣例開工前再重算。
+> 🔄 **2026-08-19 五度更新（dev-prompt `phase0819-4.md`，P11/P12 開工前）**：P11／P12 兩列已依更新後計畫改定（兩個測試檔歸 `tests/integration/`、假件 fixture 沿 conftest `wire_fake_ai` 慣例），累計 **60／67**；**P13 起各列仍為舊制數字**，照慣例開工前再重算。
+> 🔄 **2026-08-19 六度更新（dev-prompt `phase0819-5.md`，P13/P14 開工前）**：P13／P14 兩列已依更新後計畫改定（`test_error_paths.py` 歸 `tests/integration/`；P13 步驟 0 收整 P11/P12 輪遞延事項＝category 守護測試 +1 與三項零行為清理），累計 **79／79**。
 
 | Phase | 新增測試 | `pytest -q` 累計 |
 |---|---|---|
@@ -263,10 +265,10 @@ personalDocAI/
 | P08 | 0（不加需要真模型的測試） | **40** |
 | P09 | `integration/test_retrieval.py` 10 | **50** |
 | P10 | `integration/test_workflow_route.py` 5 | **55** |
-| P11 | `test_ask_endpoint.py` 5 | **50** |
-| P12 | `test_ask_feature.py` 7 | **57** |
-| P13 | `test_error_paths.py` 11 | **68** |
-| P14 | 0（網頁介面手動驗收，不寫自動化測試） | **68** |
+| P11 | `integration/test_ask_endpoint.py` 5 | **60** |
+| P12 | `integration/test_ask_feature.py` 7 | **67** |
+| P13 | `integration/test_error_paths.py` 11＋`integration/test_retrieval.py` +1（遞延補洞） | **79** |
+| P14 | 0（網頁介面手動驗收，不寫自動化測試） | **79** |
 
 ---
 
@@ -301,5 +303,5 @@ personalDocAI/
 - 問「有哪些在 Target 拍的收據？」會走條件查詢（`ILIKE` 比對，`target` 也找得到 `Target`）。
 - 問「我最近買過什麼飲料？」或 "What drinks did I buy recently?" 會走語意查詢並套用 30 天過濾，跨語言召回靠多語 embedding。
 - 回答一律由 LLM 依撈到的照片內容產生、**語言跟隨提問**、查無資料時不編造。
-- 12 條 Gherkin Rule 全部有自動化測試把關（**68 個測試全綠**，2026-08-19 起含 P03/P04 的 TDD 測試），且全部測試不依賴任何外部服務（整合測試只用本機測試庫）。
+- 12 條 Gherkin Rule 全部有自動化測試把關（**79 個測試全綠**，2026-08-19 起含 P03/P04 的 TDD 測試），且全部測試不依賴任何外部服務（整合測試只用本機測試庫）。
 - 不想打 `curl` 的時候，直接開 <http://localhost:8000/ui/upload.html> 與 <http://localhost:8000/ui/ask.html> 用瀏覽器操作——兩個純 HTML 檔，零框架、零打包工具、零新增端點。

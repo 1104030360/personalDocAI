@@ -8,7 +8,7 @@
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 11**（`POST /ask` 完整可用、測試累計 31）。
+- 需要已完成的 phase：**Phase 11**（`POST /ask` 完整可用、測試累計 **60**）。
 - 環境：測試資料庫可用；**不需要 Ollama**（全程用假件）。
 - 每次開工先執行：
   ```bash
@@ -45,7 +45,7 @@
      Then  時間過濾後的照片為底下照片 → | 1 | | 3 |
               │
               ▼
- tests/test_ask_feature.py
+ tests/integration/test_ask_feature.py
    Given 現在時間  → context["now"] = 2026-08-18 10:00（get_now 會讀它）
    Given 系統中有… → 逐列 photo_repository.insert_photo()，記錄 規格id → 實際id
    When  使用者詢問 → client.post("/ask", json={"question": …})
@@ -63,7 +63,29 @@
 
 ## 逐步驟操作
 
-### 步驟 1：建立 `tests/test_ask_feature.py`
+### 步驟 0：把詢問用的假件併入 conftest 安全網（階段U review Important-1 的裁定）
+
+Phase 11 讓線上端點多了兩個 AI 注入點（`get_router`／`get_answerer`），但 `tests/conftest.py` 的 autouse 安全網 `wire_fake_ai` 只覆寫 VLM／embeddings／時鐘——之後任何測試只要打 `/ask` 又忘記自行覆寫，就會**默默打真 Ollama**（症狀只是變慢，不會報錯）。這違反「pytest 絕不呼叫真 Ollama」的既定前提，所以建 BDD 測試檔之前先補齊安全網：
+
+1. `tests/conftest.py` 兩行 import 擴充成：
+
+   ```python
+   from app.dependencies import get_answerer, get_embeddings, get_now, get_router, get_vlm  # noqa: E402
+   from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter, FakeVLM, FixedClock  # noqa: E402
+   ```
+
+2. `wire_fake_ai` 在 `get_now` 那行覆寫之後加兩行（docstring 的清單也補上這兩項說明）：
+
+   ```python
+   app.dependency_overrides[get_router] = lambda: FakeRouter()
+   app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
+   ```
+
+3. 順手一行風格校準（階段U review Minor-1）：把 `tests/fakes.py` 檔案中段（`FakeRouter` 類別之後）的 `from langchain_core.documents import Document` 移到檔頂 import 區的 `from app.core import config` 之前。零行為差異。
+
+改完先跑 `pytest -q` 確認仍 **60 passed**（安全網擴充不得改變任何既有測試的結果），再進步驟 1。
+
+### 步驟 1：建立 `tests/integration/test_ask_feature.py`
 
 ```python
 """把 docs/spec/features/自然語言詢問.feature 當測試跑（5 條 Rule）。"""
@@ -75,15 +97,15 @@ from datetime import date, datetime
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from app.dependencies import get_answerer, get_embeddings, get_now, get_router
+from app.dependencies import get_answerer, get_now, get_router
 from app.main import app
 from app.repositories import photo_repository
 from app.services import indexing_service
 from tests.conftest import split_items
 from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter
 
-# 直接掛上規格原檔——不複製、不改寫
-scenarios("../docs/spec/features/自然語言詢問.feature")
+# 直接掛上規格原檔——不複製、不改寫（路徑相對於本檔所在資料夾 tests/integration/）
+scenarios("../../docs/spec/features/自然語言詢問.feature")
 
 # 規格沒有指定「現在時間」的例子一律用這個固定時間，
 # 測試才不會因為今天是哪一天而時好時壞。
@@ -100,14 +122,17 @@ def context() -> dict:
 
 
 @pytest.fixture(autouse=True)
-def wire_fakes(context):
-    """把四種假件接到 app 上（完全不需要 Ollama）。"""
+def wire_ask_fakes(wire_fake_ai, context):
+    """接上詢問用的假件，「現在時間」改接到 context——Given 步驟改 context["now"] 即時生效。
+
+    顯式依賴 conftest 的 wire_fake_ai（假 embedding 已接好、測後統一 clear()），
+    保證本 fixture 在它之後執行——沿用 test_upload_feature.py 的既有慣例。
+    完全不需要 Ollama。
+    """
     app.dependency_overrides[get_router] = lambda: FakeRouter()
     app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
-    app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
     app.dependency_overrides[get_now] = lambda: context["now"]
     yield
-    app.dependency_overrides.clear()
 
 
 def _rows(datatable: list[list[str]]) -> list[dict[str, str]]:
@@ -205,7 +230,7 @@ def 回答提及物品(context, datatable):
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-pytest tests/test_ask_feature.py -v
+pytest tests/integration/test_ask_feature.py -v
 ```
 
 ---
@@ -214,7 +239,7 @@ pytest tests/test_ask_feature.py -v
 
 1. **詢問規格 7 個例子全綠**
    ```bash
-   pytest tests/test_ask_feature.py -v
+   pytest tests/integration/test_ask_feature.py -v
    ```
    預期最後一行：`7 passed`
    預期看到 7 個測試名稱，正好對應規格的 7 個 Example（涵蓋全部 5 條 Rule）：
@@ -228,7 +253,7 @@ pytest tests/test_ask_feature.py -v
 
 2. **兩份規格一起跑全綠**
    ```bash
-   pytest tests/test_upload_feature.py tests/test_ask_feature.py -v
+   pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py -v
    ```
    預期最後一行：`14 passed`（上傳 7 ＋ 詢問 7）
 
@@ -236,19 +261,19 @@ pytest tests/test_ask_feature.py -v
    ```bash
    pytest -q
    ```
-   預期：`38 passed`（**測試累計數：38**＝ Phase 11 的 31 ＋ 本 phase 的 7）
+   預期：`67 passed`（**測試累計數：67**＝ Phase 11 的 60 ＋ 本 phase 的 7）
 
 4. **時間過濾那條真的是靠 SQL 生效**（拿掉時間條件會看到不同結果）
    ```bash
-   pytest tests/test_ask_feature.py -k "最近的照片" -v
+   pytest tests/integration/test_ask_feature.py -k "最近的照片" -v
    ```
    預期：`1 passed`。若你暫時把 `app/repositories/photo_repository.py` 裡 **`search_by_vector`** 的 `COALESCE(...)` 時間條件（`if recent:` 底下那段）註解掉再跑，這條應該要**失敗**——確認它真的在守規則，而不是碰巧通過。（這個例子走語意查詢，所以要註解的是 `search_by_vector` 那一處，不是 `search_by_metadata`。測完記得改回來。）
 
-5. **完全不需要 Ollama**
+5. **完全不需要 Ollama**（本機 Ollama 是 App 版、不歸 brew services 管，所以不停真服務——把 Ollama 位址指向沒有服務在聽的埠，若有任何測試偷打真模型就會連線爆錯）
    ```bash
-   brew services stop ollama && pytest -q && brew services start ollama
+   OLLAMA_BASE_URL=http://localhost:9 pytest -q
    ```
-   預期：`38 passed`
+   預期：`67 passed`
 
 6. **規格檔沒有被動過**
    ```bash
@@ -273,13 +298,13 @@ pytest tests/test_ask_feature.py -v
 `AskRequest.question` 有 `min_length=1`，空字串會被擋。規格的問題都不是空的，若出現 422 多半是 JSON 鍵打錯（必須是 `question`）。
 
 **Q5：測試順序不同時結果不一樣。**
-`conftest.py` 的 `clean_database` 是 `autouse=True`，每個測試前都會 `TRUNCATE ... RESTART IDENTITY`，所以每個測試都從空資料庫開始。若仍不穩定，檢查是不是有測試自己開了連線卻沒關閉。
+`conftest.py` 的 `clean_photo_table` 是 `autouse=True`，每個測試前都會 `TRUNCATE TABLE photo RESTART IDENTITY`，所以每個測試都從空資料庫開始。若仍不穩定，檢查是不是有測試自己開了連線卻沒關閉。
 
 **Q6：要不要把英文提問的例子也加進 `.feature` 檔，讓驗收更完整？**
-**不可以。** `docs/spec/` 是唯讀的，design.md §11 明訂「雙語行為以額外單元測試＋煙霧測試覆蓋，不改規格檔」。英文行為已經有 `tests/test_indexing.py`、`tests/test_upload_bilingual.py`、`tests/test_retrieval.py`、`tests/test_workflow_route.py`、`tests/test_ask_endpoint.py` 五個檔案共 **6 個測試**在守（就是本文件最後說的「6 個額外測試」那一批）。
+**不可以。** `docs/spec/` 是唯讀的，design.md §11 明訂「雙語行為以額外單元測試＋煙霧測試覆蓋，不改規格檔」。英文行為已經有 `tests/unit/test_indexing_service_unit.py`、`tests/integration/test_upload_bilingual.py`、`tests/integration/test_retrieval.py`（大小寫不敏感比對 2 個）、`tests/integration/test_workflow_route.py`、`tests/integration/test_ask_endpoint.py` 五個檔案共 **6 個測試**在守（就是本文件最後說的「6 個額外測試」那一批）。
 
 ---
 
 ## 完成後的專案狀態
 
-第二個驗收里程碑達成：`自然語言詢問.feature` 的 5 條 Rule（Q1〜Q5）全部由自動化測試把關並通過。至此 **12 條 Rule 全數綠燈**，兩個 API 的規格行為都已完成，雙語行為也有 6 個額外測試守著。測試累計 **38** 個。
+第二個驗收里程碑達成：`自然語言詢問.feature` 的 5 條 Rule（Q1〜Q5）全部由自動化測試把關並通過。至此 **12 條 Rule 全數綠燈**，兩個 API 的規格行為都已完成，雙語行為也有 6 個額外測試守著。測試累計 **67** 個。

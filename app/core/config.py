@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- 外部服務位址 ---
-# 資料庫連線字串。測試時會由 tests/conftest.py 改成 visual_memory_test
+# 資料庫連線字串。測試時會由 tests/conftest.py 改成 PersonalDocAI_test
 DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://localhost:5433/visual_memory"
+    "DATABASE_URL", "postgresql://localhost:5433/PersonalDocAI"
 )
 # Ollama 本機服務網址（不是雲端，不需要 API key）
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

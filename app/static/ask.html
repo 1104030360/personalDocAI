@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>問問題 — PersonalDocAI</title>
+<style>
+  body { font-family: system-ui, "PingFang TC", sans-serif;
+         max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+  nav a { margin-right: 1rem; }
+  form { margin: 1rem 0; display: flex; gap: 0.5rem; }
+  input[type=text] { flex: 1; padding: 0.4rem; }
+  button { padding: 0.4rem 1rem; }
+  pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap;
+        word-break: break-word; min-height: 4rem; }
+  .hint { color: #666; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<h1>PersonalDocAI</h1>
+<nav>
+  <a href="/ui/upload.html">上傳照片</a>
+  <a href="/ui/ask.html">問問題</a>
+</nav>
+<hr>
+
+<h2>問問題（中文或英文都可以）</h2>
+<p class="hint">
+  例如：「有哪些在 Target 拍的收據？」、「我最近買過什麼飲料？」、
+  "What drinks did I buy recently?"　——回答的語言會跟著你提問的語言。
+</p>
+
+<form id="ask-form">
+  <input type="text" id="question-input" placeholder="輸入你的問題…" required>
+  <button type="submit" id="submit-button">送出</button>
+</form>
+
+<pre id="result">（尚未提問）</pre>
+
+<script>
+const form = document.getElementById("ask-form");
+const questionInput = document.getElementById("question-input");
+const button = document.getElementById("submit-button");
+const result = document.getElementById("result");
+
+form.addEventListener("submit", async function (event) {
+  event.preventDefault();
+
+  const question = questionInput.value.trim();
+  if (question === "") {
+    result.textContent = "請先輸入問題。";
+    return;
+  }
+
+  button.disabled = true;
+  result.textContent = "思考中…（本機模型要判斷查法再產生回答，可能要等一下）";
+
+  try {
+    const response = await fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: question })
+    });
+    const body = await response.json();
+
+    if (response.status === 200) {
+      const ids = (body.retrieved_photo_ids.length > 0)
+        ? body.retrieved_photo_ids.join(", ")
+        : "（沒有找到相關照片）";
+      result.textContent = [
+        "回答：",
+        body.answer,
+        "",
+        "檢索方式：" + body.search_mode,
+        "依據照片 id：" + ids
+      ].join("\n");
+    } else {
+      const detail = (typeof body.detail === "string")
+        ? body.detail : JSON.stringify(body.detail);
+      result.textContent = "❌ 失敗（HTTP " + response.status + "）\n" + detail;
+    }
+  } catch (error) {
+    result.textContent = "❌ 請求失敗：" + error
+      + "\n最常見原因：uvicorn 沒在跑，或網址、埠號不對。"
+      + "\n若 uvicorn 其實在跑，改看它的終端機視窗印出的錯誤訊息。";
+  } finally {
+    button.disabled = false;
+  }
+});
+</script>
+
+</body>
+</html>

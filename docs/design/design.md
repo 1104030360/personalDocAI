@@ -1,4 +1,4 @@
-# Visual Memory RAG — 設計文件
+# PersonalDocAI — 設計文件（舊名 Visual Memory RAG）
 
 > **一句話：把照片變成可以用中文或英文問的記憶。**
 > 上傳照片後，AI 會「看懂」照片並把內容存成文字與欄位；之後你直接問「我最近買過什麼飲料？」或「What drinks did I buy recently?」，系統會找出相關照片、依照片內容回答你。
