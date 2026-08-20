@@ -558,11 +558,12 @@ rm -rf data                 # 手動測試的殘留清掉
 - [ ] `tests/fakes.py` 有 `make_png_bytes()` 與 `make_jpeg_bytes()`，產生的是 Pillow 打得開的真圖
 - [ ] `app/services/storage_service.py` 五個函式都在：`_ext`、`save_original`、`make_thumbnail`、`absolute_path`、`remove_if_exists`
 - [ ] 縮圖長邊確實是 512、等比、不放大（`pytest tests/unit/test_storage_service_unit.py -v` → `10 passed`）
-- [ ] 沒有任何地方寫 `from app.core.config import DATA_DIR`（那樣測試就改不動了）：
+- [ ] 沒有任何地方寫 `from app.core.config import DATA_DIR`（那樣測試就改不動了）。
+      注意：`config.py` 裡有一行**警告註解**（步驟 3 指定的原文「絕對不要寫 from app.core.config import DATA_DIR…」）本身就含這個字串，所以 grep 要排除註解行才驗得準（2026-08-20 執行時發現的計畫自我衝突，已修正檢查指令）：
       ```bash
-      grep -rn "from app.core.config import" app/ tests/ --include="*.py" || echo "OK：全部走 config.XXX"
+      grep -rn "from app.core.config import" app/ tests/ --include="*.py" | grep -v ":[0-9]*:#" || echo "OK：全部走 config.XXX"
       ```
-      預期印出 `OK：全部走 config.XXX`
+      預期印出 `OK：全部走 config.XXX`（唯一被排除的命中是 config.py 那行警告註解，非 import 敘述）
 - [ ] SQL 依然只出現在 repository 一個檔案（本 phase 不該碰到 SQL）：
       ```bash
       grep -rlnE "SELECT |INSERT INTO|UPDATE |DELETE FROM|TRUNCATE" app/ --include="*.py"
