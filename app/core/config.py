@@ -1,6 +1,7 @@
 """集中管理設定與常數。全專案唯一讀環境變數的地方。"""
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -33,6 +34,14 @@ RECENT_DAYS = 30
 
 # 語意查詢一次取回幾張照片
 TOP_K = 5
+
+# 照片檔案的資料根目錄。資料庫存的是「data/photos/1.jpg」這種相對路徑，
+# 實際落地位置由這個設定決定：
+#   - 正式執行（uvicorn 在專案根目錄啟動）＝專案下的 data/
+#   - pytest ＝ tests/conftest.py 的 isolated_data_dir 會把它改成暫存目錄
+# 因為測試要能改它，程式裡一律寫 config.DATA_DIR（在函式裡即時讀），
+# 絕對不要寫 from app.core.config import DATA_DIR（那樣會在 import 當下就定死值）。
+DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 
 # 允許上傳的圖片格式（其餘一律 415，不做任何後續處理）
 ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png"})

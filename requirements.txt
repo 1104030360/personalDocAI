@@ -7,6 +7,9 @@ pydantic>=2.7             # 定義資料格式並自動驗證
 # --- 資料庫 ---
 psycopg[binary]>=3.2      # Python 連 PostgreSQL 的套件（第 3 代）
 
+# --- 影像處理 ---
+Pillow>=10.0              # 產生縮圖用；只用到「開檔、等比縮小、存檔」三件事
+
 # --- AI 積木 ---
 langchain-core>=1.0       # LangChain 的核心：Document、Embeddings 介面、@chain
 langchain-ollama>=1.0     # 用 LangChain 的介面呼叫本機 Ollama

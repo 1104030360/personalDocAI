@@ -1,7 +1,8 @@
 """全系統唯一寫 SQL 的模組：psycopg 3 ＋ 手寫 SQL。
 
 routers 與 services 一律呼叫這裡的函式，不得自己寫 SQL。
-本檔含上傳寫入與兩條檢索查詢（search_by_metadata／search_by_vector，Phase 9 加入）。
+本檔含上傳寫入、兩條檢索查詢（search_by_metadata／search_by_vector，Phase 9 加入），
+以及資料夾（folder）相關操作（Phase 15 加入）。
 """
 
 from __future__ import annotations
@@ -12,8 +13,27 @@ from typing import Any
 from app.core import config
 from app.db.session import get_connection
 
-# 每次查詢都取回的欄位，固定順序，避免各處寫法不一致
-PHOTO_COLUMNS = "id, text, category, location, items, content_time, uploaded_at"
+# 每次查詢都取回的欄位，固定順序，避免各處寫法不一致。
+# insert_photo 的 RETURNING 與 fetch_photo 的 SELECT 共用這一份，兩邊鍵名保證一致。
+PHOTO_COLUMNS = (
+    "id, text, category, folder_id, location, items, content_time, uploaded_at, "
+    "original_path, thumbnail_path, content_type"
+)
+
+# 六筆預設資料夾（design1.md §5 原文）。
+# ★ 順序就是 id 1〜6，且三個地方必須一模一樣：
+#   db/schema.sql、db/migrate_folders.sql、這裡。改動等於改規格。
+DEFAULT_FOLDERS: list[tuple[str, str, bool]] = [
+    ("未分類", "不確定、關掉彈窗、或暫時不想歸類。這張會進這裡。", True),
+    ("收據", "發票、消費憑證、購物明細。", False),
+    ("飲食", "食物、飲料、餐廳、菜單。", False),
+    ("風景", "戶外、旅遊、地點、景色。", False),
+    ("文件", "非收據的文字資料，例如名片、說明書。", False),
+    ("其他", "看懂是什麼，但不符合上面任何一個。", False),
+]
+
+# 資料夾每次查詢都取回的欄位，固定順序（不含張數——張數只有 list_folders／get_folder 才算）
+FOLDER_COLUMNS = "id, name, description, is_inbox"
 
 
 def to_vector_literal(embedding: list[float]) -> str:
@@ -39,10 +59,22 @@ def insert_photo(
     """
     # 欄位「名稱」清單用 f-string 帶入（固定常數）；欄位「值」一律用 %(名稱)s
     # 參數帶入，交給 psycopg 安全處理——避免 SQL injection（輸入內容被誤當 SQL 執行）
+    # folder_id 由 SQL 當場算出來：
+    #   ① 先找名稱和 category 一樣的資料夾（lower() ＝不分大小寫，'receipt' 也對得到 'Receipt'）
+    #   ② 找不到（含 category 為 NULL）就退回收件箱「未分類」
+    # 兩個子查詢包在 COALESCE 裡，整段仍然是「一條 INSERT」，天然原子。
+    # ★ category 欄位的值本身不動——把它改寫成資料夾名稱是 Phase 20（上傳）與 Phase 21（歸類）的事。
     sql = f"""
-        INSERT INTO photo (text, category, location, items, content_time, uploaded_at, embedding)
+        INSERT INTO photo (
+            text, category, folder_id, location, items, content_time, uploaded_at, embedding
+        )
         VALUES (
-            %(text)s, %(category)s, %(location)s, %(items)s, %(content_time)s,
+            %(text)s, %(category)s,
+            COALESCE(
+                (SELECT id FROM folder WHERE lower(name) = lower(%(category)s::text)),
+                (SELECT id FROM folder WHERE is_inbox)
+            ),
+            %(location)s, %(items)s, %(content_time)s,
             COALESCE(%(uploaded_at)s::timestamptz, now()),
             %(embedding)s::vector
         )
@@ -103,6 +135,119 @@ def clear_photos() -> None:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("TRUNCATE TABLE photo RESTART IDENTITY;")
+
+
+def reset_folders_and_photos() -> None:
+    """把兩張表清空並重播六筆預設資料夾。只給測試用。
+
+    TRUNCATE photo, folder＝一次清空兩張表（photo 用外鍵指著 folder，
+    所以兩張要一起清，不能只清 folder）；
+    RESTART IDENTITY＝把自動編號歸零，重播後 folder 的 id 一定是 1〜6；
+    CASCADE＝連同被外鍵指著的相關表一起清（這裡兩張本來就都寫進去了，加著保險）。
+    """
+    # 絕不清到正式庫：URL 必須含 PersonalDocAI_test 才動手（與 conftest 的防呆雙保險）
+    assert "PersonalDocAI_test" in config.DATABASE_URL
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE photo, folder RESTART IDENTITY CASCADE;")
+            cur.executemany(
+                "INSERT INTO folder (name, description, is_inbox) VALUES (%s, %s, %s);",
+                DEFAULT_FOLDERS,
+            )
+
+
+def list_folders() -> list[dict[str, Any]]:
+    """全部資料夾，依 id 排序，每筆附上裡面有幾張照片。
+
+    用 LEFT JOIN 而不是 JOIN：以資料夾為主，沒有任何照片的資料夾也要出現在清單裡。
+    count(p.id) 不會把 NULL 算進去，所以空資料夾正確地得到 0
+    （若寫成 count(*) 會變成 1，那是常見的坑）。
+    GROUP BY 只寫 f.id 就夠——f.id 是主鍵，PostgreSQL 知道其他 f. 欄位由它唯一決定。
+    """
+    sql = f"""
+        SELECT f.id, f.name, f.description, f.is_inbox, count(p.id) AS photo_count
+        FROM folder f
+        LEFT JOIN photo p ON p.folder_id = f.id
+        GROUP BY f.id
+        ORDER BY f.id;
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            return cur.fetchall()
+
+
+def get_folder(folder_id: int) -> dict[str, Any] | None:
+    """依 id 取回一個資料夾（含照片張數）；找不到回 None。"""
+    sql = """
+        SELECT f.id, f.name, f.description, f.is_inbox, count(p.id) AS photo_count
+        FROM folder f
+        LEFT JOIN photo p ON p.folder_id = f.id
+        WHERE f.id = %(id)s
+        GROUP BY f.id;
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, {"id": folder_id})
+            return cur.fetchone()
+
+
+def find_folder_by_name(name: str) -> dict[str, Any] | None:
+    """依名稱找資料夾，不分大小寫；找不到回 None。
+
+    lower(name) = lower(輸入)＝兩邊都轉小寫再比，所以 'project x' 找得到 'Project X'。
+    中文沒有大小寫，轉了也不變，中文名稱不受影響。
+    Phase 21 的「自建資料夾」會先用這個函式擋重名（回 409），
+    資料庫的 name UNIQUE 只是最後一道防線。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {FOLDER_COLUMNS} FROM folder WHERE lower(name) = lower(%(name)s::text);",
+                {"name": name},
+            )
+            return cur.fetchone()
+
+
+def create_folder(name: str, description: str) -> dict[str, Any]:
+    """建立一個使用者自訂的資料夾，回傳新的那一列。
+
+    is_inbox 用資料表的預設值 false——收件箱只有系統預設的「未分類」一個，
+    使用者建不出第二個（folder_one_inbox 這個部分唯一索引會擋住）。
+    重名的判斷交給呼叫端（先用 find_folder_by_name 查），這裡不管 HTTP 狀態碼。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO folder (name, description)
+                VALUES (%(name)s, %(description)s)
+                RETURNING {FOLDER_COLUMNS};
+                """,
+                {"name": name, "description": description},
+            )
+            return cur.fetchone()
+
+
+def list_photos_in_folder(folder_id: int) -> list[dict[str, Any]]:
+    """某個資料夾裡的照片摘要，新的在前（Phase 22 的縮圖牆要用）。
+
+    只取瀏覽需要的四個欄位——不回傳 embedding（1024 個數字，前端用不到）。
+    ORDER BY id DESC＝id 由大到小；id 自動遞增，所以「大的」就是「晚上傳的」。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, text, uploaded_at, thumbnail_path
+                FROM photo
+                WHERE folder_id = %(folder_id)s
+                ORDER BY id DESC;
+                """,
+                {"folder_id": folder_id},
+            )
+            return cur.fetchall()
 
 
 def search_by_metadata(

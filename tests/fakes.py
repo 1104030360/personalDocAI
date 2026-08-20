@@ -3,14 +3,41 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import math
 from datetime import datetime
 
 from langchain_core.documents import Document
+from PIL import Image
 
 from app.core import config
 from app.services.ask_workflow import RouteDecision
 from app.services.vlm_service import PhotoUnderstanding
+
+
+# ---------- 真的圖片位元組（Pillow 讀得開）----------
+# 為什麼需要它：從 Phase 17 起系統會真的用 Pillow 把上傳的 bytes 打開來做縮圖。
+# b"\x89PNG fake image bytes" 這種假位元組會讓 Pillow 直接拋 UnidentifiedImageError，
+# 所以凡是「預期上傳成功」的測試，一律用下面兩個函式現產一張真的小圖。
+
+
+def _image_bytes(width: int, height: int, image_format: str) -> bytes:
+    """畫一張純色小圖並轉成該格式的位元組。"""
+    buffer = io.BytesIO()   # 假裝成檔案的一段記憶體，不必真的寫到磁碟
+    Image.new("RGB", (width, height), color=(200, 120, 60)).save(
+        buffer, format=image_format
+    )
+    return buffer.getvalue()
+
+
+def make_png_bytes(width: int = 40, height: int = 20) -> bytes:
+    """產生一張真的 PNG。預設 40×20，小到幾乎不花時間。"""
+    return _image_bytes(width, height, "PNG")
+
+
+def make_jpeg_bytes(width: int = 40, height: int = 20) -> bytes:
+    """產生一張真的 JPEG。"""
+    return _image_bytes(width, height, "JPEG")
 
 
 class FakeVLM:

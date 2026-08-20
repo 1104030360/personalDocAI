@@ -1,4 +1,4 @@
-"""pytest 共用設定：把資料庫指到測試庫，並在每個測試前清空 photo 表。"""
+"""pytest 共用設定：把資料庫指到測試庫，每個測試前清空兩張表並重播預設資料夾。"""
 
 import os
 
@@ -16,13 +16,17 @@ config.DATABASE_URL = TEST_DATABASE_URL
 
 
 @pytest.fixture(autouse=True)
-def clean_photo_table():
-    """每個測試開始前清空 photo 表，確保測試彼此獨立。"""
+def reset_tables():
+    """每個測試開始前清空 photo 與 folder 兩張表，並重播六筆預設資料夾。
+
+    重播是必要的：folder 被 TRUNCATE ... RESTART IDENTITY 清掉後 id 會歸零，
+    每個測試因此都拿到一模一樣的 1〜6 六筆資料夾，測試彼此獨立又可預測。
+    """
     # 絕不清到正式庫：URL 必須含 PersonalDocAI_test 才動手
     assert "PersonalDocAI_test" in config.DATABASE_URL
     from app.repositories import photo_repository as repo
 
-    repo.clear_photos()
+    repo.reset_folders_and_photos()
     yield
 
 
@@ -56,6 +60,23 @@ def wire_fake_ai():
     app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
     yield
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """安全網：pytest 永遠不把照片檔寫進專案的 data/。
+
+    把 config.DATA_DIR 指到 pytest 給的暫存資料夾（每個測試一個、測完自動清）。
+    storage_service 的每個函式都是在呼叫當下才讀 config.DATA_DIR，所以這裡改了就生效。
+
+    這條安全網的精神與 wire_fake_ai（絕不打真 Ollama）、reset_tables（絕不動正式庫）
+    完全一樣：危險的預設值由 conftest 統一擋掉，不靠個別測試自律。
+
+    回傳暫存的資料根目錄，需要直接檢查檔案的測試可以把它寫進參數列取用。
+    """
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(config, "DATA_DIR", data_dir)
+    yield data_dir
 
 
 @pytest.fixture
