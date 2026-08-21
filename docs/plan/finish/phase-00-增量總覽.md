@@ -16,7 +16,7 @@
 | 文件 | 涵蓋範圍 | 狀態 |
 |---|---|---|
 | `docs/plan/finish/phase-00-總覽.md` | Phase 01〜14：上傳、詢問、12 條 Gherkin Rule、兩個純 HTML 頁 | **歷史紀錄**，已全數完成（2026-08-19），不再更動 |
-| **本文件**（`unfinish/phase-00-增量總覽.md`） | Phase 15〜26：資料夾、原圖與縮圖、上傳彈窗、瀏覽頁 | **執行中**（P15〜17 已完成並歸檔至 `finish/`，2026-08-20；P18〜24 已完成，2026-08-21；P25 起待做） |
+| **本文件**（`unfinish/phase-00-增量總覽.md`） | Phase 15〜26：資料夾、原圖與縮圖、上傳彈窗、瀏覽頁 | **全數完成**（P15〜17：2026-08-20；P18〜26：2026-08-21。本檔與 25／26 計畫檔待隨 commit 歸檔至 `finish/`） |
 
 兩份路線圖是接力關係：舊的那份做完了才有這一份的起點。舊路線圖裡「❌ 不做照片瀏覽」「❌ 不保留原始照片檔」這類禁令，**已由產品負責人於 2026-08-20 明示改規格推翻**（詳見 design1.md §1.1），那是正式的規格變更，不是實作時偷加功能。舊路線圖的其他禁令（多使用者、非同步佇列、前端框架、雲端部署……）**全部仍然有效**。
 
@@ -171,12 +171,14 @@ pytest -q
 | ☑ | 22 | `api/routers/folders.py`、`schemas/folder.py`（2026-08-21 完成） | `integration/test_folders_endpoint.py` 8 | **140**（實測相符） |
 | ☑ | 23 | `upload.html` 彈窗（2026-08-21 完成，Playwright MCP 實操 13 項全過） | 0（瀏覽器實操驗收） | 不變（140） |
 | ☑ | 24 | `browse.html`、`folder_modal.js`、三頁互連（2026-08-21 完成，Playwright MCP 實操 19 項全過） | 0（瀏覽器實操驗收） | 不變（140） |
-| ☐ | 25 | 錯誤表把關、全量回歸、`CLAUDE.md`、計畫檔歸檔 | `integration/test_folder_error_paths.py` | 開工前依該 phase 計畫填入 |
-| ☐ | 26 | 三頁視覺打磨、`style.css` | 0（瀏覽器實操驗收） | 不變 |
+| ☑ | 25 | 錯誤表把關、全量回歸、`CLAUDE.md`（2026-08-21 完成；計畫檔歸檔待 commit） | `integration/test_folder_error_paths.py` 9 | **149**（實測相符；零 Ollama 同顆數） |
+| ☑ | 26 | 三頁視覺打磨、`style.css`（2026-08-21 完成；frontend-design skill＋immich/photoprism 參考、前後截圖對比＋17 項實操） | 0（瀏覽器實操驗收） | 不變（149） |
 
 ---
 
 ## 6. 最終驗收定義（本增量算不算做完）
+
+> ✅ **2026-08-21 總驗收通過**：§6.1 全數滿足（詢問規格 5 條 Rule 全綠且自 init commit 未動過；上傳規格改版後 10 條全綠；全量 **149 passed** 且零 Ollama 依賴同顆數；§12 逐列由 `test_folder_error_paths.py` 9 顆＋既有測試對照表把關；正式庫 2 張舊照片在「收據」路徑 NULL 占位；真模型煙霧完成；CLAUDE.md 已更新——計畫檔歸檔一項待隨 commit 執行）。§6.2 全數滿足（frontend-design skill＋immich/photoprism 參考連結、三頁＋彈窗共用 `style.css` tokens、無 AI 樣板臉、Playwright 前後截圖對比＋console 乾淨＋三頁互連、全流程實走、`pytest -q` 仍 149）。細節見 `report/2026-08-21-階段SS/TT/UU` 三份 REP。
 
 依序滿足下面兩組條件，本增量才算完成。
 

@@ -16,7 +16,7 @@
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
   pytest -q | tail -1
   ```
-  記下：`＿＿＿ passed`（＝ Phase 25 步驟 4 的最終顆數）。
+  記下：`＿＿＿ passed`（＝ Phase 25 步驟 4 的最終顆數；2026-08-21 校準＝**149**，本 phase 做完必須仍是 149）。
 - 環境（這個 phase 全程要用瀏覽器看畫面）：
   ```bash
   brew services start postgresql@17            # 資料庫
@@ -1107,14 +1107,14 @@ grep -n -A 8 "innerHTML" app/static/*.html app/static/folder_modal.js
 |---|---|
 | ① 頁內／JS 樣式 | `OK：樣式只有 style.css 一個家` |
 | ② 引用 style.css | 三行都是 `1` |
-| ③ 漸層／紫靛 | `OK：沒有漸層、沒有紫靛色`（`rgba(0,0,0,0.45)` 不含這些關鍵字，不會被抓） |
+| ③ 漸層／紫靛 | `OK：沒有漸層、沒有紫靛色`（`rgba(0,0,0,0.45)` 不含這些關鍵字，不會被抓）。**2026-08-21 校準**：步驟 3 要求抄進 `style.css` 檔頭的禁止清單註解本身含有這些關鍵字（引用禁詞≠使用禁詞）——覆核時排除註解行（例如 `\| grep -v "✗"`）後必須零命中；同理適用於「Inter」與「⑦ outline」兩項的檔頭註解命中 |
 | ③ 玻璃擬態 | `OK：沒有玻璃擬態` |
 | ③ Inter | `OK：沒有用 Inter 交差` |
 | ③ 標題 emoji | `OK：標題沒有 emoji` |
 | ④ 深色模式 | `OK：沒有深色模式` ＋ 找得到 `color-scheme: light` |
 | ⑤ npm／外部資源 | 兩行 `OK：…` |
 | ⑤ 端點數 | `photos.py:4`、`ask.py:1`、`folders.py:2`（`__init__.py:0` 也會列出，正常）＋ `main.py` 的 `2`（`/health` 與 `GET /` 轉址）＝合計 **9**——跟 Phase 25 步驟 5 同一種數法（數路由裝飾器）、同一個數字 |
-| ⑤ Python／測試變動 | **完全沒有輸出**（一個 `.py`、一個測試、一行 requirements 都沒動） |
+| ⑤ Python／測試變動 | **不得出現 P26 造成的任何變動**。（2026-08-21 校準：本輪依指示先不 commit，Phase 25 的合法產出——`tests/integration/test_folder_error_paths.py` 與 `CLAUDE.md`——會照常出現在 porcelain 輸出，屬預期；判準是「相對於 Phase 25 完成時的狀態，P26 只動了 `app/static/` 五檔」，用 `git status` 前後對照確認） |
 | ⑥ btn-primary | 兩行都是 `1`（每頁只有一個主要動作；`browse.html` 沒有主按鈕，不列入） |
 | ⑦ outline | `OK：鍵盤外框沒有被拿掉` |
 | ⑧ innerHTML | 每一處 `innerHTML` 賦值都在 render 系列函式裡，`-A 8` 印出的後續幾行中**每個動態值都包著 `esc(`**（這一項要用眼睛逐處看，腳本只是把現場攤出來）；`folder_modal.js` 只有 `holder.innerHTML = FOLDER_MODAL_HTML`（固定樣板字串、無外來資料，安全） |

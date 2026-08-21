@@ -14,7 +14,7 @@
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
   pytest -q | tail -1
   ```
-  本增量開工前（Phase 14 完成時）是 **79 passed**；Phase 15〜24 各自加了測試，所以這裡一定大於 79。把實查數字填進步驟 0 的表格。
+  本增量開工前（Phase 14 完成時）是 **79 passed**；Phase 15〜24 完成後為 **140 passed**（2026-08-21 開工前實查）。本 phase 完成後 ＝ **149**（140 ＋ 新檔 9）。把實查數字填進步驟 0 的表格。
 - 環境：
   - 測試庫 `PersonalDocAI_test` 可用（Phase 15 已用 `db/schema.sql` 重建成最終版）。
   - 正式庫 `PersonalDocAI` 已跑過 `db/migrate_folders.sql`，2 張舊照片仍在。
@@ -129,8 +129,10 @@ cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 # a) 目前測試顆數
 pytest -q | tail -1
 
-# b) 本增量開工前的那個 commit（Phase 14／階段 AA 收尾）——步驟 3 要用它比對規格檔
-git log --oneline | grep -iE "Phase 14|階段AA|階段 AA" | head -3
+# b) 本增量開工前的那個 commit——步驟 3 要用它比對規格檔
+#（2026-08-21 校準：歷史訊息寫的是「Phase 11〜14」，原 grep「Phase 14」撈不到；
+#  基線 commit 實查為 a4e44ef「feat: Phase 11〜14 全數完成」）
+git log --oneline -1 a4e44ef
 ```
 
 把結果填進這張表（**執行時填入，不要留空交差**）：
@@ -438,9 +440,12 @@ pytest tests/integration/test_folder_error_paths.py -v
 pytest tests/integration/test_ask_feature.py -v | tail -3
 # 預期最後一行：7 passed
 
-# b) 詢問規格「檔案本身」零變動——用步驟 0 記下的基線 commit
-git diff --stat <步驟0記下的基線hash> -- docs/spec/features/自然語言詢問.feature
+# b) 詢問規格「檔案本身」零變動——用步驟 0 記下的基線 commit（a4e44ef）
+git diff --stat a4e44ef -- docs/spec/features/自然語言詢問.feature
 # 預期：完全沒有輸出（沒有輸出＝沒有差異）
+# 更強的證明（2026-08-21 校準補充）：這個檔從專案 init commit 之後就沒有任何 commit 動過它
+git log --oneline -- docs/spec/features/自然語言詢問.feature
+# 預期：只有一行（64c412f init）
 
 # c) 上傳規格（Phase 20 已依 design1.md 正式改版）
 pytest tests/integration/test_upload_feature.py -v | tail -3
@@ -535,7 +540,9 @@ echo "== 不得引入 ORM／遷移框架（仍是手寫 SQL）=="
 grep -rniE "sqlalchemy|alembic" app/ --include="*.py" requirements.txt || echo "OK：沒有"
 
 echo "== SQL 只能出現在 repository =="
-grep -rlnE "SELECT |INSERT INTO|UPDATE |DELETE FROM|TRUNCATE" app/ --include="*.py"
+# 2026-08-21 校準：pattern 用「UPDATE photo」而非「UPDATE 」——photos.py 第 225 行
+# 有一句 P21 計畫指定的中文註解「⑥ 一條 UPDATE 同時寫…」，泛用 pattern 會誤中（它不是 SQL）
+grep -rlnE "SELECT |INSERT INTO|UPDATE photo|DELETE FROM|TRUNCATE" app/ --include="*.py"
 
 echo "== 不得有全域例外捕捉（500 要不吞錯）=="
 grep -rnE "exception_handler" app/ --include="*.py" || echo "OK：沒有全域捕捉"
@@ -654,26 +661,21 @@ uvicorn app.main:app --reload --port 8000
 
 ### 步驟 8：更新 `CLAUDE.md`
 
-依契約，Phase 15〜26 的完成敘述在本步驟**一次寫入**（Phase 26 是緊接著就做的最後一個 phase，且只動 `app/static/`，不再改 `CLAUDE.md`——所以敘述裡會先提到它）。
+> 🔧 **2026-08-21 校準**：本步驟原文假設 CLAUDE.md 還停在「Phase 01〜14、79 tests」的狀態、要求一次寫入整段增量敘述。實際上 P15〜17／P18〜20／P21〜24 的成果段已在各輪收尾時逐段寫入（現況段目前是「Phase 18〜24 已完成（2026-08-21），Phase 25〜26 待做」、顆數 **140**）。因此本步驟改為**增量式收尾**，下方 a)〜c) 為改寫後的指引；原文附的整段長敘述**不再使用**（其內容已分散存在）。
 
-**a) 現況段**：把 `## 專案概述` 裡的 `**現況：Phase 01〜14 全數完成，專案完成**（2026-08-19）` 這個開頭改成：
+**a) 現況段**（兩處）：
+1. 現況 header 由「…Phase 18〜24 已完成（2026-08-21），Phase 25〜26 待做」改成「…**增量 Phase 15〜26 全數完成（2026-08-21）**」。
+2. 在 P21〜24 成果段之後**追加一小段** P25〜26 成果（錯誤表逐列把關的新測試檔＋顆數、真模型煙霧、`style.css` 設計 tokens 與三頁改版——P26 完成後一併寫入，見階段 TT），並把「目前 **140** 個全綠」改成最終顆數 **149**。
 
-```
-**現況：Phase 01〜14 ＋ 增量 Phase 15〜26 全數完成**（2026-08-20）
-```
-
-其餘原文保留（那是 Phase 01〜14 的歷史敘述，仍然正確），**只有一個數字要改**：原文裡的「目前 **79** 個全綠」改成步驟 4 記下的最終顆數（不改的話 CLAUDE.md 會前後打架——一段說 79、一段說新數字）。然後在同一段的**最後面**接上這一段新敘述（`NNN` 換成同一個最終顆數）：
+原文以下這段整段長敘述**跳過不用**（保留於此僅供對照）：
 
 ```
 **2026-08-20 增量（`docs/design/design1.md`：資料夾＝category、原圖瀏覽）Phase 15〜26 全數完成**：新增 `folder` 表（六筆種子，「未分類」為 `is_inbox`，`folder_one_inbox` partial unique index 保證全域只有一個收件箱），`photo` 新增 `folder_id`／`original_path`／`thumbnail_path`／`content_type`；正式庫以 `db/migrate_folders.sql`（可重跑、不清資料）一次遷移完成，2 張舊照片歸入「收據」、路徑欄維持 NULL（瀏覽顯示占位，不假裝有圖）。上傳流程改為：格式檢查 → 讀出全部資料夾 → VLM 看圖（prompt 動態注入資料夾清單，`clamp_category()` 把清單外的推薦壓成「未分類」；**仍然只有一次看圖、沒有第二個分類模型**）→ **一律以 category=「未分類」建立 Document 與 embedding** → INSERT → `app/services/storage_service.py` 存原圖與 Pillow 512px 長邊縮圖（落地位置由 `config.DATA_DIR` 決定，pytest 由 `isolated_data_dir` fixture 指到臨時目錄；寫檔失敗會刪檔＋刪列再 re-raise）→ 201 回應含 `folder`／`suggested_folder`／`folders`／`thumbnail_url`。歸類走 `PATCH /photos/{id}/folder`（`folder_id` 與 `name`＋`description` 擇一，404／404／409／422；成功時**先重算 embedding、後一條 UPDATE** 同時寫 `folder_id`＋`category`＋`embedding`，自建路徑的 `create_folder` 也排在算向量之後——所以算向量失敗時資料庫完全沒動、不留空資料夾）。新增 `GET /folders`、`GET /folders/{id}`、`GET /photos/{id}/thumbnail`、`GET /photos/{id}/image`（路徑 NULL／檔案不存在／id 不存在一律 404）——**端點共 9 個**。網頁介面三頁（`upload.html`／`browse.html`／`ask.html`）＋共用 `folder_modal.js`＋共用 `style.css`（Phase 26 美化），仍是**零框架、零打包、零自動化測試**，驗收以瀏覽器實操為準。`docs/spec/features/上傳照片.feature` 已於 Phase 20 依 design1.md **正式改版**（產品負責人核准解除唯讀）；`自然語言詢問.feature` 全程未動、5 條 Rule 全綠。錯誤路徑由 `tests/integration/test_folder_error_paths.py`（9 個測試，已被 Phase 19〜21 覆蓋的列不重寫）對著 design1.md §12 逐列把關。測試總數 **NNN** 全綠且不依賴任何外部服務。本批 phase 計畫已歸檔至 `docs/plan/finish/`（含 `phase-00-增量總覽.md`）。
 ```
 
-**b) 指令段**：在 `## 指令` 的「資料庫建表」那組之後補上：
+**b) 指令段**（2026-08-21 校準：`migrate_folders.sql` 那條指令**已存在**於 CLAUDE.md，不重複加）：只補上這一條：
 
 ```bash
-# 正式庫一次性遷移（可重跑、不清資料；正式庫絕不可跑 schema.sql，那支會 DROP TABLE）
-psql -d PersonalDocAI -f db/migrate_folders.sql
-
 # 只跑本增量的錯誤路徑把關（9 個）
 pytest tests/integration/test_folder_error_paths.py -v
 ```
@@ -694,14 +696,13 @@ uvicorn app.main:app --reload --port 8000
 
 ### 步驟 9：把本批計畫檔歸檔到 `docs/plan/finish/`
 
-Phase 26 還沒做完，但它的計畫檔與本批其他 12 份是一起交付的，依歷史慣例一起歸檔（`finish/` 放的是「本批的計畫文件」，`unfinish/` 清空代表沒有待辦的計畫）。
+> 🔧 **2026-08-21 校準**：phase-15〜24 共十份已於前兩輪隨 commit 歸檔，`unfinish/` 只剩 **3 份**（`phase-00-增量總覽.md`、`phase-25`、`phase-26`）；且 `git mv` 會直接 stage、與本輪「先不 commit」的指示衝突——**本步驟與步驟 10 一併延後到使用者要求 commit 時執行**，屆時只移剩餘 3 份。
 
 ```bash
 cd /Users/linjunting/personalDocAI
 git mv docs/plan/unfinish/phase-00-增量總覽.md docs/plan/finish/
-for n in 15 16 17 18 19 20 21 22 23 24 25 26; do
-  git mv docs/plan/unfinish/phase-${n}-*.md docs/plan/finish/
-done
+git mv docs/plan/unfinish/phase-25-*.md docs/plan/finish/
+git mv docs/plan/unfinish/phase-26-*.md docs/plan/finish/
 
 ls docs/plan/unfinish/    # 預期：空的
 ls docs/plan/finish/      # 預期：原本 15 份 ＋ 本批 13 份 ＝ 28 份
@@ -748,13 +749,13 @@ EOF
 - [ ] `git diff --stat <基線hash> -- docs/spec/features/自然語言詢問.feature` **無任何輸出**
 - [ ] `pytest tests/integration/test_upload_feature.py` 全綠（改版後上傳規格全數 Rule）
 - [ ] 步驟 4 的每檔顆數表已填滿，**最終顆數 = ＿＿＿**（三處一致：本清單、`CLAUDE.md`、commit 訊息）
-- [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 與正常跑的顆數**完全相同**（證明零 Ollama 依賴）
+- [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 與正常跑的顆數**完全相同**（＝**149**，證明零 Ollama 依賴）
 - [ ] 步驟 5 檢查腳本每一項都符合預期（特別是：端點恰 **9**、寫檔只在 `storage_service.py`、SQL 只在 `photo_repository.py`、metadata 恰四欄、無刪除端點、`data/` 未進版控、`vlm_service.py` 的 `ChatOllama` 恰 **2** 行——import＋建構各一，建構恰 1 處）
 - [ ] 步驟 6 正式庫四個查詢全部符合預期（**2 張舊照片在「收據」、兩個路徑欄皆 NULL**、收件箱恰 1、`category` 與 `folder.name` 零不一致）
 - [ ] 步驟 7 真模型煙霧 14 項全部通過，且視窗 A 沒有 traceback
 - [ ] `CLAUDE.md` 三處已更新（現況段、指令段、陷阱段），最終顆數已填入
-- [ ] `docs/plan/unfinish/` 已清空，13 份計畫檔在 `docs/plan/finish/`
-- [ ] **最後一步**：`pytest -q` 全綠 → `git add -A` → `git status` 確認沒有圖片檔被加入 → `git commit`（訊息照步驟 10）
+- [ ] `docs/plan/unfinish/` 已清空，13 份計畫檔在 `docs/plan/finish/`（2026-08-21 校準：**延後與 commit 一起做**——git mv 會 stage、與「先不 commit」衝突；15〜24 十份已在 finish/）
+- [ ] **最後一步**：`pytest -q` 全綠 → `git add -A` → `git status` 確認沒有圖片檔被加入 → `git commit`（訊息照步驟 10；2026-08-21 校準：**延後至使用者要求 commit 時執行**）
 
 ---
 
