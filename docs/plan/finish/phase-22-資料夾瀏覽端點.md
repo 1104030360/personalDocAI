@@ -18,7 +18,7 @@
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
   pytest -q
   ```
-  Phase 14 完成時是 **79 passed**；Phase 15〜21 各自加了測試，所以這裡會是一個比 79 大的數字。**把它記成 N**，本 phase 做完應該是 **N ＋ 8**。
+  Phase 20 完成時是 **124 passed**、Phase 21 完成後是 **132 passed**（2026-08-21 校準；此即本 phase 的基線 **N＝132**）。本 phase 做完應該是 **N ＋ 8 ＝ 140**。
 - 環境：PostgreSQL@17（5433 埠）要在跑；**本 phase 的測試完全不需要 Ollama**（兩個端點沒有任何 AI）。
 - 每次開工先執行：
   ```bash
@@ -425,7 +425,7 @@ pytest tests/integration/test_folders_endpoint.py -v
 pytest -q
 ```
 
-預期：`N + 8 passed`（N＝步驟開工前抄下來的基線）。
+預期：`N + 8 passed`（N＝132，即 **140 passed**）。
 
 ### 步驟 6：用真的伺服器看一眼（可選但建議）
 
@@ -478,7 +478,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/folders/999
       cd /Users/linjunting/personalDocAI && source .venv/bin/activate
       pytest -q
       ```
-      預期：`N + 8 passed`（N 是開工前抄下來的基線），且沒有任何測試變紅——本 phase 沒改動任何既有行為。
+      預期：`N + 8 passed`（N＝132，即 **140 passed**），且沒有任何測試變紅——本 phase 沒改動任何既有行為。
 - [ ] git commit
       ```bash
       git add app/schemas/folder.py app/api/routers/folders.py app/main.py tests/integration/test_folders_endpoint.py
@@ -514,4 +514,4 @@ FastAPI 看到 `folder_id: int` 卻收到 `abc`，會自動回 **422**（參數�
 
 ## 完成後的專案狀態
 
-後端的資料夾功能到此完整：建（Phase 21 的自建）、歸類（Phase 21 的 PATCH）、讀圖（Phase 19）、**瀏覽（本 phase）**。瀏覽頁需要的資料現在全部拿得到——`GET /folders` 給資料夾卡片，`GET /folders/{id}` 給縮圖牆，缺圖的照片明確回 `null` 讓前端畫占位。接下來 Phase 23、24 才是把這些資料畫到畫面上。測試累計 **N ＋ 8**。
+後端的資料夾功能到此完整：建（Phase 21 的自建）、歸類（Phase 21 的 PATCH）、讀圖（Phase 19）、**瀏覽（本 phase）**。瀏覽頁需要的資料現在全部拿得到——`GET /folders` 給資料夾卡片，`GET /folders/{id}` 給縮圖牆，缺圖的照片明確回 `null` 讓前端畫占位。接下來 Phase 23、24 才是把這些資料畫到畫面上。測試累計 **N ＋ 8 ＝ 140**。

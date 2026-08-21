@@ -12,7 +12,7 @@
   - **Phase 20**：`POST /photos` 的 201 回應已經含 `folder`（一定是「未分類」）、`suggested_folder`（AI 建議的那一個）、`folders`（完整清單）、`thumbnail_url`。
   - **Phase 21**：`PATCH /photos/{id}/folder` 已可用，兩種 body 擇一（`{"folder_id": 2}` 或 `{"name": "...", "description": "..."}`），錯誤碼 404／409／422。
   - **Phase 22**：`GET /folders`（本 phase 用不到，但驗收時拿它核對張數很方便）。
-- 開工前基線：先跑一次 `pytest -q` 把數字抄下來記成 **N**。**本 phase 做完必須還是 N**——一個測試都不會增減。
+- 開工前基線：先跑一次 `pytest -q` 把數字抄下來記成 **N**（Phase 22 完成後為 **140**，2026-08-21 校準）。**本 phase 做完必須還是 N＝140**——一個測試都不會增減。
 - 環境：這個 phase 是**手動用瀏覽器操作**，走真模型那條路，所以三樣都要在跑：
   ```bash
   brew services start postgresql@17            # PostgreSQL@17（5433 埠）
@@ -545,7 +545,7 @@ screencapture -x /tmp/real_photo.png
       cd /Users/linjunting/personalDocAI && source .venv/bin/activate
       pytest -q
       ```
-      預期：`N passed`（N＝開工前的基線）。本 phase 不新增、不修改任何自動化測試。
+      預期：`N passed`（N＝開工前的基線，即 **140 passed**）。本 phase 不新增、不修改任何自動化測試。
 - [ ] **14. git commit**
       ```bash
       git add app/static/upload.html

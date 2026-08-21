@@ -14,7 +14,7 @@
   - **Phase 17**（`storage_service`、`config.DATA_DIR`、conftest 的 `isolated_data_dir`）
   - **Phase 18**（`build_vlm_prompt(folders)`、`understand(image_bytes, content_type, folders)`、`clamp_category(category, folders)`）
   - **Phase 19**（上傳寫檔流程、`GET /photos/{id}/thumbnail`／`/image`、`update_photo_paths`／`delete_photo`）
-- **開工前基線**：先執行 `pytest -q` 把「目前全綠的顆數」記下來（Phase 01〜14 的歷史基線是 **79 passed**，Phase 15〜19 會再往上加）。本 phase 完成後的顆數 ＝ 基線 **＋3**（規格檔從 7 個 Example 增為 10 個）。
+- **開工前基線**：先執行 `pytest -q` 把「目前全綠的顆數」記下來（Phase 15〜17 完成時為 **103**；Phase 18 後 **110**；Phase 19 後 **121**——此即本 phase 的開工基線）。本 phase 完成後的顆數 ＝ 基線 **＋3 ＝ 124**（規格檔從 7 個 Example 增為 10 個）。
 - 環境：PostgreSQL@17 在 5433、測試庫 `PersonalDocAI_test` 已用最新 `db/schema.sql` 重建過（有 `folder` 表與六筆種子）。**不需要 Ollama**（全程假件）。
 - 每次開工先執行：
   ```bash
@@ -881,7 +881,7 @@ pytest tests/integration/test_error_paths.py -q
 pytest -q
 ```
 
-預期：全綠，顆數 ＝ 步驟 0 記下的基線 **＋3**。
+預期：全綠，顆數 ＝ 步驟 0 記下的基線 **＋3 ＝ 124**。
 
 再單獨確認詢問規格沒被波及：
 
@@ -905,7 +905,11 @@ git commit -m "feat: Phase 20 上傳未分類流程與規格改版——上傳�
 
 - [ ] `pytest tests/integration/test_upload_feature.py -v` → **10 passed**，10 個名稱與規格 Example 一一對應
 - [ ] `grep -c "Rule:" docs/spec/features/上傳照片.feature` → `10`；`grep -c "Example:" …` → `10`
-- [ ] `grep -n "不含原始照片檔" docs/spec/features/上傳照片.feature || echo "OK：已移除"` → 印 `OK：已移除`
+- [ ] Rule 正文已無「不含原始照片檔」約束（2026-08-21 校準：檔頭 `#` 註解會逐字引用舊定案宣告其被推翻，屬預期，掃描時要排除註解行）：
+      ```bash
+      grep -v "^#" docs/spec/features/上傳照片.feature | grep -n "不含原始照片檔" || echo "OK：已移除"
+      ```
+      → 印 `OK：已移除`
 - [ ] `grep -n "2026-08-20 依 docs/design/design1.md 正式改版" docs/spec/features/上傳照片.feature` → 有輸出（檔頭註解已註明改版來源）
 - [ ] `git diff --stat docs/spec/features/自然語言詢問.feature` → **沒有輸出**（詢問規格一個字沒動）
 - [ ] `pytest tests/integration/test_ask_feature.py -v` → **7 passed**（Q1〜Q5 全綠）
@@ -947,7 +951,7 @@ git commit -m "feat: Phase 20 上傳未分類流程與規格改版——上傳�
       ```
       預期：`metadata.category` 與 `folder.name` 都是「未分類」、`suggested_folder.name` 是「收據」、`thumbnail_url` 是 `/photos/1/thumbnail`、`folders` 印出六個名稱
 - [ ] pytest 沒有寫進專案的 `data/`：`ls data/photos 2>/dev/null | wc -l` 在跑 `pytest -q` **前後各執行一次，兩次數字相同**（`data/` 已被 .gitignore 忽略，用 `git status` 看不出來；Phase 17 的 `isolated_data_dir` 應把測試檔案全部導到 tmp）
-- [ ] `pytest -q` **全綠**，顆數 ＝ 基線 ＋3
+- [ ] `pytest -q` **全綠**，顆數 ＝ 基線 ＋3 ＝ **124**
 - [ ] `git commit` 完成（訊息含實際累計顆數）
 
 ---
@@ -982,4 +986,4 @@ design1.md §14 已經否決這個方案（「沒選就自動採用 AI 第一推
 
 ## 完成後的專案狀態
 
-上傳流程完成最終形：照片進來 → VLM 帶著資料夾清單看圖 → 建議被夾回清單內 → 照片先躺在「未分類」→ 原圖與縮圖落地 → 201 回應一次帶齊彈窗要用的所有資料。規格檔已正式改版成新行為（10 條 Rule 全綠），詢問規格 5 條 Rule 完全不受影響。**但使用者還沒辦法「確認歸類」**——按下彈窗按鈕之後要打的那個端點是 Phase 21 的事。測試顆數 ＝ 開工基線 ＋3。
+上傳流程完成最終形：照片進來 → VLM 帶著資料夾清單看圖 → 建議被夾回清單內 → 照片先躺在「未分類」→ 原圖與縮圖落地 → 201 回應一次帶齊彈窗要用的所有資料。規格檔已正式改版成新行為（10 條 Rule 全綠），詢問規格 5 條 Rule 完全不受影響。**但使用者還沒辦法「確認歸類」**——按下彈窗按鈕之後要打的那個端點是 Phase 21 的事。測試顆數 ＝ 開工基線 ＋3 ＝ **124**。

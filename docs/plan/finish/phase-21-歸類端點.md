@@ -12,7 +12,7 @@
   - **Phase 15**（`folder` 表、`fetch_photo()` 的 SELECT 已含 `folder_id`）
   - **Phase 16**（`get_folder()`／`find_folder_by_name()`／`create_folder()`／`list_folders()`）
   - **Phase 20**（上傳一律進「未分類」、`UploadResponse` 已有 `folders` 清單、`schemas/photo.py` 已有 `FolderOut`）
-- **開工前基線**：先執行 `pytest -q` 把「目前全綠的顆數」記下來（Phase 20 完成後的數字）。本 phase 完成後的顆數 ＝ 基線 **＋8**。
+- **開工前基線**：先執行 `pytest -q` 把「目前全綠的顆數」記下來（Phase 20 完成後為 **124**，2026-08-21 實查）。本 phase 完成後的顆數 ＝ 基線 **＋8 ＝ 132**。
 - 環境：PostgreSQL@17 在 5433、測試庫 `PersonalDocAI_test` 已是最新 schema。**不需要 Ollama**（全程假件）。
 - 每次開工先執行：
   ```bash
@@ -577,7 +577,7 @@ pytest tests/integration/test_assign_folder.py -v
 pytest -q
 ```
 
-預期：全綠，顆數 ＝ 步驟開工時記下的基線 **＋8**。
+預期：全綠，顆數 ＝ 步驟開工時記下的基線 **＋8 ＝ 132**。
 
 順手確認三件事：
 
@@ -662,7 +662,7 @@ git commit -m "feat: Phase 21 歸類端點——PATCH /photos/{id}/folder（採�
       ```
       預期輸出：`狀態碼： 500`、`自建路徑狀態碼： 500`，其餘四行都是 `True`
 - [ ] `pytest tests/integration/test_ask_feature.py -v` → **7 passed**（詢問規格 5 條 Rule 不受影響）
-- [ ] `pytest -q` **全綠**，顆數 ＝ 基線 ＋8
+- [ ] `pytest -q` **全綠**，顆數 ＝ 基線 ＋8 ＝ **132**
 - [ ] `git commit` 完成（訊息含實際累計顆數）
 
 ---
@@ -703,4 +703,4 @@ git commit -m "feat: Phase 21 歸類端點——PATCH /photos/{id}/folder（採�
 
 ## 完成後的專案狀態
 
-彈窗背後的後端補齊了：照片可以從「未分類」搬到任何現有資料夾，也可以當場開一個新資料夾把它放進去；`category`、`folder_id`、`embedding` 三者一起更新，語意查詢拿得到正確的類別訊號。自建的資料夾立刻進入同一份清單，下一次上傳時 VLM 的 prompt 就看得到它。**但使用者還是只能用 curl 打這個端點**——把它接成真正的彈窗是 Phase 23、把照片列出來看是 Phase 22 與 24 的事。測試顆數 ＝ 開工基線 ＋8。
+彈窗背後的後端補齊了：照片可以從「未分類」搬到任何現有資料夾，也可以當場開一個新資料夾把它放進去；`category`、`folder_id`、`embedding` 三者一起更新，語意查詢拿得到正確的類別訊號。自建的資料夾立刻進入同一份清單，下一次上傳時 VLM 的 prompt 就看得到它。**但使用者還是只能用 curl 打這個端點**——把它接成真正的彈窗是 Phase 23、把照片列出來看是 Phase 22 與 24 的事。測試顆數 ＝ 開工基線 ＋8 ＝ **132**。

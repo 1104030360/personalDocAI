@@ -10,8 +10,8 @@
 
 ## 前置條件
 
-- 需要已完成的 phase：**Phase 15**（`photo` 已有 `original_path` / `thumbnail_path` / `content_type` 三欄，`fetch_photo()` 的 SELECT 已把它們取回來）、**Phase 16**（資料夾資料層）、**Phase 17**（`storage_service` 五個函式、`config.DATA_DIR`、conftest 的 `isolated_data_dir`、`tests/fakes.py` 的 `make_png_bytes()` / `make_jpeg_bytes()`）、**Phase 18**（VLM 收 `folders` 參數）。
-- 基線（開工前**實查**）：`pytest -q` 全綠。數字＝ **79**（Phase 01〜14）＋ Phase 15〜18 各自新增的顆數。動手前先跑一次記下來。
+- 需要已完成的 phase：**Phase 15**（`photo` 已有 `original_path` / `thumbnail_path` / `content_type` 三欄，`fetch_photo()` 的 SELECT 已把它們取回來）、**Phase 16**（資料夾資料層）、**Phase 17**（`storage_service` 四個公開函式 `save_original`／`make_thumbnail`／`absolute_path`／`remove_if_exists`、`config.DATA_DIR`、conftest 的 `isolated_data_dir`、`tests/fakes.py` 的 `make_png_bytes()` / `make_jpeg_bytes()`）、**Phase 18**（VLM 收 `folders` 參數）。
+- 基線（開工前**實查**）：`pytest -q` 全綠。數字＝ **110**（Phase 15〜17 完成時的 103 ＋ Phase 18 的 7）。動手前先跑一次記下來。
 - 環境：需要測試資料庫；本 phase 的測試**不需要 Ollama**。
 - 每次開工先執行：
   ```bash
@@ -325,7 +325,7 @@ pytest tests/integration/test_photo_files.py -q
 
 ### 步驟 2：`photo_repository.py` 新增兩個函式
 
-打開 `app/repositories/photo_repository.py`，把下面兩個函式接在 `reset_folders_and_photos()`（Phase 15 新增，位於 `clear_photos()` 之後）的後面、兩條檢索查詢 `search_by_metadata` 之前，讓「寫入類」的函式聚在一起：
+打開 `app/repositories/photo_repository.py`，把下面兩個函式接在 `reset_folders_and_photos()`（Phase 15 新增，位於 `clear_photos()` 之後）的後面、Phase 16 的資料夾函式 `list_folders()` 之前，讓照片「寫入類」的函式聚在一起（資料夾五函式與兩條檢索查詢維持在它們後面）：
 
 ```python
 def update_photo_paths(
@@ -664,7 +664,7 @@ def test_大檔案照樣可以上傳(client):
 pytest -q
 ```
 
-預期：**基線顆數 ＋ 11**，全綠。
+預期：**基線顆數 ＋ 11 ＝ 121**，全綠。
 
 順便確認兩份規格檔仍然全綠（本 phase 沒有改任何規格行為）：
 
@@ -743,13 +743,15 @@ curl -s -o /dev/null -w "舊照片 1 HTTP %{http_code}\n" http://localhost:8000/
       ```bash
       grep -n "@router.get\|FileResponse(" app/api/routers/photos.py
       ```
-- [ ] 端點數量：`POST /photos`、`POST /ask`、`GET /`、`GET /health`、`GET /photos/{photo_id}/thumbnail`、`GET /photos/{photo_id}/image`——本 phase 淨增 **2** 個：
+- [ ] 端點數量：`POST /photos`、`POST /ask`、`GET /`、`GET /health`、`GET /photos/{photo_id}/thumbnail`、`GET /photos/{photo_id}/image`——本 phase 淨增 **2** 個
+      （2026-08-21 校準：本專案的 FastAPI 0.141 會把 `include_router()` 包成 `_IncludedRouter`、不攤平進 `app.routes`，直接列 `app.routes` 看不到 router 端點；改查 `/openapi.json`，與既有測試 `test_openapi_has_photos_endpoint` 同一慣例）：
       ```bash
       python -c "
+      from fastapi.testclient import TestClient
       from app.main import app
-      for r in app.routes:
-          if hasattr(r, 'methods'):
-              print(sorted(r.methods), r.path)
+      paths = TestClient(app).get('/openapi.json').json()['paths']
+      for p, ms in sorted(paths.items()):
+          print(sorted(m.upper() for m in ms), p)
       "
       ```
 - [ ] 回應 JSON **沒變**：`app/schemas/photo.py` 一行都沒改（`git diff --stat app/schemas/photo.py` 無輸出）
@@ -763,7 +765,7 @@ curl -s -o /dev/null -w "舊照片 1 HTTP %{http_code}\n" http://localhost:8000/
 - [ ] `pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py -v` 全綠（12 條 Rule、14 個例子）
 - [ ] 步驟 7 的手動實測全部符合預期（含瀏覽器真的看到圖、正式庫舊照片 404）
 - [ ] 手動實測產生的 `data/` **不在** `git status` 裡
-- [ ] **全量 `pytest -q` 全綠**，顆數＝開工前基線 ＋ 11
+- [ ] **全量 `pytest -q` 全綠**，顆數＝開工前基線 ＋ 11 ＝ **121**
 - [ ] git commit：
       ```bash
       cd /Users/linjunting/personalDocAI
@@ -814,4 +816,4 @@ curl -s -o /dev/null -w "舊照片 1 HTTP %{http_code}\n" http://localhost:8000/
 
 還沒做的是本增量的重點體驗：上傳後 `category` 仍照舊存 VLM 給的值、回應也還沒有 `suggested_folder` / `folders` / `thumbnail_url`。接下來 **Phase 20** 會把「一律先進未分類 ＋ 回傳建議與完整清單」的新流程接起來，並正式改版 `上傳照片.feature` 規格檔。
 
-測試累計 ＝ 開工前基線 ＋ **11**。
+測試累計 ＝ 開工前基線 ＋ **11** ＝ **121**。

@@ -13,7 +13,7 @@
   - **Phase 21**：`PATCH /photos/{id}/folder`（彈窗歸類用）
   - **Phase 22**：`GET /folders`、`GET /folders/{id}`（本頁的兩個資料來源）
   - **Phase 23**：`upload.html` 裡已經有一整段可重用的彈窗程式碼（本 phase 要把它搬走）
-- 開工前基線：先跑一次 `pytest -q` 把數字抄下來記成 **N**。**本 phase 做完必須還是 N**——一個測試都不會增減。
+- 開工前基線：先跑一次 `pytest -q` 把數字抄下來記成 **N**（Phase 22／23 完成後為 **140**，2026-08-21 校準）。**本 phase 做完必須還是 N＝140**——一個測試都不會增減。
 - 環境（手動瀏覽器驗收，走真模型那條路）：
   ```bash
   brew services start postgresql@17            # PostgreSQL@17（5433 埠）
@@ -597,9 +597,10 @@ grep -n "RedirectResponse(url=" app/main.py
         printf "%s " "$path"
         curl -s -o /dev/null -w "%{http_code}\n" "http://localhost:8000$path"
       done
-      curl -sI http://localhost:8000/ | head -n 3
+      curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://localhost:8000/
       ```
-      預期：四行都是 `200`；最後 `curl -I` 顯示 `307` 且 `location: /ui/upload.html`（根路徑仍轉上傳頁）。
+      預期：四行都是 `200`；最後一行是 `307 http://localhost:8000/ui/upload.html`（根路徑仍轉上傳頁）。
+      （2026-08-21 校準：原指令用 `curl -I` 發 HEAD，而 FastAPI 的 `@app.get` 不自動支援 HEAD 會回 405；瀏覽器實際走 GET，改用 GET 驗證。）
 - [ ] **2. 資料夾清單畫得出來**
       開 <http://localhost:8000/ui/browse.html>。
       **看到**：標題「資料夾」，底下**至少六張卡片**（未分類／收據／飲食／風景／文件／其他，加上 Phase 23 自建的「專案X」）。每張卡片有粗體的「名稱（N 張）」與一行灰色說明。
@@ -663,7 +664,7 @@ grep -n "RedirectResponse(url=" app/main.py
       cd /Users/linjunting/personalDocAI && source .venv/bin/activate
       pytest -q
       ```
-      預期：`N passed`（N＝開工前的基線）。
+      預期：`N passed`（N＝開工前的基線，即 **140 passed**）。
 - [ ] **19. git commit**
       ```bash
       git add app/static/browse.html app/static/folder_modal.js app/static/upload.html app/static/ask.html
@@ -702,4 +703,4 @@ grep -n "RedirectResponse(url=" app/main.py
 
 ## 完成後的專案狀態
 
-design1.md §0 的三個體驗缺口全部補完：**看得見**（縮圖牆，缺圖的誠實顯示占位）、**分得開**（資料夾 ＝ category，上傳與瀏覽兩處都能歸類）、**還能再問**（`/ask` 完全沒動）。網頁介面成為三頁互連的整體——`/ui/upload.html`（上傳＋彈窗）、`/ui/browse.html`（資料夾＋縮圖牆＋彈窗）、`/ui/ask.html`（問答），`GET /` 仍轉到上傳頁；彈窗程式碼全站只有 `app/static/folder_modal.js` 一份。**零框架、零打包工具、零新增端點、零新增測試**，`pytest -q` 仍是 **N**。剩下的只有 Phase 25 的錯誤收尾與全量回歸，以及 Phase 26 的美化。
+design1.md §0 的三個體驗缺口全部補完：**看得見**（縮圖牆，缺圖的誠實顯示占位）、**分得開**（資料夾 ＝ category，上傳與瀏覽兩處都能歸類）、**還能再問**（`/ask` 完全沒動）。網頁介面成為三頁互連的整體——`/ui/upload.html`（上傳＋彈窗）、`/ui/browse.html`（資料夾＋縮圖牆＋彈窗）、`/ui/ask.html`（問答），`GET /` 仍轉到上傳頁；彈窗程式碼全站只有 `app/static/folder_modal.js` 一份。**零框架、零打包工具、零新增端點、零新增測試**，`pytest -q` 仍是 **N＝140**。剩下的只有 Phase 25 的錯誤收尾與全量回歸，以及 Phase 26 的美化。

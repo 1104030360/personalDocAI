@@ -11,7 +11,7 @@
 ## 前置條件
 
 - 需要已完成的 phase：**Phase 15**（`folder` 表＋六筆預設資料夾、conftest 的 `reset_tables` 每測重播種子）、**Phase 16**（`photo_repository.list_folders()`，回傳鍵 `id,name,description,is_inbox,photo_count`）、**Phase 17**（檔案儲存服務；本 phase 不用它，但照順序做基線才對得上）。
-- 基線（開工前**實查**）：`pytest -q` 全綠。數字＝ **79**（Phase 01〜14）＋ Phase 15〜17 各自新增的顆數。動手前先跑一次記下來。
+- 基線（開工前**實查**）：`pytest -q` 全綠。數字＝ **103**（Phase 01〜14 的 79 ＋ Phase 15〜17 的 24；2026-08-21 開工前實查相符）。
 - 環境：本 phase 的測試**不需要 Ollama**（`wire_fake_ai` 一律接假件），但需要測試資料庫（要讀資料夾清單）。
 - 每次開工先執行：
   ```bash
@@ -440,7 +440,7 @@ def test_上傳時把現有資料夾清單傳給看圖(client):
 pytest -q
 ```
 
-預期：**基線顆數 ＋ 7**（單元 6 ＋ 整合 1），全綠。
+預期：**基線顆數 ＋ 7 ＝ 110**（單元 6 ＋ 整合 1），全綠。
 
 特別確認既有的上傳規格 7 條 Rule 仍然全綠——`FakeVLM` 回的「收據」本來就在預設清單裡，而且本 phase 沒有改寫入行為，所以規格檔的每一個 Example 都不受影響：
 
@@ -505,7 +505,7 @@ PY
       預期只有 `app/services/vlm_service.py` 與 `app/services/ask_workflow.py` 既有的那幾處，數量與開工前相同
 - [ ] `pytest tests/unit/test_vlm_service_unit.py -v` → `12 passed`
 - [ ] `pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py -v` 全綠，顆數與開工前相同
-- [ ] **全量 `pytest -q` 全綠**，顆數＝開工前基線 ＋ 7
+- [ ] **全量 `pytest -q` 全綠**，顆數＝開工前基線 ＋ 7 ＝ **110**
 - [ ] git commit：
       ```bash
       cd /Users/linjunting/personalDocAI
@@ -551,4 +551,4 @@ VLM 現在是「**在選單裡挑一個**」，不再是「自由發明」：每
 
 不過**這些成果目前還沒有出口**——上傳仍然照舊把 VLM 原本的 `category` 存進資料庫，回應也沒變。接下來 Phase 19 讓上傳真的存檔並開出讀圖端點，Phase 20 才把「一律先進未分類 ＋ 回傳 suggested_folder」這個新流程接起來。
 
-測試累計 ＝ 開工前基線 ＋ **7**。
+測試累計 ＝ 開工前基線 ＋ **7** ＝ **110**。

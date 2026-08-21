@@ -16,7 +16,7 @@
 | 文件 | 涵蓋範圍 | 狀態 |
 |---|---|---|
 | `docs/plan/finish/phase-00-總覽.md` | Phase 01〜14：上傳、詢問、12 條 Gherkin Rule、兩個純 HTML 頁 | **歷史紀錄**，已全數完成（2026-08-19），不再更動 |
-| **本文件**（`unfinish/phase-00-增量總覽.md`） | Phase 15〜26：資料夾、原圖與縮圖、上傳彈窗、瀏覽頁 | **執行中**（P15〜17 已完成並歸檔至 `finish/`，2026-08-20；P18 起待做） |
+| **本文件**（`unfinish/phase-00-增量總覽.md`） | Phase 15〜26：資料夾、原圖與縮圖、上傳彈窗、瀏覽頁 | **執行中**（P15〜17 已完成並歸檔至 `finish/`，2026-08-20；P18〜24 已完成，2026-08-21；P25 起待做） |
 
 兩份路線圖是接力關係：舊的那份做完了才有這一份的起點。舊路線圖裡「❌ 不做照片瀏覽」「❌ 不保留原始照片檔」這類禁令，**已由產品負責人於 2026-08-20 明示改規格推翻**（詳見 design1.md §1.1），那是正式的規格變更，不是實作時偷加功能。舊路線圖的其他禁令（多使用者、非同步佇列、前端框架、雲端部署……）**全部仍然有效**。
 
@@ -164,13 +164,13 @@ pytest -q
 | ☑ | 15 | `schema.sql` 最終版、`migrate_folders.sql`、`DEFAULT_FOLDERS`、`reset_tables`（2026-08-20 完成） | `integration/test_photo_repository.py` +4 | **83** |
 | ☑ | 16 | folder 五個 repository 函式（2026-08-20 完成） | `integration/test_folder_repository.py` 10 | **93** |
 | ☑ | 17 | `services/storage_service.py`、`config.DATA_DIR`、`isolated_data_dir` fixture（2026-08-20 完成） | `unit/test_storage_service_unit.py` 10 | **103** |
-| ☐ | 18 | `build_vlm_prompt(folders)`、`clamp_category()` | `unit/test_vlm_service_unit.py` 追加＋`integration/test_upload_design_rules.py` 追加 1 | 開工前依該 phase 計畫填入 |
-| ☐ | 19 | 上傳寫檔流程、`GET /photos/{id}/thumbnail`／`/image` | `integration/test_photo_files.py` | 開工前依該 phase 計畫填入 |
-| ☐ | 20 | 未分類流程、回應擴充、`上傳照片.feature` 改版 | 既有上傳測試改版＋規格新 Rule | 開工前依該 phase 計畫填入 |
-| ☐ | 21 | `PATCH /photos/{id}/folder`、重算 embedding | `integration/test_assign_folder.py` | 開工前依該 phase 計畫填入 |
-| ☐ | 22 | `api/routers/folders.py`、`schemas/folder.py` | `integration/test_folders_endpoint.py` | 開工前依該 phase 計畫填入 |
-| ☐ | 23 | `upload.html` 彈窗 | 0（瀏覽器實操驗收） | 不變 |
-| ☐ | 24 | `browse.html`、`folder_modal.js`、三頁互連 | 0（瀏覽器實操驗收） | 不變 |
+| ☑ | 18 | `build_vlm_prompt(folders)`、`clamp_category()`（2026-08-21 完成） | `unit/test_vlm_service_unit.py` 追加 6＋`integration/test_upload_design_rules.py` 追加 1 | **110**（實測相符） |
+| ☑ | 19 | 上傳寫檔流程、`GET /photos/{id}/thumbnail`／`/image`（2026-08-21 完成） | `integration/test_photo_files.py` 11 | **121**（實測相符） |
+| ☑ | 20 | 未分類流程、回應擴充、`上傳照片.feature` 改版（2026-08-21 完成） | 既有上傳測試改版＋規格 Example 7→10 | **124**（實測相符） |
+| ☑ | 21 | `PATCH /photos/{id}/folder`、重算 embedding（2026-08-21 完成） | `integration/test_assign_folder.py` 8 | **132**（實測相符） |
+| ☑ | 22 | `api/routers/folders.py`、`schemas/folder.py`（2026-08-21 完成） | `integration/test_folders_endpoint.py` 8 | **140**（實測相符） |
+| ☑ | 23 | `upload.html` 彈窗（2026-08-21 完成，Playwright MCP 實操 13 項全過） | 0（瀏覽器實操驗收） | 不變（140） |
+| ☑ | 24 | `browse.html`、`folder_modal.js`、三頁互連（2026-08-21 完成，Playwright MCP 實操 19 項全過） | 0（瀏覽器實操驗收） | 不變（140） |
 | ☐ | 25 | 錯誤表把關、全量回歸、`CLAUDE.md`、計畫檔歸檔 | `integration/test_folder_error_paths.py` | 開工前依該 phase 計畫填入 |
 | ☐ | 26 | 三頁視覺打磨、`style.css` | 0（瀏覽器實操驗收） | 不變 |
 
