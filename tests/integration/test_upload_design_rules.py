@@ -14,9 +14,9 @@ from app.main import app
 from app.repositories import photo_repository
 from app.services.indexing_service import build_document, embed_document
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeEmbeddings, FakeVLM
+from tests.fakes import FakeEmbeddings, FakeVLM, make_png_bytes
 
-PNG_BYTES = b"\x89PNG\r\n\x1a\n fake image bytes"
+PNG_BYTES = make_png_bytes()
 
 
 def test_非圖片格式不會呼叫看圖(client):
@@ -67,11 +67,15 @@ def test_向量由合併內容產生而非只有文字(client):
         "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
     )
     assert response.status_code == 201
+    assert response.json()["metadata"]["category"] == "未分類"
+    assert response.json()["suggested_folder"]["name"] == "收據"
 
     stored = json.loads(photo_repository.fetch_embedding(response.json()["id"]))
+    # 2026-08-20 起上傳一律用「未分類」合併——VLM 講的「收據」只是建議，不落庫。
+    # 歸類後的重算由 PATCH /photos/{id}/folder 負責（Phase 21 另有測試）。
     document = build_document(
         text="超市購物的照片",
-        category="收據",
+        category="未分類",
         location="Costco",
         items=["咖啡", "牛奶"],
         content_time=None,
@@ -83,3 +87,29 @@ def test_向量由合併內容產生而非只有文字(client):
     assert max(abs(a - b) for a, b in zip(stored, expected)) < 1e-6
     # 與「只用 text」的向量必須可區分——否則這個測試就守不住 U4
     assert max(abs(a - b) for a, b in zip(stored, text_only)) > 1e-3
+
+
+# ---- design1.md §8：上傳時把現有資料夾清單當變數注入 VLM prompt ----
+def test_上傳時把現有資料夾清單傳給看圖(client):
+    """呼叫端必須真的去資料庫讀清單再傳進 understand()，不是傳空陣列了事。
+
+    conftest 的 reset_tables 每個測試都會重播 design1.md §5 的預設六資料夾，
+    所以這裡可以直接斷言那六個名稱。
+    """
+    fake = FakeVLM(
+        PhotoUnderstanding(
+            understood=True, text="在 Target 購買可樂的收據", category="收據",
+            location="Target", items=["可樂"], content_time="2026-08-10",
+        )
+    )
+    app.dependency_overrides[get_vlm] = lambda: fake
+
+    response = client.post(
+        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
+    )
+
+    assert response.status_code == 201
+    names = [folder["name"] for folder in fake.last_folders]
+    assert names == ["未分類", "收據", "飲食", "風景", "文件", "其他"]
+    # description 也要一起傳（prompt 需要它才寫得出「這個資料夾是裝什麼的」）
+    assert all(folder["description"] for folder in fake.last_folders)

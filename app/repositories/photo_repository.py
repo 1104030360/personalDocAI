@@ -157,6 +157,82 @@ def reset_folders_and_photos() -> None:
             )
 
 
+def update_photo_paths(
+    photo_id: int,
+    *,
+    original_path: str,
+    thumbnail_path: str,
+    content_type: str,
+) -> None:
+    """把寫好的檔案路徑補回那一列（INSERT 之後、同一個請求之內完成）。
+
+    為什麼要分兩次寫：檔名要用 photo.id，而 id 是 INSERT 當下才配發的，
+    所以只能先 INSERT 拿 id、寫完檔再回來補路徑（design1.md §6）。
+    """
+    sql = """
+        UPDATE photo
+        SET original_path  = %(original_path)s,
+            thumbnail_path = %(thumbnail_path)s,
+            content_type   = %(content_type)s
+        WHERE id = %(id)s;
+    """
+    params = {
+        "original_path": original_path,
+        "thumbnail_path": thumbnail_path,
+        "content_type": content_type,
+        "id": photo_id,
+    }
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+
+
+def delete_photo(photo_id: int) -> None:
+    """刪掉一列照片。
+
+    ⚠️ 這**不是**「刪除照片」功能——design1.md §15 明訂本增量不做刪除 API。
+    它只給上傳流程的失敗清理用：INSERT 之後寫檔失敗時，
+    要把那一列一起收掉，讓整次上傳「像沒發生過」。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM photo WHERE id = %(id)s;", {"id": photo_id})
+
+
+def update_photo_folder(
+    photo_id: int,
+    *,
+    folder_id: int,
+    category: str,
+    embedding: list[float],
+) -> dict[str, Any]:
+    """歸類：一條 UPDATE 同時寫 folder_id、category 與重算後的 embedding。
+
+    三個欄位一起寫，資料庫層面是一次完成的動作——
+    不會出現「資料夾改了但向量還是舊的」這種半調子狀態（design1.md §6 的雙寫規則）。
+
+    RETURNING ＝ 改完順便把那一列回傳，省掉再 SELECT 一次。
+    """
+    sql = f"""
+        UPDATE photo
+        SET folder_id = %(folder_id)s,
+            category  = %(category)s,
+            embedding = %(embedding)s::vector
+        WHERE id = %(photo_id)s
+        RETURNING {PHOTO_COLUMNS};
+    """
+    params = {
+        "photo_id": photo_id,
+        "folder_id": folder_id,
+        "category": category,
+        "embedding": to_vector_literal(embedding),
+    }
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchone()
+
+
 def list_folders() -> list[dict[str, Any]]:
     """全部資料夾，依 id 排序，每筆附上裡面有幾張照片。
 

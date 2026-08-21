@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import math
+import os
 from datetime import datetime
 
 from langchain_core.documents import Document
@@ -17,8 +18,8 @@ from app.services.vlm_service import PhotoUnderstanding
 
 # ---------- 真的圖片位元組（Pillow 讀得開）----------
 # 為什麼需要它：從 Phase 17 起系統會真的用 Pillow 把上傳的 bytes 打開來做縮圖。
-# b"\x89PNG fake image bytes" 這種假位元組會讓 Pillow 直接拋 UnidentifiedImageError，
-# 所以凡是「預期上傳成功」的測試，一律用下面兩個函式現產一張真的小圖。
+# b"\x89PNG…" 這種手打的假位元組會讓 Pillow 直接拋 UnidentifiedImageError，
+# 所以凡是「預期上傳成功」的測試，一律用下面的函式現產一張真的小圖。
 
 
 def _image_bytes(width: int, height: int, image_format: str) -> bytes:
@@ -40,19 +41,39 @@ def make_jpeg_bytes(width: int = 40, height: int = 20) -> bytes:
     return _image_bytes(width, height, "JPEG")
 
 
+def make_large_png_bytes(side: int = 1200) -> bytes:
+    """產生一張『真的很大』的 PNG（約 4 MB 以上），用來證明系統沒有檔案大小上限。
+
+    刻意用隨機雜訊：純色圖片會被 PNG 壓成幾 KB，撐不出檔案大小。
+    os.urandom(n)＝n 個隨機位元組；每個像素 3 個位元組（RGB）。
+    """
+    buffer = io.BytesIO()
+    pixels = os.urandom(side * side * 3)
+    Image.frombytes("RGB", (side, side), pixels).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 class FakeVLM:
     """考試用的固定答案卡，不是正式看圖系統。
 
     測試會先指定「請當作收據、店名 Target」；understand() 照念，不呼叫 Ollama。
     沒給 result 時預設 understood=False（規格：看不懂 → 422、什麼都不存）。
+
+    folders 參數只是為了與 VLMClient 協定一致（Phase 18 新增）：
+    假件不會真的照著清單思考，但會把收到的清單記在 last_folders，
+    讓測試可以驗「呼叫端真的把資料夾清單傳進去了」。
     """
 
     def __init__(self, result: PhotoUnderstanding | None = None) -> None:
         self.result = result or PhotoUnderstanding(understood=False)
         self.calls = 0
+        self.last_folders: list[dict] | None = None
 
-    def understand(self, image_bytes: bytes, content_type: str) -> PhotoUnderstanding:
+    def understand(
+        self, image_bytes: bytes, content_type: str, folders: list[dict]
+    ) -> PhotoUnderstanding:
         self.calls += 1
+        self.last_folders = folders
         return self.result
 
 

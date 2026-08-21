@@ -1,0 +1,146 @@
+"""GET /folders 與 GET /folders/{id} 的整合測試（Phase 22）。
+
+對應 design1.md §7.4：
+  GET /folders      → 全部資料夾（含 description、照片張數）
+  GET /folders/{id} → 該資料夾 ＋ 照片摘要（id、thumbnail_url、text、uploaded_at）
+
+這兩個端點沒有任何 AI，所以本檔不需要覆寫任何假件——
+conftest 的 reset_tables 每個測試前會重播六筆預設資料夾，因此 id 1〜6 是固定的。
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from app.repositories import photo_repository
+from tests.fakes import FakeEmbeddings
+
+NOW = datetime(2026, 8, 18, 10, 0)
+
+# 預設資料夾的 id（Phase 15 的種子順序，三處同步：schema.sql／migrate_folders.sql／DEFAULT_FOLDERS）
+未分類_ID = 1
+收據_ID = 2
+飲食_ID = 3
+
+
+def _插入照片(text: str, category: str, *, 有縮圖: bool) -> int:
+    """插一張照片並回它的 id。
+
+    insert_photo 會依 category 找同名資料夾（Phase 15），所以 category="收據"
+    的照片會自動掛在 2 號資料夾底下。有縮圖的才呼叫 update_photo_paths（Phase 19）
+    寫入路徑——沒寫路徑的就等於「舊資料」，thumbnail_url 應該是 null。
+    """
+    row = photo_repository.insert_photo(
+        text=text,
+        category=category,
+        location="Target",
+        items=["可樂"],
+        content_time=date(2026, 8, 10),
+        embedding=FakeEmbeddings().embed_query(text),
+        uploaded_at=NOW,
+    )
+    photo_id = row["id"]
+    if 有縮圖:
+        photo_repository.update_photo_paths(
+            photo_id,
+            original_path=f"data/photos/{photo_id}.png",
+            thumbnail_path=f"data/thumbs/{photo_id}.png",
+            content_type="image/png",
+        )
+    return photo_id
+
+
+def test_列出全部資料夾(client):
+    response = client.get("/folders")
+
+    assert response.status_code == 200
+    folders = response.json()
+    # 直接回陣列（不是 {"folders": [...]}），順序照 id
+    assert [f["id"] for f in folders] == [1, 2, 3, 4, 5, 6]
+    assert [f["name"] for f in folders] == [
+        "未分類", "收據", "飲食", "風景", "文件", "其他"
+    ]
+    # 只有「未分類」是收件箱（design1.md §5）
+    assert folders[0]["is_inbox"] is True
+    assert all(f["is_inbox"] is False for f in folders[1:])
+    # description 是給 VLM 看的說明，不能是空字串
+    assert folders[0]["description"].startswith("不確定")
+    assert all(f["description"] != "" for f in folders)
+    # 一張照片都沒有時，六個資料夾仍然全部都要出現（LEFT JOIN），張數 0
+    assert all(f["photo_count"] == 0 for f in folders)
+
+
+def test_回應欄位恰好五個(client):
+    """response_model 把關：不多回任何內部欄位（例如 created_at）。"""
+    folders = client.get("/folders").json()
+
+    assert set(folders[0]) == {"id", "name", "description", "is_inbox", "photo_count"}
+
+
+def test_資料夾帶照片張數(client):
+    _插入照片("在 Target 購買可樂的收據", "收據", 有縮圖=True)
+    _插入照片("在 Costco 購買牛奶的收據", "收據", 有縮圖=False)
+
+    folders = client.get("/folders").json()
+    張數 = {f["name"]: f["photo_count"] for f in folders}
+
+    assert 張數["收據"] == 2
+    assert 張數["未分類"] == 0
+    assert 張數["飲食"] == 0
+
+
+def test_資料夾內容含照片摘要(client):
+    photo_id = _插入照片("在 Target 購買可樂的收據", "收據", 有縮圖=True)
+
+    response = client.get(f"/folders/{收據_ID}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"folder", "photos"}
+    assert body["folder"]["name"] == "收據"
+    assert body["folder"]["photo_count"] == 1
+
+    assert len(body["photos"]) == 1
+    photo = body["photos"][0]
+    assert set(photo) == {"id", "thumbnail_url", "text", "uploaded_at"}
+    assert photo["id"] == photo_id
+    assert photo["text"] == "在 Target 購買可樂的收據"
+    # 回的是「網址」不是硬碟路徑，指向 Phase 19 的讀圖端點
+    assert photo["thumbnail_url"] == f"/photos/{photo_id}/thumbnail"
+    assert photo["uploaded_at"].startswith("2026-08-18")
+
+
+def test_沒有縮圖的舊照片回null(client):
+    """design1.md §10：舊資料路徑是 NULL → 回 null，前端顯示占位，不假裝有圖。"""
+    photo_id = _插入照片("沒有原圖的舊資料", "收據", 有縮圖=False)
+
+    photos = client.get(f"/folders/{收據_ID}").json()["photos"]
+
+    assert photos[0]["id"] == photo_id
+    assert photos[0]["thumbnail_url"] is None
+
+
+def test_照片新的在前(client):
+    先上傳 = _插入照片("先上傳的收據", "收據", 有縮圖=False)
+    後上傳 = _插入照片("後上傳的收據", "收據", 有縮圖=False)
+
+    photos = client.get(f"/folders/{收據_ID}").json()["photos"]
+
+    assert [p["id"] for p in photos] == [後上傳, 先上傳]
+
+
+def test_空資料夾回空清單(client):
+    response = client.get(f"/folders/{飲食_ID}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["folder"]["name"] == "飲食"
+    assert body["folder"]["photo_count"] == 0
+    assert body["photos"] == []
+
+
+def test_資料夾不存在回404(client):
+    response = client.get("/folders/999")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "找不到資料夾"}

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>瀏覽資料夾 — PersonalDocAI</title>
+<style>
+  body { font-family: system-ui, "PingFang TC", sans-serif;
+         max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+  nav a { margin-right: 1rem; }
+  .folders { list-style: none; padding: 0; }
+  .folders li { margin-bottom: 0.5rem; }
+  .folder { display: block; border: 1px solid #ccc; padding: 0.6rem 0.9rem;
+            text-decoration: none; color: inherit; }
+  .folder:hover { background: #f4f4f4; }
+  .folder-name { font-weight: bold; }
+  .folder-desc { color: #666; font-size: 0.9rem; }
+  .wall { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.75rem; }
+  .photo { width: 160px; padding: 0.3rem; border: 1px solid #ccc; background: none;
+           font: inherit; text-align: left; cursor: pointer; }
+  .photo img { display: block; width: 100%; height: 120px; object-fit: cover; }
+  .placeholder { display: flex; align-items: center; justify-content: center;
+                 width: 100%; height: 120px; background: #ddd; color: #666;
+                 font-size: 0.85rem; }
+  .caption { margin-top: 0.3rem; height: 2.6em; overflow: hidden;
+             font-size: 0.8rem; color: #333; }
+  .message { color: #666; }
+</style>
+</head>
+<body>
+
+<h1>PersonalDocAI</h1>
+<nav>
+  <a href="/ui/upload.html">上傳照片</a>
+  <a href="/ui/browse.html">瀏覽資料夾</a>
+  <a href="/ui/ask.html">問問題</a>
+</nav>
+<hr>
+
+<div id="view"><p class="message">載入中…</p></div>
+
+<script src="/ui/folder_modal.js"></script>
+<script>
+const view = document.getElementById("view");
+
+// 網址是 browse.html?folder=2 就看那個資料夾，沒帶就看資料夾清單。
+// 用網址而不是用 JavaScript 切畫面，上一頁／重新整理／加書籤才會正常。
+const folderIdInUrl = new URLSearchParams(location.search).get("folder");
+
+// 小工具：造一個元素並填文字。一律用 textContent，不用 innerHTML——
+// 照片文字與資料夾名稱是 AI 或使用者填的，裡面若有 < 之類的符號才不會弄壞版面。
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+async function getJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("HTTP " + response.status + "（" + url + "）");
+  }
+  return await response.json();
+}
+
+// ---------- 畫面一：資料夾清單 ----------
+async function showFolderList() {
+  const folders = await getJson("/folders");
+
+  view.textContent = "";
+  view.appendChild(el("h2", null, "資料夾"));
+
+  const list = el("ul", "folders");
+  folders.forEach(function (folder) {
+    const link = el("a", "folder");
+    link.href = "/ui/browse.html?folder=" + folder.id;
+    link.appendChild(el("div", "folder-name",
+      folder.name + "（" + folder.photo_count + " 張）"));
+    link.appendChild(el("div", "folder-desc", folder.description));
+
+    const item = document.createElement("li");
+    item.appendChild(link);
+    list.appendChild(item);
+  });
+  view.appendChild(list);
+}
+
+// ---------- 畫面二：某個資料夾的縮圖牆 ----------
+async function showFolderPhotos(folderId) {
+  // 兩個請求同時送：這個資料夾的內容，以及彈窗下拉選單要用的完整清單
+  const [detail, folders] = await Promise.all([
+    getJson("/folders/" + folderId),
+    getJson("/folders")
+  ]);
+
+  view.textContent = "";
+
+  const back = el("a", null, "← 回資料夾列表");
+  back.href = "/ui/browse.html";
+  view.appendChild(back);
+
+  view.appendChild(el("h2", null,
+    detail.folder.name + "（" + detail.folder.photo_count + " 張）"));
+  view.appendChild(el("p", "folder-desc", detail.folder.description));
+
+  if (detail.photos.length === 0) {
+    view.appendChild(el("p", "message", "這個資料夾還沒有照片。"));
+    return;
+  }
+  view.appendChild(el("p", "message", "點一張照片可以改資料夾。"));
+
+  const wall = el("ul", "wall");
+  detail.photos.forEach(function (photo) {
+    const card = el("button", "photo");
+    card.type = "button";
+    card.dataset.photoId = photo.id;        // 待會兒用得到（event delegation）
+
+    if (photo.thumbnail_url) {
+      const image = document.createElement("img");
+      image.src = photo.thumbnail_url;      // 例如 /photos/7/thumbnail
+      image.alt = photo.text;
+      card.appendChild(image);
+    } else {
+      // 舊資料沒有原圖：畫灰底占位，不假裝有圖（design1.md §10）
+      card.appendChild(el("div", "placeholder", "無縮圖"));
+    }
+    card.appendChild(el("div", "caption", photo.text));
+
+    const item = document.createElement("li");
+    item.appendChild(card);
+    wall.appendChild(item);
+  });
+
+  // event delegation：整面牆只掛一個監聽器，被點時往上找是哪一張
+  wall.addEventListener("click", function (event) {
+    const card = event.target.closest(".photo");
+    if (!card) return;
+
+    openFolderModal({
+      photoId: Number(card.dataset.photoId),
+      folders: folders,
+      primary: {
+        id: detail.folder.id,
+        name: detail.folder.name,
+        description: detail.folder.description
+      },
+      primaryVerb: "維持",                  // 上傳頁是「採用」，這裡是「維持」
+      onAssigned: function () {
+        location.reload();                  // 照片可能已被移走，整頁重讀最單純
+      },
+      onClosed: function () {}              // 關掉就關掉，什麼都不用做
+    });
+  });
+
+  view.appendChild(wall);
+}
+
+// ---------- 進入頁面時決定畫哪一個 ----------
+(async function start() {
+  try {
+    if (folderIdInUrl) {
+      await showFolderPhotos(folderIdInUrl);
+    } else {
+      await showFolderList();
+    }
+  } catch (error) {
+    view.textContent = "";
+    view.appendChild(el("p", "message",
+      "載入失敗：" + error + "。uvicorn 是不是沒在跑？"));
+  }
+})();
+</script>
+
+</body>
+</html>

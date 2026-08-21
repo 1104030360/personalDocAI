@@ -14,7 +14,7 @@ from app.dependencies import get_vlm
 from app.main import app
 from app.repositories import photo_repository as repo
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeVLM
+from tests.fakes import FakeVLM, make_jpeg_bytes
 
 client = TestClient(app)
 
@@ -72,7 +72,7 @@ def test_upload_jpeg_understood_returns_201():
     # JPEG 也通過格式檢查（只驗 content_type，不驗檔案內容）
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(看得懂的收據)
     resp = client.post(
-        "/photos", files={"file": ("sample.jpg", b"\xff\xd8\xff\xe0fakejpeg", "image/jpeg")}
+        "/photos", files={"file": ("sample.jpg", make_jpeg_bytes(), "image/jpeg")}
     )
     assert resp.status_code == 201
 

@@ -6,12 +6,13 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import ask, photos
+from app.api.routers import ask, folders, photos
 
 app = FastAPI(title="PersonalDocAI")
 
 app.include_router(photos.router)
 app.include_router(ask.router)
+app.include_router(folders.router)
 
 
 @app.get("/health")

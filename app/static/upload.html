@@ -19,12 +19,14 @@
 <h1>PersonalDocAI</h1>
 <nav>
   <a href="/ui/upload.html">上傳照片</a>
+  <a href="/ui/browse.html">瀏覽資料夾</a>
   <a href="/ui/ask.html">問問題</a>
 </nav>
 <hr>
 
 <h2>上傳照片</h2>
-<p>選一張 JPEG 或 PNG，AI 會看圖並存成文字描述＋四個欄位。原始照片檔不會被保留。</p>
+<p>選一張 JPEG 或 PNG。AI 會看圖並存成文字描述＋四個欄位，照片先放進「未分類」，
+接著在彈出的視窗裡決定要收進哪個資料夾。</p>
 
 <form id="upload-form">
   <input type="file" id="file-input" accept="image/jpeg,image/png" required>
@@ -33,7 +35,10 @@
 
 <pre id="result">（尚未上傳）</pre>
 
+<script src="/ui/folder_modal.js"></script>
+
 <script>
+// ===== 上傳頁自己的程式（這段不會搬走）=====
 const form = document.getElementById("upload-form");
 const fileInput = document.getElementById("file-input");
 const button = document.getElementById("submit-button");
@@ -42,6 +47,24 @@ const result = document.getElementById("result");
 // 沒有值的欄位顯示成「（無）」，比顯示 null 好懂
 function orNone(value) {
   return (value === null || value === undefined || value === "") ? "（無）" : value;
+}
+
+// 把上傳結果畫到結果區。歸類成功後資料夾名稱會變，所以獨立成一個參數。
+// 提醒：資料夾名稱就是 category（design1.md §4），不是兩個東西。
+function renderResult(body, folderName, note) {
+  const m = body.metadata;
+  const items = (m.items && m.items.length > 0) ? m.items.join("、") : "（無）";
+  result.textContent = [
+    "✅ 上傳成功（HTTP 201）",
+    "照片 id：" + body.id,
+    "文字描述：" + body.text,
+    "資料夾（category）：" + folderName,
+    "地點：" + orNone(m.location),
+    "物品：" + items,
+    "內容時間：" + orNone(m.content_time),
+    "",
+    note
+  ].join("\n");
 }
 
 form.addEventListener("submit", async function (event) {
@@ -65,17 +88,27 @@ form.addEventListener("submit", async function (event) {
     const body = await response.json();
 
     if (response.status === 201) {
-      const m = body.metadata;
-      const items = (m.items && m.items.length > 0) ? m.items.join("、") : "（無）";
-      result.textContent = [
-        "✅ 上傳成功（HTTP 201）",
-        "照片 id：" + body.id,
-        "文字描述：" + body.text,
-        "類別：" + orNone(m.category),
-        "地點：" + orNone(m.location),
-        "物品：" + items,
-        "內容時間：" + orNone(m.content_time)
-      ].join("\n");
+      renderResult(
+        body,
+        body.folder.name,
+        "AI 建議放進「" + body.suggested_folder.name + "」，請在彈出的視窗裡決定。"
+      );
+      openFolderModal({
+        photoId: body.id,
+        folders: body.folders,
+        primary: body.suggested_folder,
+        primaryVerb: "採用",
+        onAssigned: function (folder) {
+          renderResult(body, folder.name, "✅ 已歸到「" + folder.name + "」。");
+        },
+        onClosed: function () {
+          renderResult(
+            body,
+            body.folder.name,
+            "已放進「" + body.folder.name + "」，之後可到瀏覽頁再歸類。"
+          );
+        }
+      });
     } else {
       // 415＝不是 JPEG/PNG；422＝VLM 看不懂（什麼都沒存）；其他＝伺服器問題
       const detail = (typeof body.detail === "string")

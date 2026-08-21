@@ -30,25 +30,66 @@ class PhotoUnderstanding(BaseModel):
     content_time: str | None = None                  # ISO 日期字串，推不出來 → None
 
 
-VLM_PROMPT = """你是照片理解助手。請看這張照片，只輸出下列六個欄位：
+# 系統收件箱資料夾的名稱。與 photo_repository.DEFAULT_FOLDERS 的第一筆一致
+# （design1.md §5：「未分類」是唯一的系統資料夾，is_inbox=true）。
+UNCATEGORIZED = "未分類"
+
+
+def build_vlm_prompt(folders: list[dict]) -> str:
+    """組出看圖用的 prompt，把「現有資料夾清單」當變數注入（design1.md §8）。
+
+    folders 來自 photo_repository.list_folders()，每筆至少要有 name 與 description。
+    清單是變數不是常數——使用者今天自建了「專案X」，下一次上傳時模型就看得到它。
+
+    注意：這裡只是「請模型這樣做」。模型不聽話是常態，
+    真正的保險是後面的 clamp_category()（清單外一律夾成「未分類」）。
+    """
+    folder_lines = "\n".join(
+        f"- {folder['name']}：{folder['description']}" for folder in folders
+    )
+    return f"""你是照片理解助手。請看這張照片，只輸出下列六個欄位：
 
 - understood：你是否看得懂這張照片的內容（看不懂填 false）
 - text：用一句話描述照片內容
-- category：照片類別，例如「收據」「風景」或 "Receipt"、"Landscape"；判斷不出來填 null
+- category：這張照片應該收進哪一個資料夾（規則見下方「現有資料夾」）
 - location：地點或商家名稱，例如「Target」；判斷不出來填 null
 - items：照片中出現的物品名稱清單；沒有就填空陣列
 - content_time：照片內容本身的日期（例如收據上的消費日期），格式 YYYY-MM-DD；推不出來填 null
+
+現有資料夾（category 只能從這裡選一個，禁止自創名稱）：
+{folder_lines}
+
+category：必須是上面某個資料夾的「名稱」原文。
+不確定就填「未分類」。不要翻譯成英文。
 
 語言規則（重要）：
 - text 與各欄位的值，一律使用**照片內容本身的主要語言**。
   照片上是中文（例如中文收據）就用繁體中文寫；照片上是英文（例如英文收據）就用英文寫。
 - 不要翻譯。不要中英混寫。照片上寫 "Cola" 就填 "Cola"，寫「可樂」就填「可樂」。
+- 例外：category 是資料夾名稱，一律照上面清單的原文，不隨照片語言改變。
 
 其他規則：
 1. 只准填上面這六個欄位，清單外的任何資訊一律捨棄。
 2. 不要編造照片上沒有的資訊。
 3. 照片模糊、全黑或看不出任何內容時，understood 填 false。
 """
+
+
+def clamp_category(category: str | None, folders: list[dict]) -> str:
+    """把 VLM 推薦的 category 夾回資料夾清單內（design1.md §7.1、§12）。
+
+    - 命中（去頭尾空白、大小寫不敏感）→ 回**資料夾清單裡的原文**，
+      這樣「  收據 」「RECEIPT」都不會生出新的名稱變體。
+    - 沒命中、或模型根本沒填 → 回「未分類」，語意就是「不確定」。
+
+    這是純函式：不碰資料庫、不碰網路，給同樣的輸入永遠回同樣的答案。
+    """
+    if category:
+        wanted = category.strip().casefold()
+        for folder in folders:
+            if folder["name"].casefold() == wanted:
+                return folder["name"]
+    return UNCATEGORIZED
 
 
 class VLMClient(Protocol):
@@ -60,7 +101,9 @@ class VLMClient(Protocol):
     - FakeVLM：只在 tests/fakes.py，pytest 的固定答案卡；不是第二套看圖系統
     """
 
-    def understand(self, image_bytes: bytes, content_type: str) -> PhotoUnderstanding:
+    def understand(
+        self, image_bytes: bytes, content_type: str, folders: list[dict]
+    ) -> PhotoUnderstanding:
         ...
 
 
@@ -75,13 +118,19 @@ class OllamaVLM:
             temperature=0,
         ).with_structured_output(PhotoUnderstanding)
 
-    def understand(self, image_bytes: bytes, content_type: str) -> PhotoUnderstanding:
-        """看一張照片。任何失敗都回 understood=False，由上層轉成 422。"""
+    def understand(
+        self, image_bytes: bytes, content_type: str, folders: list[dict]
+    ) -> PhotoUnderstanding:
+        """看一張照片。任何失敗都回 understood=False，由上層轉成 422。
+
+        folders＝現有資料夾清單，會被組進 prompt（design1.md §8）；
+        仍然只有這一次看圖呼叫，沒有第二個分類模型。
+        """
         # HumanMessage＝LangChain 裡「使用者傳給模型的一則訊息」；
         # content 是內容區塊清單，這裡放一塊文字（prompt）＋一塊 base64 圖片
         message = HumanMessage(
             content=[
-                {"type": "text", "text": VLM_PROMPT},
+                {"type": "text", "text": build_vlm_prompt(folders)},
                 {
                     "type": "image",
                     "base64": base64.b64encode(image_bytes).decode("ascii"),

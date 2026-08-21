@@ -12,7 +12,7 @@ from app.dependencies import get_embeddings, get_router, get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeVLM
+from tests.fakes import FakeVLM, make_large_png_bytes
 
 TARGET_RECEIPT = PhotoUnderstanding(
     understood=True,
@@ -67,7 +67,8 @@ def test_vlm看不懂回422且不寫入(client):
 
 # ---- 沒有「檔案太大」這個錯誤路徑 ----
 def test_大檔案照樣可以上傳(client):
-    大檔案 = b"\x89PNG\r\n\x1a\n" + b"0" * (12 * 1024 * 1024)   # 約 12 MB
+    大檔案 = make_large_png_bytes()   # 真的圖、真的大（隨機雜訊壓不掉）
+    assert len(大檔案) > 3 * 1024 * 1024, "這個測試要用真的大檔才有意義"
 
     response = client.post("/photos", files={"file": ("big.png", 大檔案, "image/png")})
 
