@@ -18,26 +18,8 @@
 
    本檔不碰頁面其他部分，成功或關閉都只透過上面兩個 callback 通知呼叫方——
    所以同一份程式碼上傳頁與瀏覽頁都能用。
+   樣式全部在 /ui/style.css 的「歸類彈窗」區塊（Phase 26 起本檔不再注入任何樣式）。
 */
-
-const FOLDER_MODAL_CSS = `
-.fm-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45);
-               display: flex; align-items: center; justify-content: center; }
-.fm-backdrop[hidden] { display: none; }
-.fm-box { background: #fff; padding: 1.2rem; width: min(32rem, 92vw);
-          max-height: 86vh; overflow: auto; position: relative;
-          font-family: system-ui, "PingFang TC", sans-serif; line-height: 1.6; }
-.fm-box h3 { margin: 0 1.5rem 0.5rem 0; }
-.fm-close { position: absolute; top: 0.3rem; right: 0.5rem; border: none;
-            background: none; font-size: 1.5rem; line-height: 1; cursor: pointer; }
-.fm-option { border-top: 1px solid #ddd; padding: 0.7rem 0; }
-.fm-option:first-of-type { border-top: none; }
-.fm-desc { color: #666; font-size: 0.9rem; margin: 0.3rem 0 0; }
-.fm-box input, .fm-box select { padding: 0.35rem; margin: 0.2rem 0.4rem 0.2rem 0; }
-.fm-box input { width: 13rem; }
-.fm-box button { padding: 0.4rem 1rem; }
-.fm-error { color: #b00020; min-height: 1.5rem; margin: 0.5rem 0 0; }
-`;
 
 const FOLDER_MODAL_HTML = `
 <div class="fm-backdrop" id="fm-backdrop" hidden>
@@ -71,6 +53,24 @@ const FOLDER_MODAL_HTML = `
 let fmConfig = null;    // 這次開窗的設定（上面 openFolderModal 收到的那包）
 let fmReady = false;    // 彈窗的 HTML 與事件只裝一次
 
+// ① 記住是誰打開彈窗的，關掉時把鍵盤焦點還回去
+let fmLastFocus = null;
+
+// ② 開啟後：鎖住背景捲動、把焦點移進彈窗（Tab 才不會跑到後面的頁面去）
+function fmAfterOpen() {
+  fmLastFocus = document.activeElement;
+  document.body.classList.add("fm-open");
+  const 第一個可聚焦 = fmEl("fm-backdrop").querySelector("button, input, select");
+  if (第一個可聚焦) { 第一個可聚焦.focus(); }
+}
+
+// ③ 關閉後：解除鎖定、焦點還回原本的按鈕
+function fmAfterClose() {
+  document.body.classList.remove("fm-open");
+  if (fmLastFocus && fmLastFocus.focus) { fmLastFocus.focus(); }
+  fmLastFocus = null;
+}
+
 function fmEl(id) {
   return document.getElementById(id);
 }
@@ -88,6 +88,7 @@ function fmSetBusy(busy) {
 function fmHide() {
   fmEl("fm-backdrop").hidden = true;
   fmConfig = null;
+  fmAfterClose();
 }
 
 function fmClose() {                        // 使用者主動關閉：不呼叫任何 API
@@ -140,10 +141,6 @@ async function fmAssign(body) {
 function fmInstall() {
   if (fmReady) return;
 
-  const style = document.createElement("style");
-  style.textContent = FOLDER_MODAL_CSS;
-  document.head.appendChild(style);
-
   const holder = document.createElement("div");
   holder.innerHTML = FOLDER_MODAL_HTML;   // 固定樣板字串，沒有任何外來資料
   document.body.appendChild(holder.firstElementChild);
@@ -163,6 +160,11 @@ function fmInstall() {
   });
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && !fmEl("fm-backdrop").hidden) fmClose();
+  });
+
+  // 點彈窗外面的暗色區域＝關閉，等同按 ×（一樣不呼叫 PATCH）
+  fmEl("fm-backdrop").addEventListener("click", function (event) {
+    if (event.target === fmEl("fm-backdrop")) { fmClose(); }
   });
 
   fmReady = true;
@@ -195,5 +197,5 @@ function openFolderModal(config) {
   fmSetError("");
   fmSetBusy(false);
   fmEl("fm-backdrop").hidden = false;
-  fmEl("fm-primary").focus();
+  fmAfterOpen();
 }

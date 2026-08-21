@@ -1,0 +1,518 @@
+/* PersonalDocAI 三頁共用樣式（Phase 26）。
+   upload.html / browse.html / ask.html / folder_modal.js 全部只吃這一支檔案。
+
+   規則：
+   - 顏色、字級、間距一律走 :root 的 token；tokens 區以外不准再出現寫死的色碼。
+   - 頁面內不准有 <style>，JS 不准注入樣式、不准產生 style=""。
+   - 桌機優先；不做深色模式（下面的 color-scheme: light 就是明確拒絕）。
+
+   禁止清單（本專案的設計底線，違反任何一條就是沒做完）：
+   1. ✗ 紫／靛色漸層背景（#667eea→#764ba2 那一家族，以及任何 purple/violet/indigo 漸層）
+   2. ✗ 「整頁置中一張大圓角卡片」當作主要版面
+   3. ✗ 標題前面掛 emoji
+   4. ✗ 直接拿 Inter／預設 system-ui 堆疊當「設計」
+   5. ✗ 無意義的玻璃擬態（backdrop-filter: blur）
+   6. ✗ 沒有理由的深色模式、動畫、漸層、陰影堆疊
+
+   設計依據（Phase 26 步驟 2 歸納的參考點，查證紀錄見當日階段TT REP）：
+   - 參考 1：https://github.com/immich-app/immich
+     （佐證 https://deepwiki.com/search/describe-the-web-uis-album-lis_8f4d566a-f1ea-48e5-9eb9-c11c8bec81ba）
+     — 借用：相簿卡片用 auto-fill 響應式格線、名稱與張數分層（張數用次級色小字）、
+       縮圖 object-cover 填滿方格；淺色模式的白底黑字紀律。
+       刻意不借：靛藍 primary 與深色模式。
+   - 參考 2：https://github.com/photoprism/photoprism
+     （佐證 https://deepwiki.com/search/describe-the-album-browsing-ui_5a76671e-62a8-47ac-80f5-caa0062a8a38）
+     — 借用：background／surface 用相鄰色階做層次（卡片靠邊框與色階、不靠陰影）；
+       它有一個獨立於 primary 的「相簿識別色」（琥珀 #ed9e00）——本站把這個琥珀系
+       加深成唯一強調色。刻意不借：紫色 primary（#9E7BEA，正在禁止清單家族裡）與深色主題。
+
+   色票與字型的選擇理由：本產品是「個人視覺檔案櫃」——收據、牛皮紙資料夾、索引卡的世界。
+   底色是紙白（#fbfaf7，比 AI 樣板常見的奶油色淺而中性）、次級底是牛皮紙卡其（#f3eee1）、
+   唯一強調色是深琥珀（#7c5200＝把參考 2 的相簿琥珀加深到白底上約 6.9:1 的可讀對比）；
+   標題字用 macOS 系統內建的 Avenir Next（幾何無襯線＝檔案櫃標籤機貼紙的味道，
+   刻意避開「奶油底＋襯線」的 AI 預設臉，也不拿被禁的 Inter 交差），內文交給安靜的
+   PingFang；照片 id／日期／search_mode 用等寬字——收據本來就是等寬字印的。
+   簽名元素：瀏覽頁的資料夾卡片頂上有一片牛皮紙「索引 tab」（見檔尾 signature 區），
+   讓資料夾列表讀起來像拉開一格檔案抽屜；全站其他地方保持安靜。 */
+
+/* ══ design tokens ══════════════════════════════════════════════════
+   ↓↓↓ 值＝步驟 4 的決策（理由見上方註解） ↓↓↓ */
+:root {
+  color-scheme: light;              /* 明確只有淺色版：表單元件不會被 OS 深色模式弄黑 */
+
+  /* 色票 */
+  --c-bg: #fbfaf7;
+  --c-surface: #ffffff;
+  --c-surface-2: #f3eee1;
+  --c-border: #ddd5c2;
+  --c-text: #23201a;
+  --c-text-muted: #6d6656;
+  --c-accent: #7c5200;
+  --c-accent-text: #ffffff;
+  --c-ok: #316b3f;
+  --c-danger: #a03028;
+
+  /* 字型 */
+  --f-display: "Avenir Next", "Avenir", "PingFang TC", "Noto Sans TC", sans-serif;
+  --f-body: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+  --f-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* 字級（五級，全站只准用這五個） */
+  --fs-page: 1.6rem;
+  --fs-section: 1.2rem;
+  --fs-card: 1rem;
+  --fs-body: 0.95rem;
+  --fs-small: 0.8rem;
+
+  /* 間距（六級，全站只准用這六個） */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1.25rem;
+  --sp-5: 2rem;
+  --sp-6: 3rem;
+
+  /* 形狀與動態 */
+  --radius-s: 3px;
+  --radius-m: 6px;
+  --bw: 1px;
+  --shadow-modal: 0 10px 40px rgba(0, 0, 0, 0.18);
+  --motion: 0.12s;
+
+  /* 版面 */
+  --page-max: 60rem;
+  --thumb-min: 9.5rem;
+}
+/* ↑↑↑ tokens 結束：以下規則一律只引用 var(--…)，不准寫死值 ↑↑↑ */
+
+
+/* ══ 基礎 ═══════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--f-body);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+
+a { color: var(--c-accent); }
+a:hover { text-decoration: none; }
+
+img { max-width: 100%; display: block; }
+
+/* 鍵盤操作時才出現的聚焦外框。滑鼠點按不會有多餘的框，
+   但用 Tab 走的人一定看得到自己在哪裡——不准用 outline: none 拿掉。 */
+:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
+
+/* ══ 版面：頁首與內容區 ═════════════════════════════════════════════ */
+.site-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  border-bottom: var(--bw) solid var(--c-border);
+}
+
+.site-brand {
+  margin: 0;
+  font-family: var(--f-display);
+  font-size: var(--fs-section);
+  font-weight: 600;
+  letter-spacing: 0.06em;   /* 標籤機貼紙式的微寬字距（見檔頭字型理由） */
+}
+
+.site-nav { display: flex; gap: var(--sp-4); }
+
+.site-nav a {
+  color: var(--c-text-muted);
+  text-decoration: none;
+  padding-bottom: var(--sp-1);
+  border-bottom: 2px solid transparent;
+  transition: color var(--motion) ease, border-color var(--motion) ease;
+}
+.site-nav a:hover { color: var(--c-text); }
+
+/* 目前所在的頁：HTML 要寫 aria-current="page"（螢幕報讀軟體也讀得到） */
+.site-nav a[aria-current="page"] {
+  color: var(--c-text);
+  border-bottom-color: var(--c-accent);
+}
+
+.page {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-4) var(--sp-6);
+}
+
+.page > h2 {
+  margin: 0 0 var(--sp-2);
+  font-family: var(--f-display);
+  font-size: var(--fs-page);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.lead {
+  margin: 0 0 var(--sp-5);
+  max-width: 46em;                 /* 一行別太長，比較好讀 */
+  color: var(--c-text-muted);
+}
+
+
+/* ══ 表單與按鈕 ═════════════════════════════════════════════════════ */
+.field-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 var(--sp-5);
+}
+
+.field,
+.fm-option input[type="text"],
+.fm-option select {
+  flex: 1 1 16rem;
+  min-width: 0;
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-s);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.field::placeholder,
+.fm-option input[type="text"]::placeholder { color: var(--c-text-muted); }
+
+input[type="file"].field { padding: var(--sp-2); }
+
+.btn,
+.fm-option button,
+.fm-close {
+  font: inherit;
+  font-size: var(--fs-body);
+  cursor: pointer;
+  padding: var(--sp-2) var(--sp-4);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-s);
+  background: var(--c-surface);
+  color: var(--c-text);
+  transition: background var(--motion) ease, border-color var(--motion) ease,
+              opacity var(--motion) ease;
+}
+.btn:hover:not(:disabled),
+.fm-option button:hover:not(:disabled) { border-color: var(--c-text); }
+
+.btn:disabled,
+.fm-option button:disabled { opacity: 0.5; cursor: progress; }
+
+/* 每一頁（每一個彈窗）只准有一個主要按鈕——主要動作只有一個 */
+.btn-primary,
+#fm-primary {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  color: var(--c-accent-text);
+}
+.btn-primary:hover:not(:disabled),
+#fm-primary:hover:not(:disabled) { opacity: 0.88; }
+
+
+/* ══ 結果面板（上傳頁與問答頁共用同一張卡片語言）═══════════════════ */
+.panel {
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-m);
+  background: var(--c-surface);
+  padding: var(--sp-4);
+}
+
+.panel-empty { margin: 0; color: var(--c-text-muted); }
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-3);
+  padding-bottom: var(--sp-3);
+  font-size: var(--fs-small);
+  letter-spacing: 0.04em;
+  color: var(--c-text-muted);
+  border-bottom: var(--bw) solid var(--c-border);
+}
+.status::before {
+  content: "";
+  width: 0.5em; height: 0.5em;
+  border-radius: 50%;
+  background: var(--c-text-muted);
+}
+.status-ok::before { background: var(--c-ok); }
+.status-error { color: var(--c-danger); }
+.status-error::before { background: var(--c-danger); }
+
+/* 標籤＋值的兩欄清單：上傳結果的四欄 metadata、問答結果的檢索資訊都用它 */
+.kv {
+  display: grid;
+  grid-template-columns: 6.5em 1fr;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+}
+.kv dt {
+  padding-top: 0.2em;
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+}
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv dd.mono { font-family: var(--f-mono); font-size: var(--fs-small); }
+
+/* AI 的回答：比內文大一級，讓它是問答頁的主角 */
+.answer {
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-section);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 結果卡片底部的補充說明（「AI 建議放進…」「已放進未分類…」） */
+.note {
+  margin: var(--sp-3) 0 0;
+  padding-top: var(--sp-3);
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+  border-top: var(--bw) solid var(--c-border);
+}
+
+
+/* ══ 瀏覽頁 ═════════════════════════════════════════════════════════ */
+#view { min-height: 12rem; }
+
+.message { margin: 0 0 var(--sp-4); color: var(--c-text-muted); }
+
+.back-link {
+  display: inline-block;
+  margin-bottom: var(--sp-4);
+  color: var(--c-text-muted);
+  text-decoration: none;
+}
+.back-link:hover { color: var(--c-text); }
+
+/* 資料夾卡片 */
+.folders {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  height: 100%;
+  padding: var(--sp-4);
+  text-decoration: none;
+  color: inherit;
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-m);
+  transition: border-color var(--motion) ease, background var(--motion) ease;
+}
+.folder:hover { border-color: var(--c-text); background: var(--c-surface-2); }
+
+.folder-name {
+  font-family: var(--f-display);
+  font-size: var(--fs-card);
+  font-weight: 600;
+}
+.folder-desc {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+}
+
+/* 縮圖牆 */
+.wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-min), 1fr));
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.photo {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-s);
+  transition: border-color var(--motion) ease;
+}
+.photo:hover { border-color: var(--c-text); }
+
+.photo img,
+.placeholder {
+  aspect-ratio: 1 / 1;             /* 正方形格子，長短邊照片排在一起也整齊 */
+  width: 100%;
+}
+
+.photo img { object-fit: cover; }  /* 填滿方格、不變形（超出的裁掉） */
+
+/* 舊照片沒有縮圖（design1 §10）：灰底占位，不假裝有圖、也不顯示破圖 */
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+  background: var(--c-surface-2);
+}
+
+/* 縮圖下方的一行文字說明 */
+.caption {
+  /* 下 padding 給 0、盒高鎖成「上 padding＋恰好兩行」：
+     overflow 是裁在 padding-box 邊緣的，留了下 padding 第三行會在那裡露出頭 */
+  padding: var(--sp-2) var(--sp-2) 0;
+  height: calc(2.8em + var(--sp-2));
+  font-size: var(--fs-small);
+  line-height: 1.4;
+  color: var(--c-text-muted);
+  text-align: left;
+  border-top: var(--bw) solid var(--c-border);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;           /* 最多兩行，超過用「…」收掉 */
+  -webkit-box-orient: vertical;
+}
+
+
+/* ══ signature：資料夾卡片的牛皮紙索引 tab（本站唯一的視覺簽名）═══════
+   讓資料夾列表讀起來像拉開一格檔案抽屜——每張卡片頂上長出一小片
+   牛皮紙色的索引標籤。只動 .folder 的外觀，零 HTML／JS 變動。 */
+.folders li { position: relative; padding-top: var(--sp-3); }
+
+.folders li::before {
+  content: "";
+  position: absolute;
+  top: var(--bw);
+  left: var(--sp-4);
+  width: var(--sp-6);
+  height: var(--sp-3);
+  background: var(--c-surface-2);
+  border: var(--bw) solid var(--c-border);
+  border-bottom: none;
+  border-radius: var(--radius-s) var(--radius-s) 0 0;
+}
+
+.folders li:hover::before { background: var(--c-accent); border-color: var(--c-accent); }
+
+
+/* ══ 歸類彈窗（folder_modal.js）═══════════════════════════════════════ */
+.fm-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  background: rgba(0, 0, 0, 0.45);
+}
+.fm-backdrop[hidden] { display: none; }   /* JS 用 hidden 開關，這行讓它真的藏起來 */
+
+.fm-box {
+  position: relative;
+  width: min(34rem, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: var(--sp-5) var(--sp-4) var(--sp-4);
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-modal);        /* 全站唯一用陰影的地方 */
+}
+
+#fm-title {
+  margin: 0 var(--sp-6) var(--sp-4) 0;
+  font-family: var(--f-display);
+  font-size: var(--fs-section);
+  font-weight: 600;
+}
+
+.fm-close {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  padding: var(--sp-1) var(--sp-2);
+  line-height: 1;
+  color: var(--c-text-muted);
+  background: none;
+  border: none;
+}
+.fm-close:hover { color: var(--c-text); }
+
+/* 三個選項之間用分隔線隔開，讓「這是三條不同的路」一眼看得出來 */
+.fm-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-4) 0;
+  border-top: var(--bw) solid var(--c-border);
+}
+.fm-option:first-of-type { padding-top: 0; border-top: none; }
+
+.fm-option label {
+  flex: 1 0 100%;
+  font-size: var(--fs-small);
+  letter-spacing: 0.04em;
+  color: var(--c-text-muted);
+}
+.fm-option br { display: none; }          /* 換行改由上面的 flex 版面負責 */
+
+.fm-desc {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+}
+
+.fm-error {
+  margin: var(--sp-3) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-small);
+  color: var(--c-danger);
+  border: var(--bw) solid var(--c-danger);
+  border-radius: var(--radius-s);
+}
+/* 錯誤訊息被清空時自動不佔位——這樣就不必為了樣式去改任何 JS */
+.fm-error:empty { display: none; }
+
+/* 彈窗開啟時鎖住背景捲動（JS 會在 <body> 加上這個 class）*/
+body.fm-open { overflow: hidden; }
+
+
+/* ══ 手機不破版就好（不做完美適配）═══════════════════════════════════ */
+@media (max-width: 32rem) {
+  .site-header { flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+  .site-nav { gap: var(--sp-3); }
+  .kv { grid-template-columns: 1fr; gap: var(--sp-1) 0; }
+  .kv dt { padding-top: var(--sp-2); }
+}
