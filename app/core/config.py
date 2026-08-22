@@ -43,8 +43,12 @@ TOP_K = 5
 # 絕對不要寫 from app.core.config import DATA_DIR（那樣會在 import 當下就定死值）。
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 
-# 允許上傳的圖片格式（其餘一律 415，不做任何後續處理）
-ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png"})
+# PDF 自 design3.md D7 起也收：不直接入庫，而是逐頁渲染成 PNG 走同一套單圖流程，
+# 所以它只出現在「可不可以上傳」這一關，不會進到存檔那一層（見 storage_service.EXTENSIONS）
+PDF_CONTENT_TYPE = "application/pdf"
+
+# 允許上傳的檔案格式（其餘一律 415，不做任何後續處理）
+ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", PDF_CONTENT_TYPE})
 
 # 對外回應用的檢索方式名稱。內部用短代號，回應用規格寫的全名。
 SEARCH_MODE_LABELS = {

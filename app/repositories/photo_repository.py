@@ -1,8 +1,9 @@
 """全系統唯一寫 SQL 的模組：psycopg 3 ＋ 手寫 SQL。
 
 routers 與 services 一律呼叫這裡的函式，不得自己寫 SQL。
-本檔含上傳寫入、兩條檢索查詢（search_by_metadata／search_by_vector，Phase 9 加入），
-以及資料夾（folder）相關操作（Phase 15 加入）。
+本檔含上傳寫入、兩條檢索查詢（search_by_metadata／search_by_vector，Phase 9 加入）、
+資料夾（folder）相關操作（Phase 15 加入），
+以及實體（entity）與別針（photo_entity）相關操作（Phase 29 加入）。
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ DEFAULT_FOLDERS: list[tuple[str, str, bool]] = [
 
 # 資料夾每次查詢都取回的欄位，固定順序（不含張數——張數只有 list_folders／get_folder 才算）
 FOLDER_COLUMNS = "id, name, description, is_inbox"
+
+# 實體每次查詢都取回的欄位，固定順序。
+# 不含 created_at：彈窗只需要「挑得出是哪一個」的資訊，建立時間沒人看。
+ENTITY_COLUMNS = "id, name, description"
 
 
 def to_vector_literal(embedding: list[float]) -> str:
@@ -130,27 +135,36 @@ def clear_photos() -> None:
     """清空資料表。只給測試用：每個測試開始前把 photo 表清乾淨。
 
     TRUNCATE＝一次清空整張表（比逐列 DELETE 快）；
-    RESTART IDENTITY＝清空後 id 重新從 1 開始編。
+    RESTART IDENTITY＝清空後 id 重新從 1 開始編；
+    CASCADE＝連同用外鍵指著 photo 的 photo_entity 與 task 一起清。
+    ★ CASCADE 是 Phase 29 加的：那兩張表一出現，不帶 CASCADE 的 TRUNCATE 會被
+      PostgreSQL 直接拒絕（cannot truncate a table referenced in a foreign key constraint）。
+      語意上也正確——照片沒了，掛在它身上的別針與待辦本來就不該留著。
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE photo RESTART IDENTITY;")
+            cur.execute("TRUNCATE TABLE photo RESTART IDENTITY CASCADE;")
 
 
 def reset_folders_and_photos() -> None:
-    """把兩張表清空並重播六筆預設資料夾。只給測試用。
+    """把四張表清空並重播六筆預設資料夾。只給測試用。
 
-    TRUNCATE photo, folder＝一次清空兩張表（photo 用外鍵指著 folder，
-    所以兩張要一起清，不能只清 folder）；
+    TRUNCATE photo, folder, entity, folder_correction＝一次清空四張表；
     RESTART IDENTITY＝把自動編號歸零，重播後 folder 的 id 一定是 1〜6；
-    CASCADE＝連同被外鍵指著的相關表一起清（這裡兩張本來就都寫進去了，加著保險）。
+    CASCADE＝連同「用外鍵指著上面這些表」的相關表一起清，也就是 photo_entity 與 task
+    （兩張都指著 photo）——它們沒有自己的種子資料，被連帶清空就夠了。
+    ★ entity 與 folder_correction 沒有被 photo／folder 指著，CASCADE 帶不到，
+      所以必須自己列進 TRUNCATE 名單，否則實體會殘留到下一個測試（Phase 29）。
     """
     # 絕不清到正式庫：URL 必須含 PersonalDocAI_test 才動手（與 conftest 的防呆雙保險）
     assert "PersonalDocAI_test" in config.DATABASE_URL
 
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("TRUNCATE photo, folder RESTART IDENTITY CASCADE;")
+            cur.execute(
+                "TRUNCATE photo, folder, entity, folder_correction "
+                "RESTART IDENTITY CASCADE;"
+            )
             cur.executemany(
                 "INSERT INTO folder (name, description, is_inbox) VALUES (%s, %s, %s);",
                 DEFAULT_FOLDERS,
@@ -407,4 +421,122 @@ def search_by_vector(
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
+            return cur.fetchall()
+
+
+# ---------- 實體（entity）＝別針，Phase 29 加入 ----------
+# 資料夾是抽屜（一張照片只能放一個，XOR）；實體是別針（一張照片可以釘好幾個，AND）。
+# 對應 design3.md D12 與 §5。
+
+
+def list_entities() -> list[dict[str, Any]]:
+    """全部實體，依 id 排序。
+
+    和 list_folders 不同，這裡不附照片張數——Phase 30 的實體彈窗只要一份
+    名稱清單讓人挑（D12 的②改選現有），沒有「實體牆」要顯示張數。
+    也不像 folder 有六筆種子：實體表一開始是空的，
+    清單只在使用者按「自創」時才變長（D12）。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {ENTITY_COLUMNS} FROM entity ORDER BY id;")
+            return cur.fetchall()
+
+
+def find_entity_by_name(name: str) -> dict[str, Any] | None:
+    """依名稱找實體，不分大小寫且忽略前後空白；找不到回 None。
+
+    寫法鏡射 find_folder_by_name，差別是輸入多包一層 trim()——
+    彈窗的輸入框很容易多打一個空白，「 MacBook 」和「MacBook」要算同一件東西。
+    Phase 30 的「自創實體」會先用這個函式擋重名（回 409），
+    資料庫的 name UNIQUE 只是最後一道防線。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {ENTITY_COLUMNS} FROM entity WHERE lower(name) = lower(trim(%(name)s::text));",
+                {"name": name},
+            )
+            return cur.fetchone()
+
+
+def create_entity(name: str, description: str) -> dict[str, Any]:
+    """建立一個使用者自創的實體，回傳新的那一列。
+
+    只有使用者按「③自創」才會走到這裡——VLM 一次只從現有清單挑一個來建議，
+    清單外的名字絕不會被自動寫成新實體（design3.md D12、§6「建議」的定義）。
+    重名的判斷交給呼叫端（先用 find_entity_by_name 查），
+    這裡不自檢、也不管 HTTP 狀態碼——分工與 create_folder 完全一致。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO entity (name, description)
+                VALUES (%(name)s, %(description)s)
+                RETURNING {ENTITY_COLUMNS};
+                """,
+                {"name": name, "description": description},
+            )
+            return cur.fetchone()
+
+
+def pin_entity(photo_id: int, entity_id: int) -> None:
+    """把一個實體釘到一張照片上（在 photo_entity 加一列連結）。
+
+    刻意寫成單純的 INSERT，不做 upsert：重複釘同一個實體要由 Phase 30 的
+    router 先用 is_pinned 擋成 409，主鍵 (photo_id, entity_id) 只是最後一道防線。
+    這和 create_folder／create_entity 不自檢重名是同一個分工原則——
+    資料層只負責寫，狀態碼一律由 router 決定。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO photo_entity (photo_id, entity_id)
+                VALUES (%(photo_id)s, %(entity_id)s);
+                """,
+                {"photo_id": photo_id, "entity_id": entity_id},
+            )
+
+
+def is_pinned(photo_id: int, entity_id: int) -> bool:
+    """這張照片有沒有釘過這個實體。Phase 30 的重複釘檢查會用到。
+
+    EXISTS ＝資料庫找到第一列就可以停手，不必真的把那一列撈回來。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM photo_entity
+                    WHERE photo_id = %(photo_id)s AND entity_id = %(entity_id)s
+                ) AS pinned;
+                """,
+                {"photo_id": photo_id, "entity_id": entity_id},
+            )
+            return cur.fetchone()["pinned"]
+
+
+def list_photo_entities(photo_id: int) -> list[dict[str, Any]]:
+    """某張照片釘著的全部實體，先釘的在前。
+
+    連結表只存 id，名稱與說明要 JOIN entity 才拿得到。
+    ORDER BY 補上 e.id 當第二順位：pinned_at 精確到微秒，
+    但兩次釘選理論上可能落在同一微秒，加了才保證排序每次都一樣（測試才穩）。
+    只回實體本身的三個欄位——pinned_at 是連結的內部細節，前端用不到。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.id, e.name, e.description
+                FROM photo_entity pe
+                JOIN entity e ON e.id = pe.entity_id
+                WHERE pe.photo_id = %(photo_id)s
+                ORDER BY pe.pinned_at, e.id;
+                """,
+                {"photo_id": photo_id},
+            )
             return cur.fetchall()

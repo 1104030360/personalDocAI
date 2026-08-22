@@ -27,7 +27,8 @@ THUMBNAIL_DIR = "thumbs"
 # 縮圖長邊上限（px）。等比縮小、絕不放大——design1.md 沒有多尺寸需求，就這一種
 THUMBNAIL_MAX_SIDE = 512
 
-# content_type → 副檔名。清單與 config.ALLOWED_CONTENT_TYPES 一致
+# content_type → 副檔名。只有圖片會走到這裡：PDF 雖然可以上傳，
+# 但在 router 就已經被 pdf_service 逐頁換成 image/png（design3.md D7）
 EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png"}
 # 副檔名 → Pillow 的格式代號（存檔時要指定，不能靠副檔名猜）
 PIL_FORMATS = {"jpg": "JPEG", "png": "PNG"}

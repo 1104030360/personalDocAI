@@ -25,17 +25,23 @@ FOLDERS = [
     {"id": 6, "name": "其他", "description": "看懂是什麼，但不符合上面任何一個。"},
 ]
 
+# 實體清單（Phase 30 起 build_vlm_prompt 要兩份清單）。
+# 實體那一段本身的測試在 tests/unit/test_vlm_entity_unit.py，這裡只是把參數補齊。
+ENTITIES = [{"id": 1, "name": "我的 MacBook", "description": "2023 年買的筆電"}]
 
-def test_photo_understanding_只有六個欄位():
-    # 清單外資訊沒有地方放（U3「清單外捨棄」在源頭的落實）
+
+def test_photo_understanding_只有九個欄位():
+    # 清單外資訊沒有地方放（U3「清單外捨棄」在源頭的落實）。
+    # Phase 30 從六欄變九欄：前六欄會落庫，後三欄（entity／task_*）只是建議。
     assert list(PhotoUnderstanding.model_fields) == [
         "understood", "text", "category", "location", "items", "content_time",
+        "entity", "task_title", "task_due",
     ]
 
 
 def test_build_vlm_prompt_含雙語規則():
     # design.md §8.1：描述用照片主要語言、不翻譯（雙語需求的來源，本 phase 不推翻）
-    prompt = build_vlm_prompt(FOLDERS)
+    prompt = build_vlm_prompt(FOLDERS, ENTITIES)
 
     assert "照片內容本身的主要語言" in prompt
     assert "不要翻譯" in prompt
@@ -45,7 +51,7 @@ def test_build_vlm_prompt_含所有資料夾名稱與說明():
     """design1.md §8：清單是變數，使用者自建的資料夾也要出現在 prompt 裡。"""
     prompt = build_vlm_prompt(FOLDERS + [
         {"id": 7, "name": "專案X", "description": "跟課程作業有關的照片"},
-    ])
+    ], ENTITIES)
 
     for folder in FOLDERS:
         assert folder["name"] in prompt
@@ -57,7 +63,7 @@ def test_build_vlm_prompt_含所有資料夾名稱與說明():
 
 def test_build_vlm_prompt_明講只能從清單選且不可自創():
     """prompt 是第一道防線（第二道是 clamp_category）。措辭語意照 design1.md §8。"""
-    prompt = build_vlm_prompt(FOLDERS)
+    prompt = build_vlm_prompt(FOLDERS, ENTITIES)
 
     assert "現有資料夾" in prompt
     assert "禁止自創名稱" in prompt

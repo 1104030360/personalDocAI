@@ -1,7 +1,8 @@
-"""把 docs/spec/features/上傳照片.feature 當測試跑（10 條 Rule）。
+"""把 docs/spec/features/上傳照片.feature 當測試跑（11 條 Rule）。
 
 2026-08-20 規格改版後：上傳當下 category 一律「未分類」，
 VLM 給的類別只出現在回應的 suggested_folder，不落庫。
+2026-08-21 追加第 11 條 Rule（design3.md D7）：PDF 一頁存成一張照片。
 """
 
 from __future__ import annotations
@@ -17,7 +18,12 @@ from app.repositories import photo_repository
 from app.services import storage_service
 from app.services.vlm_service import PhotoUnderstanding
 from tests.conftest import first_row, split_items
-from tests.fakes import FakeVLM, make_png_bytes, understanding_for_text
+from tests.fakes import (
+    FakeVLM,
+    make_pdf_bytes,
+    make_png_bytes,
+    understanding_for_text,
+)
 
 # 直接掛上規格原檔——不複製、不改寫（路徑相對於本檔所在資料夾 tests/integration/）
 scenarios("../../docs/spec/features/上傳照片.feature")
@@ -123,6 +129,16 @@ def 上傳照片並指定推薦類別(context, client, category):
 @when("使用者上傳照片")
 def 上傳照片(context, client):
     _upload(context, client)
+
+
+@when(parsers.parse(
+    '使用者上傳一份 {pages:d} 頁的 PDF 檔案，VLM 理解每一頁的內容為 "{text}"'
+))
+def 上傳PDF並指定每頁理解內容(context, client, pages, text):
+    """PDF 一頁一張照片（design3.md D7）：假 VLM 對每一頁都回同一個理解結果。"""
+    context["understanding"] = understanding_for_text(text)
+    _upload(context, client, filename="scan.pdf",
+            content_type="application/pdf", payload=make_pdf_bytes(pages))
 
 
 # ------------------------------- Then ------------------------------
@@ -235,3 +251,9 @@ def 回應資料夾清單包含(context, datatable):
 def 回應包含縮圖網址(context):
     body = _body(context)
     assert body["thumbnail_url"] == f"/photos/{body['id']}/thumbnail"
+
+
+@then(parsers.parse("回應包含 {count:d} 筆已儲存的照片"))
+def 回應包含幾筆照片(context, count):
+    """PDF 的回應是一串單圖回應（created），一頁一筆。"""
+    assert len(_body(context)["created"]) == count

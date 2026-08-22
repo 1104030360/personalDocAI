@@ -201,8 +201,7 @@ img { max-width: 100%; display: block; }
 input[type="file"].field { padding: var(--sp-2); }
 
 .btn,
-.fm-option button,
-.fm-close {
+.fm-option button {
   font: inherit;
   font-size: var(--fs-body);
   cursor: pointer;
@@ -299,6 +298,25 @@ input[type="file"].field { padding: var(--sp-2); }
 /* ══ 瀏覽頁 ═════════════════════════════════════════════════════════ */
 #view { min-height: 12rem; }
 
+/* 兩個分頁的頁籤列（design2.md D4）：底線式，與導覽列的目前頁指示同一語言 */
+.tabs {
+  display: flex;
+  gap: var(--sp-4);
+  margin: 0 0 var(--sp-4);
+  border-bottom: var(--bw) solid var(--c-border);
+}
+.tab {
+  padding: 0 var(--sp-1) var(--sp-2);
+  font-family: var(--f-display);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  transition: color var(--motion) ease, border-color var(--motion) ease;
+}
+.tab:hover { color: var(--c-text); }
+.tab[aria-current="true"] { color: var(--c-text); border-bottom-color: var(--c-accent); }
+
 .message { margin: 0 0 var(--sp-4); color: var(--c-text-muted); }
 
 .back-link {
@@ -367,6 +385,10 @@ input[type="file"].field { padding: var(--sp-2); }
   transition: border-color var(--motion) ease;
 }
 .photo:hover { border-color: var(--c-text); }
+
+/* 資料夾牆的純瀏覽卡（design2.md D4）：已定案照片沒有互動，連手指游標都不給 */
+.photo-static { cursor: default; }
+.photo-static:hover { border-color: var(--c-border); }
 
 .photo img,
 .placeholder {
@@ -456,18 +478,6 @@ input[type="file"].field { padding: var(--sp-2); }
   font-weight: 600;
 }
 
-.fm-close {
-  position: absolute;
-  top: var(--sp-3);
-  right: var(--sp-3);
-  padding: var(--sp-1) var(--sp-2);
-  line-height: 1;
-  color: var(--c-text-muted);
-  background: none;
-  border: none;
-}
-.fm-close:hover { color: var(--c-text); }
-
 /* 三個選項之間用分隔線隔開，讓「這是三條不同的路」一眼看得出來 */
 .fm-option {
   display: flex;
@@ -478,6 +488,8 @@ input[type="file"].field { padding: var(--sp-2); }
   border-top: var(--bw) solid var(--c-border);
 }
 .fm-option:first-of-type { padding-top: 0; border-top: none; }
+/* display: flex 會蓋過 hidden 屬性的預設 display:none——待決定分頁隱藏①列靠這行 */
+.fm-option[hidden] { display: none; }
 
 .fm-option label {
   flex: 1 0 100%;

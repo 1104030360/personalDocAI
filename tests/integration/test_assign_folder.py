@@ -182,3 +182,57 @@ def test_請求必須恰好給一個folder_id或name(client, 已上傳的照片,
     response = client.patch(f"/photos/{已上傳的照片['id']}/folder", json=body)
 
     assert response.status_code == 422
+
+
+# ---- design2.md D3：定案不可逆（Phase 27）----
+def test_已定案的照片再歸類回409且完全沒被改動(client, 已上傳的照片):
+    """design2.md D3：照片一旦定案就鎖死——第二次 PATCH 一律 409，什麼都不改。"""
+    photo_id = 已上傳的照片["id"]
+    收據id = _folder_id(已上傳的照片, "收據")
+    定案 = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 收據id})
+    assert 定案.status_code == 200, 定案.text
+    定案後 = photo_repository.fetch_photo(photo_id)
+    定案後向量 = photo_repository.fetch_embedding(photo_id)
+
+    飲食id = _folder_id(已上傳的照片, "飲食")
+    response = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 飲食id})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "照片已定案，不可再變更資料夾"
+    之後 = photo_repository.fetch_photo(photo_id)
+    assert 之後["folder_id"] == 定案後["folder_id"] == 收據id
+    assert 之後["category"] == 定案後["category"] == "收據"
+    assert photo_repository.fetch_embedding(photo_id) == 定案後向量
+
+
+def test_已定案後自建路徑也回409且不建資料夾(client, 已上傳的照片):
+    """定案檢查排在重名檢查與 create_folder 之前——自建那條路也進不去。"""
+    photo_id = 已上傳的照片["id"]
+    收據id = _folder_id(已上傳的照片, "收據")
+    assert client.patch(
+        f"/photos/{photo_id}/folder", json={"folder_id": 收據id}
+    ).status_code == 200
+    定案後資料夾數 = len(photo_repository.list_folders())
+
+    response = client.patch(
+        f"/photos/{photo_id}/folder", json={"name": "新夾", "description": "不該被建出來"}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "照片已定案，不可再變更資料夾"
+    assert len(photo_repository.list_folders()) == 定案後資料夾數
+    assert photo_repository.find_folder_by_name("新夾") is None
+
+
+def test_歸檔目標是收件箱回422(client, 已上傳的照片):
+    """design2.md D3/D7：定案目標必須是真資料夾——把照片「歸」回收件箱不合法。"""
+    photo_id = 已上傳的照片["id"]
+    未分類id = _folder_id(已上傳的照片, "未分類")
+
+    response = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 未分類id})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "不能歸檔到收件箱"
+    row = photo_repository.fetch_photo(photo_id)
+    assert row["category"] == "未分類"
+    assert row["folder_id"] == 未分類id

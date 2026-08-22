@@ -25,9 +25,13 @@
 <script>
 const view = document.getElementById("view");
 
-// 網址是 browse.html?folder=2 就看那個資料夾，沒帶就看資料夾清單。
-// 用網址而不是用 JavaScript 切畫面，上一頁／重新整理／加書籤才會正常。
-const folderIdInUrl = new URLSearchParams(location.search).get("folder");
+// 狀態都寫在網址上（上一頁／重新整理／書籤才會正常）：
+//   browse.html               → 待決定分頁（預設——先處理待辦的檔案櫃心智，design2.md D4）
+//   browse.html?tab=folders   → 資料夾分頁
+//   browse.html?folder=N      → 某個資料夾的縮圖牆（純瀏覽）
+const 網址參數 = new URLSearchParams(location.search);
+const folderIdInUrl = 網址參數.get("folder");
+const tabInUrl = 網址參數.get("tab");
 
 // 小工具：造一個元素並填文字。一律用 textContent，不用 innerHTML——
 // 照片文字與資料夾名稱是 AI 或使用者填的，裡面若有 < 之類的符號才不會弄壞版面。
@@ -46,15 +50,99 @@ async function getJson(url) {
   return await response.json();
 }
 
-// ---------- 畫面一：資料夾清單 ----------
-async function showFolderList() {
+// 兩個分頁的頁籤列（design2.md D4）。「未分類」不再以資料夾卡片出現，
+// 它的內容就是「待決定」分頁。
+function renderTabs(active, pendingCount) {
+  const tabs = el("nav", "tabs");
+  tabs.setAttribute("aria-label", "瀏覽分頁");
+  const pending = el("a", "tab", "待決定（" + pendingCount + "）");
+  pending.href = "/ui/browse.html";
+  const folders = el("a", "tab", "資料夾");
+  folders.href = "/ui/browse.html?tab=folders";
+  (active === "pending" ? pending : folders).setAttribute("aria-current", "true");
+  tabs.appendChild(pending);
+  tabs.appendChild(folders);
+  view.appendChild(tabs);
+}
+
+// 一張照片卡。可點（待決定分頁）＝ <button>；純瀏覽（資料夾牆）＝ <div>，
+// 連游標都不是手指——已定案的照片沒有任何假入口（design2.md D4）。
+function 照片卡(photo, 可點) {
+  const card = 可點 ? el("button", "photo") : el("div", "photo photo-static");
+  if (可點) {
+    card.type = "button";
+    card.dataset.photoId = photo.id;      // event delegation 用得到
+  }
+
+  if (photo.thumbnail_url) {
+    const image = document.createElement("img");
+    image.src = photo.thumbnail_url;      // 例如 /photos/7/thumbnail
+    image.alt = photo.text;
+    card.appendChild(image);
+  } else {
+    // 舊資料沒有原圖：畫灰底占位，不假裝有圖（design1.md §10）
+    card.appendChild(el("div", "placeholder", "無縮圖"));
+  }
+  card.appendChild(el("div", "caption", photo.text));
+
+  const item = document.createElement("li");
+  item.appendChild(card);
+  return item;
+}
+
+// ---------- 分頁一：待決定（預設）----------
+async function showPending() {
   const folders = await getJson("/folders");
+  const inbox = folders.find(function (f) { return f.is_inbox; });
+  const detail = await getJson("/folders/" + inbox.id);
 
   view.textContent = "";
-  view.appendChild(el("h2", null, "資料夾"));
+  renderTabs("pending", detail.folder.photo_count);
+
+  if (detail.photos.length === 0) {
+    view.appendChild(el("p", "message",
+      "目前沒有待決定的照片。上傳時按「稍後再說」的照片會出現在這裡。"));
+    return;
+  }
+  view.appendChild(el("p", "message",
+    "點一張照片完成歸類——歸進資料夾後就定案，不能再改。"));
+
+  const wall = el("ul", "wall");
+  detail.photos.forEach(function (photo) {
+    wall.appendChild(照片卡(photo, true));
+  });
+
+  // 待決定分頁的彈窗：沒有①（這裡沒有持久化的 AI 建議，design2.md D5）；
+  // 下拉排除收件箱（design2.md D7）；「稍後再說」＝什麼都不做、照片留在這裡。
+  const 可選資料夾 = folders.filter(function (f) { return !f.is_inbox; });
+  wall.addEventListener("click", function (event) {
+    const card = event.target.closest(".photo");
+    if (!card || !card.dataset.photoId) return;
+
+    openFolderModal({
+      photoId: Number(card.dataset.photoId),
+      folders: 可選資料夾,
+      primary: null,
+      onAssigned: function () {
+        location.reload();                // 定案的照片會離開待決定，整頁重讀最單純
+      },
+      onClosed: function () {}            // 稍後再說＝維持待決定
+    });
+  });
+
+  view.appendChild(wall);
+}
+
+// ---------- 分頁二：資料夾卡片 ----------
+async function showFolderList() {
+  const folders = await getJson("/folders");
+  const inbox = folders.find(function (f) { return f.is_inbox; });
+
+  view.textContent = "";
+  renderTabs("folders", inbox.photo_count);
 
   const list = el("ul", "folders");
-  folders.forEach(function (folder) {
+  folders.filter(function (f) { return !f.is_inbox; }).forEach(function (folder) {
     const link = el("a", "folder");
     link.href = "/ui/browse.html?folder=" + folder.id;
     link.appendChild(el("div", "folder-name",
@@ -68,18 +156,14 @@ async function showFolderList() {
   view.appendChild(list);
 }
 
-// ---------- 畫面二：某個資料夾的縮圖牆 ----------
+// ---------- 畫面三：某個資料夾的縮圖牆（純瀏覽，design2.md D4）----------
 async function showFolderPhotos(folderId) {
-  // 兩個請求同時送：這個資料夾的內容，以及彈窗下拉選單要用的完整清單
-  const [detail, folders] = await Promise.all([
-    getJson("/folders/" + folderId),
-    getJson("/folders")
-  ]);
+  const detail = await getJson("/folders/" + folderId);
 
   view.textContent = "";
 
   const back = el("a", "back-link", "← 回資料夾列表");
-  back.href = "/ui/browse.html";
+  back.href = "/ui/browse.html?tab=folders";
   view.appendChild(back);
 
   view.appendChild(el("h2", null,
@@ -90,51 +174,11 @@ async function showFolderPhotos(folderId) {
     view.appendChild(el("p", "message", "這個資料夾還沒有照片。"));
     return;
   }
-  view.appendChild(el("p", "message", "點一張照片可以改資料夾。"));
 
   const wall = el("ul", "wall");
   detail.photos.forEach(function (photo) {
-    const card = el("button", "photo");
-    card.type = "button";
-    card.dataset.photoId = photo.id;        // 待會兒用得到（event delegation）
-
-    if (photo.thumbnail_url) {
-      const image = document.createElement("img");
-      image.src = photo.thumbnail_url;      // 例如 /photos/7/thumbnail
-      image.alt = photo.text;
-      card.appendChild(image);
-    } else {
-      // 舊資料沒有原圖：畫灰底占位，不假裝有圖（design1.md §10）
-      card.appendChild(el("div", "placeholder", "無縮圖"));
-    }
-    card.appendChild(el("div", "caption", photo.text));
-
-    const item = document.createElement("li");
-    item.appendChild(card);
-    wall.appendChild(item);
+    wall.appendChild(照片卡(photo, false));   // 已定案：純瀏覽、不可點
   });
-
-  // event delegation：整面牆只掛一個監聽器，被點時往上找是哪一張
-  wall.addEventListener("click", function (event) {
-    const card = event.target.closest(".photo");
-    if (!card) return;
-
-    openFolderModal({
-      photoId: Number(card.dataset.photoId),
-      folders: folders,
-      primary: {
-        id: detail.folder.id,
-        name: detail.folder.name,
-        description: detail.folder.description
-      },
-      primaryVerb: "維持",                  // 上傳頁是「採用」，這裡是「維持」
-      onAssigned: function () {
-        location.reload();                  // 照片可能已被移走，整頁重讀最單純
-      },
-      onClosed: function () {}              // 關掉就關掉，什麼都不用做
-    });
-  });
-
   view.appendChild(wall);
 }
 
@@ -143,8 +187,10 @@ async function showFolderPhotos(folderId) {
   try {
     if (folderIdInUrl) {
       await showFolderPhotos(folderIdInUrl);
-    } else {
+    } else if (tabInUrl === "folders") {
       await showFolderList();
+    } else {
+      await showPending();
     }
   } catch (error) {
     view.textContent = "";

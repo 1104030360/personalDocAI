@@ -53,27 +53,68 @@ def make_large_png_bytes(side: int = 1200) -> bytes:
     return buffer.getvalue()
 
 
+def make_pdf_bytes(pages: int = 1) -> bytes:
+    """產生一份真的 PDF，每頁一張純色小圖（Phase 28）。
+
+    Pillow 自己就會寫 PDF（save(format="PDF")），測試端因此不必多裝套件：
+    save_all=True ＋ append_images=其餘頁 ＝ 把多張圖寫成多頁的同一份檔案。
+    """
+    first, *rest = [
+        Image.new("RGB", (40, 20), color=(30 + index * 40, 120, 60))
+        for index in range(pages)
+    ]
+    buffer = io.BytesIO()
+    first.save(buffer, format="PDF", save_all=True, append_images=rest)
+    return buffer.getvalue()
+
+
 class FakeVLM:
     """考試用的固定答案卡，不是正式看圖系統。
 
     測試會先指定「請當作收據、店名 Target」；understand() 照念，不呼叫 Ollama。
     沒給 result 時預設 understood=False（規格：看不懂 → 422、什麼都不存）。
 
-    folders 參數只是為了與 VLMClient 協定一致（Phase 18 新增）：
-    假件不會真的照著清單思考，但會把收到的清單記在 last_folders，
-    讓測試可以驗「呼叫端真的把資料夾清單傳進去了」。
+    folders／entities 參數只是為了與 VLMClient 協定一致
+    （Phase 18 加 folders、Phase 30 加 entities）：假件不會真的照著清單思考，
+    但會把收到的清單記在 last_folders／last_entities，
+    讓測試可以驗「呼叫端真的把兩份清單都傳進去了」。
     """
 
     def __init__(self, result: PhotoUnderstanding | None = None) -> None:
         self.result = result or PhotoUnderstanding(understood=False)
         self.calls = 0
         self.last_folders: list[dict] | None = None
+        self.last_entities: list[dict] | None = None
 
     def understand(
-        self, image_bytes: bytes, content_type: str, folders: list[dict]
+        self,
+        image_bytes: bytes,
+        content_type: str,
+        folders: list[dict],
+        entities: list[dict],
     ) -> PhotoUnderstanding:
         self.calls += 1
         self.last_folders = folders
+        self.last_entities = entities
+        return self.result
+
+
+class FakeEntitySuggester:
+    """「再建議一個實體」的固定答案卡，不呼叫 Ollama。
+
+    建構子登記這次要挑哪一個名字（預設 None＝都不像，也就是最保守的答案）；
+    calls 與 last_candidates 讓測試驗得出「候選空時根本沒問模型」
+    與「exclude 掉的實體真的沒進候選清單」。
+    """
+
+    def __init__(self, result: str | None = None) -> None:
+        self.result = result
+        self.calls = 0
+        self.last_candidates: list[dict] | None = None
+
+    def pick(self, photo: dict, candidates: list[dict]) -> str | None:
+        self.calls += 1
+        self.last_candidates = candidates
         return self.result
 
 

@@ -6,14 +6,17 @@
      所有提示與錯誤都寫進彈窗裡的 <p id="fm-error">。
      （這行註解故意不在函式名後面加小括號——驗收會用 grep 掃「函式名＋左括號」，註解不能誤中。）
 
+   ⚠ design2.md D1：彈窗是「強制決定」——沒有 ×、不吃 Esc、點暗色區也不會關。
+     唯一的出口是四個明確選項；「稍後再說」＝把照片留在待決定（不呼叫任何 API）。
+
    用法：
      openFolderModal({
        photoId: 7,                                // 要歸類的照片 id
-       folders: [{id, name, description}, …],     // ② 下拉選單用的完整清單
-       primary: {id, name, description},          // ① 那一個資料夾
-       primaryVerb: "採用",                        // 上傳頁「採用」、瀏覽頁「維持」
+       folders: [{id, name, description}, …],     // ② 下拉選單（呼叫端先濾掉收件箱）
+       primary: {id, name, description} 或 null,  // ① 那一個資料夾；null＝整列不顯示
+       primaryVerb: "採用",                        // ① 按鈕動詞（有 primary 才用得到）
        onAssigned: function (folder) { … },       // PATCH 成功，帶回新的資料夾
-       onClosed: function () { … }                // 使用者按 × 或 Esc，沒有歸類
+       onClosed: function () { … }                // 使用者按「稍後再說」，沒有歸類
      });
 
    本檔不碰頁面其他部分，成功或關閉都只透過上面兩個 callback 通知呼叫方——
@@ -24,10 +27,9 @@
 const FOLDER_MODAL_HTML = `
 <div class="fm-backdrop" id="fm-backdrop" hidden>
   <div class="fm-box" role="dialog" aria-modal="true" aria-labelledby="fm-title">
-    <button type="button" class="fm-close" id="fm-close" aria-label="關閉">×</button>
     <h3 id="fm-title">要把這張照片放到哪個資料夾？</h3>
 
-    <div class="fm-option">
+    <div class="fm-option" id="fm-primary-option">
       <button type="button" id="fm-primary">（載入中）</button>
       <p class="fm-desc" id="fm-primary-desc"></p>
     </div>
@@ -45,6 +47,11 @@ const FOLDER_MODAL_HTML = `
       <button type="button" id="fm-create">建立並歸類</button>
     </div>
 
+    <div class="fm-option">
+      <button type="button" id="fm-later">稍後再說</button>
+      <p class="fm-desc">照片會留在「待決定」，之後到瀏覽頁的待決定分頁完成歸類。</p>
+    </div>
+
     <p class="fm-error" id="fm-error"></p>
   </div>
 </div>
@@ -60,7 +67,11 @@ let fmLastFocus = null;
 function fmAfterOpen() {
   fmLastFocus = document.activeElement;
   document.body.classList.add("fm-open");
-  const 第一個可聚焦 = fmEl("fm-backdrop").querySelector("button, input, select");
+  // offsetParent 為 null＝display:none（例如被隱藏的①列），跳過它
+  const 第一個可聚焦 = Array.prototype.find.call(
+    fmEl("fm-backdrop").querySelectorAll("button, input, select"),
+    function (元素) { return 元素.offsetParent !== null; }
+  );
   if (第一個可聚焦) { 第一個可聚焦.focus(); }
 }
 
@@ -80,7 +91,7 @@ function fmSetError(message) {
 }
 
 function fmSetBusy(busy) {
-  ["fm-primary", "fm-select-submit", "fm-create"].forEach(function (id) {
+  ["fm-primary", "fm-select-submit", "fm-create", "fm-later"].forEach(function (id) {
     fmEl(id).disabled = busy;               // 等回應期間三顆按鈕都不能按
   });
 }
@@ -145,7 +156,7 @@ function fmInstall() {
   holder.innerHTML = FOLDER_MODAL_HTML;   // 固定樣板字串，沒有任何外來資料
   document.body.appendChild(holder.firstElementChild);
 
-  fmEl("fm-close").addEventListener("click", fmClose);
+  fmEl("fm-later").addEventListener("click", fmClose);
   fmEl("fm-primary").addEventListener("click", function () {
     fmAssign({ folder_id: fmConfig.primary.id });
   });
@@ -158,15 +169,6 @@ function fmInstall() {
       description: fmEl("fm-desc-input").value
     });
   });
-  document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && !fmEl("fm-backdrop").hidden) fmClose();
-  });
-
-  // 點彈窗外面的暗色區域＝關閉，等同按 ×（一樣不呼叫 PATCH）
-  fmEl("fm-backdrop").addEventListener("click", function (event) {
-    if (event.target === fmEl("fm-backdrop")) { fmClose(); }
-  });
-
   fmReady = true;
 }
 
@@ -174,10 +176,15 @@ function openFolderModal(config) {
   fmInstall();
   fmConfig = config;
 
-  // ① 那顆按鈕：上傳頁是「採用「收據」」，瀏覽頁是「維持「收據」」
-  fmEl("fm-primary").textContent =
-    (config.primaryVerb || "採用") + "「" + config.primary.name + "」";
-  fmEl("fm-primary-desc").textContent = config.primary.description || "";
+  // ① 那顆按鈕：只有「有可用建議」時才顯示（design2.md D5/D6——
+  //    待決定分頁沒有持久化的建議、AI 建議是未分類時也不顯示，交給「稍後再說」）
+  const 有建議 = !!config.primary;
+  fmEl("fm-primary-option").hidden = !有建議;
+  if (有建議) {
+    fmEl("fm-primary").textContent =
+      (config.primaryVerb || "採用") + "「" + config.primary.name + "」";
+    fmEl("fm-primary-desc").textContent = config.primary.description || "";
+  }
 
   // ② 下拉選單：放「全部」資料夾（design1.md §9 的決定，資料夾多了才找得到）
   const select = fmEl("fm-select");
@@ -186,7 +193,7 @@ function openFolderModal(config) {
     const option = document.createElement("option");
     option.value = folder.id;
     option.textContent = folder.name;
-    if (folder.id === config.primary.id) option.selected = true;
+    if (有建議 && folder.id === config.primary.id) option.selected = true;
     select.appendChild(option);
   });
 

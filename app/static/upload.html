@@ -20,11 +20,11 @@
 <main class="page">
 
 <h2>上傳照片</h2>
-<p class="lead">選一張 JPEG 或 PNG。AI 會看圖並存成文字描述＋四個欄位，照片先放進「未分類」，
-接著在彈出的視窗裡決定要收進哪個資料夾。</p>
+<p class="lead">選一張 JPEG／PNG，或一份 PDF（一頁會存成一張照片）。AI 會看圖並存成文字描述＋四個欄位，
+接著在彈出的視窗裡決定要收進哪個資料夾——選定就定案，或按「稍後再說」先放進待決定區。</p>
 
 <form id="upload-form" class="field-row">
-  <input type="file" id="file-input" class="field" accept="image/jpeg,image/png" required>
+  <input type="file" id="file-input" class="field" accept="image/jpeg,image/png,application/pdf" required>
   <button type="submit" id="submit-button" class="btn btn-primary">上傳</button>
 </form>
 
@@ -85,6 +85,47 @@ function renderError(label, detail) {
     '<p>' + esc(說明) + '</p>';
 }
 
+// 上傳成功後：畫結果卡片，並開彈窗要使用者決定這張照片收進哪個資料夾。
+// 前言＝寫在說明最前面的補充，PDF 用它交代整份的入庫結果；單圖傳空字串，
+// 畫出來的字與 Phase 27 一字不差。
+function 開始歸類(photo, 前言) {
+  // design2.md D6：AI 建議被 clamp 成「未分類」＝不確定 → 不顯示①，交給「稍後再說」
+  const 建議可用 = photo.suggested_folder.id !== photo.folder.id;
+  renderResult(
+    photo,
+    "未分類（待決定）",
+    前言 + (建議可用
+      ? "AI 建議放進「" + photo.suggested_folder.name + "」，請在彈出的視窗裡決定。"
+      : "AI 不確定這張要放哪，請在視窗裡選一個資料夾，或稍後再說。")
+  );
+  openFolderModal({
+    photoId: photo.id,
+    // design2.md D7：下拉選單排除收件箱——定案目標必須是真資料夾
+    folders: photo.folders.filter(function (f) { return f.id !== photo.folder.id; }),
+    primary: 建議可用 ? photo.suggested_folder : null,
+    primaryVerb: "採用",
+    onAssigned: function (folder) {
+      renderResult(photo, folder.name, 前言 + "✅ 已歸到「" + folder.name + "」。");
+    },
+    onClosed: function () {
+      renderResult(
+        photo,
+        "未分類（待決定）",
+        前言 + "已放進待決定區，之後到瀏覽頁的「待決定」分頁完成歸類。"
+      );
+    }
+  });
+}
+
+// PDF 的 201 回應（design3.md D7）：pages 總頁數、created 每頁一筆、skipped_pages 看不懂的頁。
+function pdf摘要(body) {
+  const 跳過 = body.skipped_pages.length > 0
+    ? "（第 " + body.skipped_pages.join("、") + " 頁看不懂，已跳過）"
+    : "";
+  return "PDF 共 " + body.pages + " 頁，已入庫 " + body.created.length + " 頁" + 跳過 +
+    "；其餘頁留在待決定區，可到瀏覽頁的「待決定」分頁完成歸類。以下先處理第 1 頁——";
+}
+
 form.addEventListener("submit", async function (event) {
   event.preventDefault();               // 不要讓瀏覽器用傳統方式送出表單並跳頁
 
@@ -106,29 +147,15 @@ form.addEventListener("submit", async function (event) {
     const body = await response.json();
 
     if (response.status === 201) {
-      renderResult(
-        body,
-        body.folder.name,
-        "AI 建議放進「" + body.suggested_folder.name + "」，請在彈出的視窗裡決定。"
-      );
-      openFolderModal({
-        photoId: body.id,
-        folders: body.folders,
-        primary: body.suggested_folder,
-        primaryVerb: "採用",
-        onAssigned: function (folder) {
-          renderResult(body, folder.name, "✅ 已歸到「" + folder.name + "」。");
-        },
-        onClosed: function () {
-          renderResult(
-            body,
-            body.folder.name,
-            "已放進「" + body.folder.name + "」，之後可到瀏覽頁再歸類。"
-          );
-        }
-      });
+      // 回應帶 created ＝ 這是 PDF（一頁一張照片）。彈窗只為第一頁開——
+      // 其餘頁留在待決定區，免得一份 20 頁的掃描檔逼使用者連按 20 次。
+      if (body.created) {
+        開始歸類(body.created[0], pdf摘要(body));
+      } else {
+        開始歸類(body, "");
+      }
     } else {
-      // 415＝不是 JPEG/PNG；422＝VLM 看不懂（什麼都沒存）；其他＝伺服器問題
+      // 415＝不是 JPEG/PNG/PDF；422＝VLM 看不懂或 PDF 讀不開（什麼都沒存）；其他＝伺服器問題
       renderError("失敗（HTTP " + response.status + "）", body.detail);
     }
   } catch (error) {

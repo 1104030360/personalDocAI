@@ -9,16 +9,23 @@ from langchain_core.embeddings import Embeddings
 from app.core import config
 from app.dependencies import get_embeddings, get_now, get_vlm
 from app.repositories import photo_repository
+from app.schemas.entity import EntityOut
 from app.schemas.photo import (
     AssignFolderRequest,
     AssignFolderResponse,
     FolderOut,
+    PdfUploadResponse,
     PhotoMetadata,
+    TaskSuggestion,
     UploadResponse,
 )
-from app.services import indexing_service, storage_service, vlm_service
+from app.services import indexing_service, pdf_service, storage_service, vlm_service
 
 router = APIRouter(tags=["photos"])
+
+# PDF 的每一頁渲染出來都是 PNG，之後就完全是一次普通的單圖上傳
+#（原圖存成 .png、讀圖端點照舊，不必為 PDF 另開一條路）
+PDF_PAGE_CONTENT_TYPE = "image/png"
 
 
 def _folder_out(folder: dict) -> FolderOut:
@@ -32,18 +39,45 @@ def _folder_out(folder: dict) -> FolderOut:
     )
 
 
-@router.post("/photos", status_code=201, response_model=UploadResponse)
+def _entity_out(entity: dict) -> EntityOut:
+    """repository 回來的實體 dict 剛好就是三個欄位，直接展開。"""
+    return EntityOut(**entity)
+
+
+def _task_suggestion(
+    understanding: vlm_service.PhotoUnderstanding,
+) -> TaskSuggestion | None:
+    """把 VLM 的待辦欄位整理成建議；沒有可辦的事就回 None（design3.md D13）。
+
+    標題是空的（沒填或只有空白）＝這張照片沒有待辦，前端的待辦彈窗就不開。
+    到期日沿用 parse_content_time 的寬容解析：模型回「下週三」之類推不出來的東西
+    只是少了一個日期，**絕不可以讓整個上傳失敗**（與 content_time 同一個原則）。
+    """
+    if not understanding.task_title or not understanding.task_title.strip():
+        return None
+    due = vlm_service.parse_content_time(understanding.task_due)
+    return TaskSuggestion(
+        title=understanding.task_title.strip(),
+        due=due.isoformat() if due else None,
+    )
+
+
+@router.post(
+    "/photos", status_code=201, response_model=UploadResponse | PdfUploadResponse
+)
 def upload_photo(
     file: UploadFile = File(...),
     vlm: vlm_service.VLMClient = Depends(get_vlm),
     embeddings: Embeddings = Depends(get_embeddings),
     now: datetime | None = Depends(get_now),
-) -> UploadResponse:
-    """上傳照片：格式檢查 → 看圖 → 轉向量 → 寫入「未分類」→ 存檔 → 回 201。
+) -> UploadResponse | PdfUploadResponse:
+    """上傳一張照片，或一份 PDF（一頁當成一張照片，design3.md D7）。
 
-    照片一律先掛在「未分類」；VLM 給的類別只是建議（回應的 suggested_folder），
-    真正的歸類由使用者在彈窗確認後呼叫 PATCH /photos/{id}/folder（Phase 21）。
-    全程在同一個請求內完成；任何一步失敗＝整筆不存在、也不留檔。
+    只有這一層知道「使用者傳的是圖還是 PDF」：PDF 先被拆成一頁一張 PNG，
+    之後每一頁走的都是與單圖完全相同的入庫流程（_ingest_image），
+    所以單圖的行為與回應一字不變。
+
+    回應有兩種長相：單圖回 UploadResponse，PDF 回 PdfUploadResponse。
     """
     # ① 格式檢查
     if file.content_type not in config.ALLOWED_CONTENT_TYPES:
@@ -52,14 +86,46 @@ def upload_photo(
             detail="上傳檔案必須為常見圖片格式（如 JPEG、PNG）",
         )
 
-    # 讀出整個上傳檔的位元組：看圖、轉向量用它，第 ⑤ 段也用它寫原圖與縮圖
+    # 讀出整個上傳檔的位元組：圖就直接拿去看圖與存檔，PDF 則先拿去拆頁
     #（「不儲存原始照片檔」是 v4 的舊決策，design1.md §1.1 已明示推翻）
-    image_bytes = file.file.read()
+    upload_bytes = file.file.read()
 
-    # ② 看圖（把現有資料夾清單當變數注入 prompt——design1.md §8）
-    #    仍然只有這一次看圖呼叫，沒有第二個分類模型。
+    # 資料夾與實體清單在這裡各讀一次就好：PDF 每一頁都要用同一份清單注入 prompt，
+    # 而上傳過程中不會有人新增資料夾或實體（自創都是彈窗的事，發生在這之後）。
     folders = photo_repository.list_folders()
-    understanding = vlm.understand(image_bytes, file.content_type, folders)
+    entities = photo_repository.list_entities()
+
+    if file.content_type == config.PDF_CONTENT_TYPE:
+        return _ingest_pdf(upload_bytes, vlm, embeddings, now, folders, entities)
+
+    return _ingest_image(
+        upload_bytes, file.content_type, vlm, embeddings, now, folders, entities
+    )
+
+
+def _ingest_image(
+    image_bytes: bytes,
+    content_type: str,
+    vlm: vlm_service.VLMClient,
+    embeddings: Embeddings,
+    now: datetime | None,
+    folders: list[dict],
+    entities: list[dict],
+) -> UploadResponse:
+    """一張圖的完整入庫：看圖 → 轉向量 → 寫入「未分類」→ 存檔 → 回應。
+
+    照片一律先掛在「未分類」；VLM 給的類別只是建議（回應的 suggested_folder），
+    真正的歸類由使用者在彈窗確認後呼叫 PATCH /photos/{id}/folder（Phase 21）。
+    實體與待辦同理：只出現在回應（suggested_entity／suggested_task），
+    要等使用者在彈窗 2／3 按下去才落庫（design3.md D3「人確認才落庫」）。
+    全程在同一個請求內完成；任何一步失敗＝整筆不存在、也不留檔。
+
+    PDF 的每一頁也是呼叫這裡（Phase 28），所以「看不懂＝422」的語意兩邊共用：
+    單圖的 422 直接回給使用者，PDF 則由 _ingest_pdf 接住、記成跳過的頁。
+    """
+    # ② 看圖（把現有資料夾與實體清單當變數注入 prompt——design1.md §8、design3.md D12）
+    #    仍然只有這一次看圖呼叫，沒有第二個分類模型：實體與待辦是同一次輸出多出來的欄位。
+    understanding = vlm.understand(image_bytes, content_type, folders, entities)
     if not understanding.understood or not understanding.text.strip():
         raise HTTPException(
             status_code=422,
@@ -73,6 +139,10 @@ def upload_photo(
     suggested_name = vlm_service.clamp_category(understanding.category, folders)
     inbox = next(folder for folder in folders if folder["is_inbox"])
     suggested = next(folder for folder in folders if folder["name"] == suggested_name)
+
+    #    實體的建議同樣要夾，但沒有「未分類」這種保底：清單外或都不像 → None，
+    #    實體彈窗那時就只剩②改選現有／③自創／④不釘（design3.md §2、D12）。
+    suggested_entity = vlm_service.clamp_entity(understanding.entity, entities)
 
     # ★④ 合併與寫入一律用「未分類」——上傳當下的向量就是未分類版本（design1.md §2）
     content_time = vlm_service.parse_content_time(understanding.content_time)
@@ -104,16 +174,16 @@ def upload_photo(
     thumbnail_path: str | None = None
     try:
         original_path = storage_service.save_original(
-            photo_id, image_bytes, file.content_type
+            photo_id, image_bytes, content_type
         )
         thumbnail_path = storage_service.make_thumbnail(
-            photo_id, image_bytes, file.content_type
+            photo_id, image_bytes, content_type
         )
         photo_repository.update_photo_paths(
             photo_id,
             original_path=original_path,
             thumbnail_path=thumbnail_path,
-            content_type=file.content_type,
+            content_type=content_type,
         )
     except Exception:
         # remove_if_exists 吃得下 None（那一步還沒跑到就失敗了）與「檔案本來就不在」
@@ -123,7 +193,7 @@ def upload_photo(
         # 原始錯誤原封不動往外丟（re-raise），讓框架回 500 並在 log 留下 traceback
         raise
 
-    # ★⑥ 回 201：把彈窗要用的四樣東西一起帶回去
+    # ★⑥ 回 201：把三個彈窗要用的東西一次帶齊（抽屜、實體、待辦）
     return UploadResponse(
         id=photo_id,
         text=row["text"],
@@ -137,6 +207,63 @@ def upload_photo(
         suggested_folder=_folder_out(suggested),
         folders=[_folder_out(folder) for folder in folders],
         thumbnail_url=f"/photos/{photo_id}/thumbnail",
+        suggested_entity=(
+            _entity_out(suggested_entity) if suggested_entity else None
+        ),
+        entities=[_entity_out(entity) for entity in entities],
+        suggested_task=_task_suggestion(understanding),
+    )
+
+
+def _ingest_pdf(
+    pdf_bytes: bytes,
+    vlm: vlm_service.VLMClient,
+    embeddings: Embeddings,
+    now: datetime | None,
+    folders: list[dict],
+    entities: list[dict],
+) -> PdfUploadResponse:
+    """一份 PDF 的入庫：逐頁渲染成 PNG，每一頁當成一張照片（design3.md D7）。
+
+    PDF 原始檔不留——照片的「原圖」就是該頁渲染出來的 PNG。
+    整份讀不開＝使用者給了壞檔（422，什麼都沒存）；
+    個別頁看不懂則只跳過那一頁，其餘頁照樣入庫，跳過的頁碼回報給使用者。
+    """
+    try:
+        page_images = pdf_service.render_pages(pdf_bytes)
+    except pdf_service.PdfUnreadableError:
+        raise HTTPException(status_code=422, detail="無法讀取 PDF 檔案")
+
+    created: list[UploadResponse] = []
+    skipped_pages: list[int] = []
+    for page_number, page_bytes in enumerate(page_images, start=1):
+        try:
+            created.append(
+                _ingest_image(
+                    page_bytes,
+                    PDF_PAGE_CONTENT_TYPE,
+                    vlm,
+                    embeddings,
+                    now,
+                    folders,
+                    entities,
+                )
+            )
+        except HTTPException as error:
+            # 只吞「這一頁看不懂」（422）。存檔失敗、資料庫掛掉之類的一律往外丟，
+            # 維持單圖既有的語意：伺服器出事就是 500，不可以偽裝成「跳過一頁」。
+            if error.status_code != 422:
+                raise
+            skipped_pages.append(page_number)
+
+    if not created:
+        # 一頁都沒成功＝這次上傳什麼都沒存，跟單圖看不懂一樣回 422
+        raise HTTPException(
+            status_code=422, detail="PDF 每一頁都無法理解，未儲存任何資料"
+        )
+
+    return PdfUploadResponse(
+        pages=len(page_images), created=created, skipped_pages=skipped_pages
     )
 
 
@@ -189,6 +316,13 @@ def assign_folder(
     if photo is None:
         raise HTTPException(status_code=404, detail="找不到照片")
 
+    # ①.5 定案不可逆（design2.md D3）：只有還在收件箱（待決定）的照片可以歸檔。
+    #      已進真資料夾的照片＝定案，任何再歸類（含自建路徑）一律 409——
+    #      這一步是唯讀檢查，維持「檢查在前、寫入在後」的既有排序。
+    current_folder = photo_repository.get_folder(photo["folder_id"])
+    if not current_folder["is_inbox"]:
+        raise HTTPException(status_code=409, detail="照片已定案，不可再變更資料夾")
+
     # ②／③ 決定 category 要用的名稱（request 已保證 folder_id 與 name 恰好一個有值）。
     #    這一段只查不寫：自建那條路的 create_folder 刻意排在 embedding 之後（見 ⑤），
     #    embedding 失敗時才不會留下一個沒有照片的空資料夾。
@@ -196,6 +330,9 @@ def assign_folder(
         folder = photo_repository.get_folder(payload.folder_id)
         if folder is None:
             raise HTTPException(status_code=404, detail="找不到資料夾")
+        # 定案目標必須是真資料夾（design2.md D3/D7）：「歸」回收件箱不合法
+        if folder["is_inbox"]:
+            raise HTTPException(status_code=422, detail="不能歸檔到收件箱")
         category = folder["name"]
     else:
         # 自建：重名交由這裡擋（大小寫不敏感），資料庫的 UNIQUE 是最後防線。

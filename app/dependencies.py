@@ -3,7 +3,8 @@
 追正式上傳：get_vlm() → OllamaVLM。不要在這個檔找 FakeVLM（它在 tests/）。
 
 design.md §4.2：get_vlm / get_embeddings / get_now 是三個主要注入點；
-詢問流程另外需要 get_router / get_answerer / get_today（Phase 11 已補上）。
+詢問流程另外需要 get_router / get_answerer / get_today（Phase 11 已補上）；
+「再建議一個實體」另有 get_entity_suggester（Phase 30 加入）。
 """
 
 from __future__ import annotations
@@ -14,7 +15,12 @@ from functools import lru_cache
 from fastapi import Depends
 from langchain_core.embeddings import Embeddings
 
-from app.services import ask_workflow, indexing_service, vlm_service
+from app.services import (
+    ask_workflow,
+    entity_suggestion_service,
+    indexing_service,
+    vlm_service,
+)
 
 
 @lru_cache(maxsize=1)
@@ -66,6 +72,17 @@ def get_router() -> ask_workflow.RouterClient:
 
 def get_answerer() -> ask_workflow.AnswerClient:
     return _ollama_answerer()
+
+
+@lru_cache(maxsize=1)
+def _ollama_entity_suggester() -> entity_suggestion_service.OllamaEntitySuggester:
+    """只建立一次（建立物件本身不會連線，與 _ollama_vlm 同理）。"""
+    return entity_suggestion_service.OllamaEntitySuggester()
+
+
+def get_entity_suggester() -> entity_suggestion_service.EntitySuggesterClient:
+    """給「再建議一個實體」端點的物件。正式執行永遠是 OllamaEntitySuggester。"""
+    return _ollama_entity_suggester()
 
 
 def get_today(now: datetime | None = Depends(get_now)) -> date:

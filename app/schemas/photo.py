@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.entity import EntityOut
+
 
 class PhotoMetadata(BaseModel):
     """照片的結構化 metadata：固定四個欄位，不多不少。
@@ -24,11 +26,25 @@ class FolderOut(BaseModel):
     description: str
 
 
+class TaskSuggestion(BaseModel):
+    """VLM 判斷出來的待辦建議（design3.md D13）。
+
+    只是建議：使用者在待辦彈窗按下「建立」才會真的寫入待辦表（Phase 33），
+    上傳當下什麼都不存。title 是必要的——沒有標題就等於「沒有待辦」，
+    那時整個 suggested_task 是 None，而不是一個空殼。
+    """
+
+    title: str
+    due: str | None = None   # ISO 日期字串，例如「2026-09-18」；推不出來 → None
+
+
 class UploadResponse(BaseModel):
     """POST /photos 成功時的回應（HTTP 201）。
 
     2026-08-20 起多帶四樣東西，讓前端一收到回應就能把彈窗畫出來，
     不必再多打一次 API（design1.md §7.1）。
+    2026-08-21（Phase 30）再多帶三樣：實體與待辦的建議，
+    對應彈窗 2【實體】與彈窗 3【待辦】（design3.md §2）——同樣一次帶齊。
     """
 
     id: int
@@ -38,6 +54,23 @@ class UploadResponse(BaseModel):
     suggested_folder: FolderOut  # VLM 建議去哪個資料夾（保證是 folders 裡的一筆）
     folders: list[FolderOut]     # 完整資料夾清單，給彈窗的下拉選單用
     thumbnail_url: str           # 例如 "/photos/1/thumbnail"
+    suggested_entity: EntityOut | None   # 夾回清單後的實體建議；都不像 → None
+    entities: list[EntityOut]            # 完整實體清單，給實體彈窗的下拉選單用
+    suggested_task: TaskSuggestion | None  # 沒有可辦的事 → None（待辦彈窗就不開）
+
+
+class PdfUploadResponse(BaseModel):
+    """上傳 PDF 成功時的回應（HTTP 201，design3.md D7）。
+
+    PDF 一頁當成一張照片，所以回的是「一串單圖回應」而不是一筆——
+    created 裡的每一筆與單圖上傳的回應長得一模一樣，前端可以原樣餵給彈窗。
+
+    不變式：pages ＝ len(created) ＋ len(skipped_pages)，沒有頁會憑空消失。
+    """
+
+    pages: int                      # 這份 PDF 總共幾頁
+    created: list[UploadResponse]   # 成功入庫的頁（順序即頁序）
+    skipped_pages: list[int]        # VLM 看不懂而跳過的頁碼，1 起算
 
 
 class AssignFolderRequest(BaseModel):

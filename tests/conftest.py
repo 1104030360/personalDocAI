@@ -36,9 +36,23 @@ from datetime import datetime  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.dependencies import get_answerer, get_embeddings, get_now, get_router, get_vlm  # noqa: E402
+from app.dependencies import (  # noqa: E402
+    get_answerer,
+    get_embeddings,
+    get_entity_suggester,
+    get_now,
+    get_router,
+    get_vlm,
+)
 from app.main import app  # noqa: E402
-from tests.fakes import FakeAnswerLLM, FakeEmbeddings, FakeRouter, FakeVLM, FixedClock  # noqa: E402
+from tests.fakes import (  # noqa: E402
+    FakeAnswerLLM,
+    FakeEmbeddings,
+    FakeEntitySuggester,
+    FakeRouter,
+    FakeVLM,
+    FixedClock,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -46,18 +60,21 @@ def wire_fake_ai():
     """安全網：每個測試預設接上假 AI 與固定時鐘，結束時清掉所有覆寫。
 
     本機 Ollama 是真的在跑——pytest 絕不能默默打真模型（design.md §11：
-    全部測試不依賴任何外部服務）。需要不同行為的測試自行覆寫：
+    全部測試不依賴任何外部服務）。六個注入點全部都要接上假件，
+    需要不同行為的測試自行覆寫：
     - get_vlm 預設「看不懂」假件（要看得懂就覆寫成 FakeVLM(某理解結果)）
     - get_embeddings 預設 FakeEmbeddings（決定論向量）
     - get_now 預設固定時鐘 2026-08-18 10:00（對應規格 Given 的現在時間）
     - get_router 預設 FakeRouter（照登記的問題回查法，沒登記就丟例外模擬無法判斷）
     - get_answerer 預設 FakeAnswerLLM（拿檢索結果模板化回答，不呼叫真 LLM）
+    - get_entity_suggester 預設 FakeEntitySuggester（預設誰都不挑，最保守的答案）
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM()
     app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
     app.dependency_overrides[get_now] = FixedClock(datetime(2026, 8, 18, 10, 0))
     app.dependency_overrides[get_router] = lambda: FakeRouter()
     app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
+    app.dependency_overrides[get_entity_suggester] = lambda: FakeEntitySuggester()
     yield
     app.dependency_overrides.clear()
 

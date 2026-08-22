@@ -9,6 +9,7 @@ psycopg[binary]>=3.2      # Python 連 PostgreSQL 的套件（第 3 代）
 
 # --- 影像處理 ---
 Pillow>=10.0              # 產生縮圖用；只用到「開檔、等比縮小、存檔」三件事
+pypdfium2>=5.13           # 把 PDF 一頁渲染成一張圖（純 wheel、不必裝系統套件）
 
 # --- AI 積木 ---
 langchain-core>=1.0       # LangChain 的核心：Document、Embeddings 介面、@chain
