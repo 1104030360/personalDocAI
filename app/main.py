@@ -1,4 +1,4 @@
-"""FastAPI app 組裝：掛上四個 router ＋ 極簡網頁介面（靜態檔案）。"""
+"""FastAPI app 組裝：掛上五個 router ＋ 極簡網頁介面（靜態檔案）。"""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import ask, entities, folders, photos
+from app.api.routers import ask, entities, folders, photos, tasks
 
 app = FastAPI(title="PersonalDocAI")
 
@@ -14,6 +14,7 @@ app.include_router(photos.router)
 app.include_router(ask.router)
 app.include_router(folders.router)
 app.include_router(entities.router)
+app.include_router(tasks.router)
 
 
 @app.get("/health")

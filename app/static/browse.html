@@ -22,12 +22,14 @@
 </main>
 
 <script src="/ui/folder_modal.js"></script>
+<script src="/ui/entity_modal.js"></script>
 <script>
 const view = document.getElementById("view");
 
 // 狀態都寫在網址上（上一頁／重新整理／書籤才會正常）：
 //   browse.html               → 待決定分頁（預設——先處理待辦的檔案櫃心智，design2.md D4）
 //   browse.html?tab=folders   → 資料夾分頁
+//   browse.html?tab=tasks     → 待辦分頁（design3.md D15 的第三入口）
 //   browse.html?folder=N      → 某個資料夾的縮圖牆（純瀏覽）
 const 網址參數 = new URLSearchParams(location.search);
 const folderIdInUrl = 網址參數.get("folder");
@@ -50,18 +52,22 @@ async function getJson(url) {
   return await response.json();
 }
 
-// 兩個分頁的頁籤列（design2.md D4）。「未分類」不再以資料夾卡片出現，
-// 它的內容就是「待決定」分頁。
-function renderTabs(active, pendingCount) {
+// 三個分頁的頁籤列（design2.md D4＋design3.md D15）。「未分類」不再以資料夾卡片出現，
+// 它的內容就是「待決定」分頁；「待辦」是使用者按「建立」後的任務清單，不是待決定的照片。
+function renderTabs(active, pendingCount, taskCount) {
   const tabs = el("nav", "tabs");
   tabs.setAttribute("aria-label", "瀏覽分頁");
   const pending = el("a", "tab", "待決定（" + pendingCount + "）");
   pending.href = "/ui/browse.html";
   const folders = el("a", "tab", "資料夾");
   folders.href = "/ui/browse.html?tab=folders";
-  (active === "pending" ? pending : folders).setAttribute("aria-current", "true");
+  const tasks = el("a", "tab", "待辦（" + taskCount + "）");
+  tasks.href = "/ui/browse.html?tab=tasks";
+  const 目前 = { pending: pending, folders: folders, tasks: tasks }[active];
+  目前.setAttribute("aria-current", "true");
   tabs.appendChild(pending);
   tabs.appendChild(folders);
+  tabs.appendChild(tasks);
   view.appendChild(tabs);
 }
 
@@ -90,14 +96,36 @@ function 照片卡(photo, 可點) {
   return item;
 }
 
+// 彈窗 2【實體】：待決定分頁的補完鏈（design3.md §2.1）。
+// 這裡沒有持久化的 AI 建議（suggested: null＝①不顯示）——
+// 想要建議就按窗裡的「再建議一個」現算；實體清單開窗前現抓最新的。
+async function 接著釘實體(photoId) {
+  let entities = [];
+  try {
+    entities = await getJson("/entities");
+  } catch (error) {
+    // 拿不到清單就當空清單開窗——③自創與④跳過仍然能走；
+    // 之後真的釘選失敗會以紅字顯示在窗內，不必在這裡另立錯誤畫面。
+  }
+  openEntityModal({
+    photoId: photoId,
+    entities: entities,
+    suggested: null,
+    onDone: function () {
+      location.reload();   // 鏈收工才刷新：定案的照片離開待決定、計數更新
+    }
+  });
+}
+
 // ---------- 分頁一：待決定（預設）----------
 async function showPending() {
   const folders = await getJson("/folders");
   const inbox = folders.find(function (f) { return f.is_inbox; });
   const detail = await getJson("/folders/" + inbox.id);
+  const tasks = await getJson("/tasks");    // 只為頁籤計數；本地服務多一個小 GET 無妨
 
   view.textContent = "";
-  renderTabs("pending", detail.folder.photo_count);
+  renderTabs("pending", detail.folder.photo_count, tasks.length);
 
   if (detail.photos.length === 0) {
     view.appendChild(el("p", "message",
@@ -118,15 +146,16 @@ async function showPending() {
   wall.addEventListener("click", function (event) {
     const card = event.target.closest(".photo");
     if (!card || !card.dataset.photoId) return;
+    const photoId = Number(card.dataset.photoId);
 
     openFolderModal({
-      photoId: Number(card.dataset.photoId),
+      photoId: photoId,
       folders: 可選資料夾,
       primary: null,
-      onAssigned: function () {
-        location.reload();                // 定案的照片會離開待決定，整頁重讀最單純
-      },
-      onClosed: function () {}            // 稍後再說＝維持待決定
+      // 彈窗鏈（design3.md §2.1）：抽屜窗結束——定案**或**稍後再說——都接著開實體窗；
+      // 整頁重讀移到鏈的最尾端（歸檔可能已發生，等實體窗收工一次刷新最單純）。
+      onAssigned: function () { 接著釘實體(photoId); },
+      onClosed: function () { 接著釘實體(photoId); }
     });
   });
 
@@ -137,9 +166,10 @@ async function showPending() {
 async function showFolderList() {
   const folders = await getJson("/folders");
   const inbox = folders.find(function (f) { return f.is_inbox; });
+  const tasks = await getJson("/tasks");
 
   view.textContent = "";
-  renderTabs("folders", inbox.photo_count);
+  renderTabs("folders", inbox.photo_count, tasks.length);
 
   const list = el("ul", "folders");
   folders.filter(function (f) { return !f.is_inbox; }).forEach(function (folder) {
@@ -151,6 +181,51 @@ async function showFolderList() {
 
     const item = document.createElement("li");
     item.appendChild(link);
+    list.appendChild(item);
+  });
+  view.appendChild(list);
+}
+
+// ---------- 分頁三：待辦（design3.md D13、D15；§7＝能列、能點回來源圖就好）----------
+async function showTasks() {
+  const folders = await getJson("/folders");
+  const inbox = folders.find(function (f) { return f.is_inbox; });
+  const tasks = await getJson("/tasks");    // 先到期的在前、沒到期日的最後（排序在後端）
+
+  view.textContent = "";
+  renderTabs("tasks", inbox.photo_count, tasks.length);
+
+  if (tasks.length === 0) {
+    view.appendChild(el("p", "message",
+      "還沒有待辦。上傳時 AI 判斷有可辦事項、且你按「建立」的會出現在這裡。"));
+    return;
+  }
+  view.appendChild(el("p", "message", "點一列可開來源照片的原圖。"));
+
+  const list = el("ul", "tasks");
+  tasks.forEach(function (task) {
+    const row = el("a", "task-row");
+    // 「能點回來源圖」（design3.md §7）：直接連原圖端點、開新分頁。
+    // 舊照片沒有原圖時端點回 404——與縮圖占位同一套「不假裝有圖」的態度。
+    row.href = "/photos/" + task.photo_id + "/image";
+    row.target = "_blank";
+    row.rel = "noopener";
+
+    if (task.thumbnail_url) {
+      const image = document.createElement("img");
+      image.className = "task-thumb";
+      image.src = task.thumbnail_url;
+      image.alt = task.title;
+      row.appendChild(image);
+    } else {
+      row.appendChild(el("div", "task-thumb-empty", "無縮圖"));
+    }
+    row.appendChild(el("span", "task-title", task.title));
+    row.appendChild(el("span", "task-due",
+      task.due_date ? "到期 " + task.due_date : "無到期日"));
+
+    const item = document.createElement("li");
+    item.appendChild(row);
     list.appendChild(item);
   });
   view.appendChild(list);
@@ -189,6 +264,8 @@ async function showFolderPhotos(folderId) {
       await showFolderPhotos(folderIdInUrl);
     } else if (tabInUrl === "folders") {
       await showFolderList();
+    } else if (tabInUrl === "tasks") {
+      await showTasks();
     } else {
       await showPending();
     }

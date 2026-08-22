@@ -31,12 +31,12 @@
 
 | Phase | 名稱 | 主要內容 | 輪次 | 完成 |
 |---|---|---|---|---|
-| 28 | PDF 入庫 | 接受 application/pdf；一頁→一張 photo；壞檔 422；`上傳照片.feature` 加 PDF Rule | 本輪 | [ ] |
-| 29 | 實體與待辦資料層 | `db/migrate_design3.sql` 一次建 4 表（entity／photo_entity／task／folder_correction）；entity 相關 repository 函式；conftest 安全網擴充 | 本輪 | [ ] |
-| 30 | 實體建議與釘選端點 | VLM 契約一次擴齊（實體＋待辦建議）；`GET /entities`、`POST /photos/{id}/entities`、`POST /photos/{id}/entity-suggestion`（新注入點 get_entity_suggester） | 本輪 | [ ] |
-| 31 | 實體彈窗 | `entity_modal.js`（①採用②改選③自創④不釘＋「再建議一個」）；上傳頁與待決定 tab 接上彈窗鏈 1→2 | 本輪 | [ ] |
-| 32 | 待辦資料層與端點 | task 相關 repository 函式；`POST /photos/{id}/task`、`GET /tasks` | 本輪 | [ ] |
-| 33 | 待辦彈窗與瀏覽第三入口 | `task_modal.js`（建立／略過）；鏈 1→2→3；瀏覽頁三 tab「待決定｜資料夾｜待辦」 | 本輪 | [ ] |
+| 28 | PDF 入庫 | 接受 application/pdf；一頁→一張 photo；壞檔 422；`上傳照片.feature` 加 PDF Rule | 本輪 | [x] |
+| 29 | 實體與待辦資料層 | `db/migrate_design3.sql` 一次建 4 表（entity／photo_entity／task／folder_correction）；entity 相關 repository 函式；conftest 安全網擴充 | 本輪 | [x] |
+| 30 | 實體建議與釘選端點 | VLM 契約一次擴齊（實體＋待辦建議）；`GET /entities`、`POST /photos/{id}/entities`、`POST /photos/{id}/entity-suggestion`（新注入點 get_entity_suggester） | 本輪 | [x] |
+| 31 | 實體彈窗 | `entity_modal.js`（①採用②改選③自創④不釘＋「再建議一個」）；上傳頁與待決定 tab 接上彈窗鏈 1→2 | 本輪 | [x] |
+| 32 | 待辦資料層與端點 | task 相關 repository 函式；`POST /photos/{id}/task`、`GET /tasks` | 本輪 | [x] |
+| 33 | 待辦彈窗與瀏覽第三入口 | `task_modal.js`（建立／略過）；鏈 1→2→3；瀏覽頁三 tab「待決定｜資料夾｜待辦」 | 本輪 | [x] |
 | 34 | 詢問三路 | route 擴充 entity／task 兩路檢索；真模型煙霧（「跟我 MacBook 有關的全部」「這週要交什麼」） | 下輪 | [ ] |
 | 35 | 抽屜糾錯 few-shot | 記最近 N=5 次「建議被改掉」注入看圖 prompt（表已由 P29 建好） | 下輪 | [ ] |
 | 36 | 無線鏡頭 | QR 配對＋手機原生相機（**實作前需產品負責人釐清技術路線**，見 phase-36 檔） | 下輪 | [ ] |
@@ -75,9 +75,13 @@
 
 ## 6. 總驗收（本輪結束時）
 
-- [ ] 全量 `pytest -q` 全綠；`OLLAMA_BASE_URL=http://localhost:9 pytest -q` 同顆數
-- [ ] `/openapi.json` 清點端點＝**14**
-- [ ] 規格檔：`上傳照片.feature`（PDF Rule 版）＋`自然語言詢問.feature`（一字未動）全綠
-- [ ] 正式庫遷移 `db/migrate_design3.sql` 已執行（先備份）且可重跑
-- [ ] Playwright 實操：上傳→三彈窗鏈、PDF 多頁、待決定補完鏈、瀏覽三 tab、console 乾淨
-- [ ] 親自 review 全部 diff；不 commit
+- [x] 全量 `pytest -q`＝**218 passed**；`OLLAMA_BASE_URL=http://localhost:9` 同顆數（2026-08-21 階段DDD）
+- [x] `/openapi.json` 清點端點＝**14**
+- [x] 規格檔：`上傳照片.feature`（11 條 Rule 版）＋`自然語言詢問.feature`（一字未動）全綠（含於 218）
+- [x] 正式庫遷移 `db/migrate_design3.sql` 已執行（備份 `~/PersonalDocAI-backup-增量三前.sql`）且重跑實證冪等
+- [x] Playwright 實操：上傳→鏈 1→2＋空關不跳（真 gemma #22）、待決定補完鏈（#21：歸檔→實體窗→自創→409→完成）、
+      瀏覽三 tab（計數／直達／到期排序／點回原圖）、待辦窗真頁面驅動（預填→201→onDone）、
+      curl 錯誤路徑六項、console 乾淨（僅 favicon＋刻意錯誤）。
+      ＊PDF 真模型瀏覽器實測依產品負責人「做完 33 就停」指示裁掉——PDF 後端由 7 顆整合測試＋BDD Rule 把關、
+      UI 走同一 `開始歸類()` 路徑（記錄於階段DDD REP）
+- [x] 親自 review 全部 diff；28〜30 已 commit（e29f5a1），31〜33 依指示**未 commit**

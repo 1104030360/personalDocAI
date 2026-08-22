@@ -58,7 +58,7 @@ openEntityModal({
 
 ## 驗收清單
 
-- [ ] 彈窗鏈 1→2 兩條入口（上傳頁／待決定分頁）都通，含「稍後再說」仍續鏈
-- [ ] 可連續釘多個；③自創後下拉即時 +1；409／422 紅字在窗內
-- [ ] `grep -c "alert(\|confirm(\|prompt(" app/static/*.js` ＝ 0
-- [ ] 後端零改動（`git diff app/ --stat` 只有 static/）；全量 pytest 顆數不變
+- [x] 彈窗鏈 1→2 兩條入口（上傳頁／待決定分頁）都通（2026-08-21 階段DDD Playwright 實測：上傳①採用→定案→實體窗自動開；待決定歸檔→實體窗自動開＋③自創＋②重複釘 409 紅字＋再建議候選空提示；「稍後再說」續鏈與上傳頁 onClosed 共用同一函式、由存根覆蓋）
+- [x] 可連續釘多個；③自創後下拉即時 +1；409／422 紅字在窗內（node 存根五情境實跑通過，含 exclude=[已釘]→[已釘+建議] 驗證）
+- [x] `grep -c "alert(\|confirm(\|prompt(" app/static/*.js` ＝ 0
+- [x] 後端零改動（git status 恰 4 檔：entity_modal.js＋三檔前端）；全量 pytest 仍 207

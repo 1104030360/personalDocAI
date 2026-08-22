@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/
+.playwright-mcp/
+.superpowers/
+.claude/
+.DS_Store

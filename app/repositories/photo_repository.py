@@ -3,7 +3,8 @@
 routers 與 services 一律呼叫這裡的函式，不得自己寫 SQL。
 本檔含上傳寫入、兩條檢索查詢（search_by_metadata／search_by_vector，Phase 9 加入）、
 資料夾（folder）相關操作（Phase 15 加入），
-以及實體（entity）與別針（photo_entity）相關操作（Phase 29 加入）。
+實體（entity）與別針（photo_entity）相關操作（Phase 29 加入），
+以及待辦（task）相關操作（Phase 32 加入）。
 """
 
 from __future__ import annotations
@@ -39,6 +40,11 @@ FOLDER_COLUMNS = "id, name, description, is_inbox"
 # 實體每次查詢都取回的欄位，固定順序。
 # 不含 created_at：彈窗只需要「挑得出是哪一個」的資訊，建立時間沒人看。
 ENTITY_COLUMNS = "id, name, description"
+
+# 待辦每次查詢都取回的欄位，固定順序。
+# 含 created_at：待辦清單的排序要用它當第二順位（見 list_tasks），
+# 但它不會外送給前端——只外送哪幾個欄位由 schemas/task.py 的 TaskOut 決定。
+TASK_COLUMNS = "id, photo_id, title, due_date, created_at"
 
 
 def to_vector_literal(embedding: list[float]) -> str:
@@ -538,5 +544,81 @@ def list_photo_entities(photo_id: int) -> list[dict[str, Any]]:
                 ORDER BY pe.pinned_at, e.id;
                 """,
                 {"photo_id": photo_id},
+            )
+            return cur.fetchall()
+
+
+# ---------- 待辦（task），Phase 32 加入 ----------
+# VLM 只給建議（上傳回應的 suggested_task，Phase 30）；人按下「建立」才會走到這裡。
+# 對應 design3.md D13 與 §7：一張照片至多一筆待辦（photo_id UNIQUE），
+# 沒有完成勾選、沒有刪除、不寫 Gmail／日曆。
+
+
+def create_task(
+    photo_id: int, *, title: str, due_date: date | None
+) -> dict[str, Any]:
+    """建立一筆待辦，回傳新的那一列。
+
+    due_date 收的是 date 物件（字串怎麼來、格式錯了怎麼辦，是 router 那層
+    用 CreateTaskRequest 驗的事）；None ＝這件事沒有期限，照樣是一筆待辦。
+    重複建立的判斷交給呼叫端（先用 get_task_by_photo 查），這裡不自檢、
+    也不管 HTTP 狀態碼——分工與 create_folder／create_entity 完全一致，
+    資料表的 photo_id UNIQUE 只是最後一道防線。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO task (photo_id, title, due_date)
+                VALUES (%(photo_id)s, %(title)s, %(due_date)s)
+                RETURNING {TASK_COLUMNS};
+                """,
+                {"photo_id": photo_id, "title": title, "due_date": due_date},
+            )
+            return cur.fetchone()
+
+
+def get_task_by_photo(photo_id: int) -> dict[str, Any] | None:
+    """這張照片的待辦；還沒建過回 None。
+
+    因為 photo_id 是 UNIQUE，這裡最多只會有一列，不必擔心要挑哪一筆。
+    Phase 32 的 router 用它把「同一張照片建第二筆」擋成 409。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {TASK_COLUMNS} FROM task WHERE photo_id = %(photo_id)s;",
+                {"photo_id": photo_id},
+            )
+            return cur.fetchone()
+
+
+def list_tasks() -> list[dict[str, Any]]:
+    """全部待辦，先到期的排前面、沒到期日的排最後。
+
+    ORDER BY 三段各有用意：
+      due_date ASC NULLS LAST ＝先到期的先做；沒填期限的不是「最早」而是「最後」。
+        （PostgreSQL 的 ASC 預設就是 NULLS LAST，這裡仍寫明白——
+         日後若有人改成 DESC，才不會安靜地把沒期限的翻到最前面。）
+      created_at DESC ＝同一天到期時，晚建立的排前面。
+      id DESC ＝created_at 精確到微秒，但同一個交易裡建的兩筆會拿到一模一樣的
+        時間戳；加了 id 才保證排序每次都一樣（測試才穩，與 list_photo_entities
+        補 e.id 是同一個教訓）。
+
+    JOIN photo 是為了順便取回來源照片的 thumbnail_path——待辦清單要顯示縮圖。
+    用 JOIN 而不是 LEFT JOIN 沒有風險：photo_id 是 NOT NULL 外鍵，
+    照片被刪時 ON DELETE CASCADE 會把待辦一起帶走，不存在「孤兒待辦」。
+    路徑換算成網址是 router 的事（不洩硬碟路徑）。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT t.id, t.photo_id, t.title, t.due_date, t.created_at,
+                       p.thumbnail_path
+                FROM task t
+                JOIN photo p ON p.id = t.photo_id
+                ORDER BY t.due_date ASC NULLS LAST, t.created_at DESC, t.id DESC;
+                """
             )
             return cur.fetchall()

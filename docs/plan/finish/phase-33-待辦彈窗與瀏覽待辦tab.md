@@ -58,7 +58,9 @@ if (body.suggested_task && body.suggested_task.title) {
 
 ## 驗收清單
 
-- [ ] 三關鏈完整（§2 順序固定、空關不跳）；建立／略過都不打多餘 API
-- [ ] 瀏覽頁三分頁、計數、直達網址、點回原圖
-- [ ] `grep -c "alert(\|confirm(\|prompt(" app/static/*.js` ＝ 0；動態內容零 innerHTML 插值
-- [ ] 後端零改動；全量 pytest 顆數不變
+- [x] 三關鏈完整（§2 順序固定；**空關不跳由真上傳 #22 實測**——實體關結束後待辦窗未開）；
+      建立／略過都不打多餘 API（存根 fetch 次數斷言＋真頁面驅動 201）
+- [x] 瀏覽頁三分頁、計數（待決定（6）｜資料夾｜待辦（2））、`?tab=tasks` 直達、
+      到期排序（09-01 在 09-18 前）、縮圖、點列 `/photos/{id}/image` `_blank`（DDD Playwright 實測）
+- [x] `grep -c "alert(\|confirm(\|prompt(" app/static/*.js` ＝ 0；動態內容零 innerHTML 插值
+- [x] 後端零改動；全量 pytest 218（P32 的 +11，本 phase 零增減）

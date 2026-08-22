@@ -35,6 +35,8 @@
 </main>
 
 <script src="/ui/folder_modal.js"></script>
+<script src="/ui/entity_modal.js"></script>
+<script src="/ui/task_modal.js"></script>
 
 <script>
 // ===== 上傳頁自己的程式（這段不會搬走）=====
@@ -86,8 +88,9 @@ function renderError(label, detail) {
 }
 
 // 上傳成功後：畫結果卡片，並開彈窗要使用者決定這張照片收進哪個資料夾。
-// 前言＝寫在說明最前面的補充，PDF 用它交代整份的入庫結果；單圖傳空字串，
-// 畫出來的字與 Phase 27 一字不差。
+// 前言＝寫在說明最前面的補充，PDF 用它交代整份的入庫結果；單圖傳空字串。
+// 彈窗鏈（design3.md §2、§2.1）：抽屜 → 實體——順序固定，
+// 而且抽屜按「稍後再說」鏈**仍然繼續**走到實體窗（照片留在待決定不影響釘實體）。
 function 開始歸類(photo, 前言) {
   // design2.md D6：AI 建議被 clamp 成「未分類」＝不確定 → 不顯示①，交給「稍後再說」
   const 建議可用 = photo.suggested_folder.id !== photo.folder.id;
@@ -105,14 +108,55 @@ function 開始歸類(photo, 前言) {
     primary: 建議可用 ? photo.suggested_folder : null,
     primaryVerb: "採用",
     onAssigned: function (folder) {
-      renderResult(photo, folder.name, 前言 + "✅ 已歸到「" + folder.name + "」。");
+      接著釘實體(photo, 前言, folder.name, "✅ 已歸到「" + folder.name + "」。");
     },
     onClosed: function () {
-      renderResult(
+      接著釘實體(
         photo,
+        前言,
         "未分類（待決定）",
-        前言 + "已放進待決定區，之後到瀏覽頁的「待決定」分頁完成歸類。"
+        "已放進待決定區，之後到瀏覽頁的「待決定」分頁完成歸類。"
       );
+    }
+  });
+}
+
+// 彈窗 2【實體】：抽屜窗結束（不論定案或稍後再說）就接著開。
+// 資料夾結果先寫上卡片，實體的成果等使用者按④再補上去——卡片永遠反映目前進度。
+function 接著釘實體(photo, 前言, 資料夾名稱, 資料夾結果) {
+  renderResult(photo, 資料夾名稱, 前言 + 資料夾結果 + "接著決定要不要釘上實體——");
+  openEntityModal({
+    photoId: photo.id,
+    entities: photo.entities,            // 上傳回應帶的完整實體清單（②下拉）
+    suggested: photo.suggested_entity,   // clamp 過的建議；null＝①不顯示
+    onDone: function (pinned) {
+      const 實體結果 = pinned.length > 0
+        ? "已釘上 " + pinned.length + " 個實體：" +
+          pinned.map(function (e) { return e.name; }).join("、") + "。"
+        : "未釘實體。";
+      接著確認待辦(photo, 前言 + 資料夾結果 + 實體結果, 資料夾名稱);
+    }
+  });
+}
+
+// 彈窗 3【待辦】：只有 VLM 判斷有 actionable（suggested_task 有標題）才出現——
+// 「空關不跳」（design3.md §2.1）；建立／略過之後整條鏈才算收工。
+function 接著確認待辦(photo, 前文, 資料夾名稱) {
+  const 建議 = photo.suggested_task;
+  if (!建議 || !建議.title) {
+    renderResult(photo, 資料夾名稱, 前文);   // 沒有待辦建議：鏈到實體就結束
+    return;
+  }
+  renderResult(photo, 資料夾名稱, 前文 + "最後確認一件待辦——");
+  openTaskModal({
+    photoId: photo.id,
+    suggestion: 建議,
+    onDone: function (task) {
+      const 待辦結果 = task
+        ? "已建立待辦「" + task.title + "」" +
+          (task.due_date ? "（到期 " + task.due_date + "）" : "") + "。"
+        : "略過待辦。";
+      renderResult(photo, 資料夾名稱, 前文 + 待辦結果);
     }
   });
 }

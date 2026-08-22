@@ -53,7 +53,7 @@ class TaskOut(BaseModel):
 
 ## 驗收清單
 
-- [ ] 新測試先紅再綠；全量全綠、零 Ollama 同顆數；端點 14
-- [ ] 每張照片至多一筆（409）；驗證錯誤全走 422 且訊息明確
-- [ ] SQL 只在 repository；回應不含硬碟路徑
-- [ ] 對前端零影響（本 phase 不動 static/）
+- [x] 新測試先紅再綠（11 顆 RED→GREEN）；全量全綠 207→**218**、零 Ollama 同顆數（controller 複驗）；端點 **14**
+- [x] 每張照片至多一筆（409）；驗證錯誤全走 422 且訊息明確（標題空白／到期日格式，中文訊息）
+- [x] SQL 只在 repository（含 ORDER BY 變異測試實證排序由 SQL 生效）；回應不含硬碟路徑
+- [x] 對前端零影響（本 phase 不動 static/；同時進行的 P33 前端為 controller 平行實作）

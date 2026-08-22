@@ -1,5 +1,8 @@
-/* PersonalDocAI 三頁共用樣式（Phase 26）。
-   upload.html / browse.html / ask.html / folder_modal.js 全部只吃這一支檔案。
+/* PersonalDocAI 三頁共用樣式（Phase 26；Phase 31／33 起彈窗變三份）。
+   upload.html / browse.html / ask.html / folder_modal.js / entity_modal.js / task_modal.js
+   全部只吃這一支檔案。
+   彈窗共用原則：fm-* 的「class」是三個彈窗（抽屜／實體／待辦）共用的視覺語言，
+   各彈窗只有「id」不同（fm-／em-／tm- 前綴）——樣式零複製，行為互不相碰。
 
    規則：
    - 顏色、字級、間距一律走 :root 的 token；tokens 區以外不准再出現寫死的色碼。
@@ -184,6 +187,7 @@ img { max-width: 100%; display: block; }
 
 .field,
 .fm-option input[type="text"],
+.fm-option input[type="date"],
 .fm-option select {
   flex: 1 1 16rem;
   min-width: 0;
@@ -221,13 +225,17 @@ input[type="file"].field { padding: var(--sp-2); }
 
 /* 每一頁（每一個彈窗）只准有一個主要按鈕——主要動作只有一個 */
 .btn-primary,
-#fm-primary {
+#fm-primary,
+#em-primary,
+#tm-create {
   background: var(--c-accent);
   border-color: var(--c-accent);
   color: var(--c-accent-text);
 }
 .btn-primary:hover:not(:disabled),
-#fm-primary:hover:not(:disabled) { opacity: 0.88; }
+#fm-primary:hover:not(:disabled),
+#em-primary:hover:not(:disabled),
+#tm-create:hover:not(:disabled) { opacity: 0.88; }
 
 
 /* ══ 結果面板（上傳頁與問答頁共用同一張卡片語言）═══════════════════ */
@@ -447,7 +455,7 @@ input[type="file"].field { padding: var(--sp-2); }
 .folders li:hover::before { background: var(--c-accent); border-color: var(--c-accent); }
 
 
-/* ══ 歸類彈窗（folder_modal.js）═══════════════════════════════════════ */
+/* ══ 彈窗（folder／entity／task modal 共用 fm-* class；id 各自 fm-/em-/tm-）═════ */
 .fm-backdrop {
   position: fixed;
   inset: 0;
@@ -471,7 +479,9 @@ input[type="file"].field { padding: var(--sp-2); }
   box-shadow: var(--shadow-modal);        /* 全站唯一用陰影的地方 */
 }
 
-#fm-title {
+#fm-title,
+#em-title,
+#tm-title {
   margin: 0 var(--sp-6) var(--sp-4) 0;
   font-family: var(--f-display);
   font-size: var(--fs-section);
@@ -517,8 +527,62 @@ input[type="file"].field { padding: var(--sp-2); }
 /* 錯誤訊息被清空時自動不佔位——這樣就不必為了樣式去改任何 JS */
 .fm-error:empty { display: none; }
 
-/* 彈窗開啟時鎖住背景捲動（JS 會在 <body> 加上這個 class）*/
+/* 彈窗開啟時鎖住背景捲動（JS 會在 <body> 加上這個 class；三個彈窗共用）*/
 body.fm-open { overflow: hidden; }
+
+
+/* ══ 待辦列表（browse.html 第三分頁，design3.md D15）═════════════════ */
+/* 待辦不是照片牆——它是清單：一列一件事，掃「要做什麼、何時到期」比看圖重要 */
+ul.tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+a.task-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-m);
+  text-decoration: none;
+  color: var(--c-text);
+  transition: border-color var(--motion) ease;
+}
+a.task-row:hover { border-color: var(--c-text); }
+
+.task-thumb,
+.task-thumb-empty {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: var(--radius-s);
+}
+.task-thumb { object-fit: cover; }
+.task-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-surface-2);
+  color: var(--c-text-muted);
+  font-size: var(--fs-small);
+}
+
+.task-title { font-size: var(--fs-card); }
+
+/* 到期日靠右、用等寬字——日期與編號同一套「收據字」規則（見檔頭） */
+.task-due {
+  margin-left: auto;
+  font-family: var(--f-mono);
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
 
 
 /* ══ 手機不破版就好（不做完美適配）═══════════════════════════════════ */

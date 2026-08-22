@@ -20,13 +20,14 @@
 
 ## 步驟
 
-- [ ] 1. `entity_modal.js`（openEntityModal 介面照計畫檔定稿）
-- [ ] 2. `upload.html` 鏈 1→2（單圖與 PDF created[0] 同一條）
-- [ ] 3. `browse.html` 待決定分頁鏈 1→2
-- [ ] 4. `style.css` 檔頭註記 fm-* 為共用彈窗樣式；需要的微調樣式
-- [ ] 5. node --check＋node 存根實跑鏈路邏輯；`pytest -q` 顆數不變；靜態掃碼（無 alert/confirm/prompt）
-- [ ] 6. controller 親自 review diff（Playwright 實操統一在階段DDD 總驗收跑）
+- [x] 1. `entity_modal.js`（openEntityModal 介面照計畫檔定稿）
+- [x] 2. `upload.html` 鏈 1→2（單圖與 PDF created[0] 同一條；`接著釘實體()` 為 P33 待辦窗的乾淨掛點）
+- [x] 3. `browse.html` 待決定分頁鏈 1→2（開窗前現抓 GET /entities；reload 移到鏈尾）
+- [x] 4. `style.css` 檔頭註記 fm-* 為共用彈窗樣式；`#em-title`／`#em-primary` 掛進既有 id 選擇器（零複製）
+- [x] 5. node --check＋node 存根五情境實跑（空清單開窗／釘後窗不關與清單更新／409 紅字／再建議 exclude 正確／④ onDone）；`pytest -q` 仍 207；alert 掃碼 0
+- [x] 6. controller 親自實作與檢查（Playwright 實操統一在總驗收階段跑）
 
-## 執行方式
+## 執行方式（實際）
 
-實作由 subagent（opus）執行；瀏覽器實操由 controller 於總驗收階段親自跑（正式庫為真資料）。不 commit。
+原派 subagent（opus）兩次均異常（一次被中止、一次 34 分鐘零產出卡死）——改由 controller **親自實作**
+（規格與前端脈絡皆在手，實作＋自我驗證一次完成）。瀏覽器實操於總驗收階段親自跑。不 commit。

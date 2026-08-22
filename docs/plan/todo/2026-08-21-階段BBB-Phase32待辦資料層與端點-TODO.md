@@ -16,11 +16,11 @@
 
 ## 步驟（TDD 先紅再綠）
 
-- [ ] 1. 先紅：`tests/integration/test_tasks.py`（建立 201 兩例／重複 409／404／空白標題 422／格式錯 422／
-      排序／thumbnail_url 兩情境／初始空清單）
-- [ ] 2. 綠：repository 三函式（create_task／get_task_by_photo／list_tasks）
-- [ ] 3. 綠：schemas/task.py＋routers/tasks.py＋main.py
-- [ ] 4. 全量＋零 Ollama 回歸；openapi 清點 14；controller 親自 review diff
+- [x] 1. 先紅：`tests/integration/test_tasks.py`（11 顆 RED——建立 201 兩例／重複 409／404／空白標題 422×2／
+      格式錯 422×2／排序／thumbnail_url 兩情境／初始空清單）
+- [x] 2. 綠：repository 三函式（create_task／get_task_by_photo／list_tasks——排序三段鍵＋JOIN 取縮圖路徑）
+- [x] 3. 綠：schemas/task.py（驗證與轉型分離）＋routers/tasks.py（零 SQL）＋main.py
+- [x] 4. 全量＋零 Ollama 回歸（218／218）；openapi 清點 14；controller 親自 review diff（通過）
 
 ## 執行方式
 
