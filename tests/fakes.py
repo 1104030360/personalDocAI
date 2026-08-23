@@ -7,6 +7,7 @@ import io
 import math
 import os
 from datetime import datetime
+from types import SimpleNamespace
 
 from langchain_core.documents import Document
 from PIL import Image
@@ -74,10 +75,11 @@ class FakeVLM:
     測試會先指定「請當作收據、店名 Target」；understand() 照念，不呼叫 Ollama。
     沒給 result 時預設 understood=False（規格：看不懂 → 422、什麼都不存）。
 
-    folders／entities 參數只是為了與 VLMClient 協定一致
-    （Phase 18 加 folders、Phase 30 加 entities）：假件不會真的照著清單思考，
-    但會把收到的清單記在 last_folders／last_entities，
-    讓測試可以驗「呼叫端真的把兩份清單都傳進去了」。
+    folders／entities／corrections 參數只是為了與 VLMClient 協定一致
+    （Phase 18 加 folders、Phase 30 加 entities、Phase 35 加 corrections）：
+    假件不會真的照著清單思考，但會把收到的三份清單記在
+    last_folders／last_entities／last_corrections，
+    讓測試可以驗「呼叫端真的把三份都傳進去了」。
     """
 
     def __init__(self, result: PhotoUnderstanding | None = None) -> None:
@@ -85,6 +87,7 @@ class FakeVLM:
         self.calls = 0
         self.last_folders: list[dict] | None = None
         self.last_entities: list[dict] | None = None
+        self.last_corrections: list[dict] | None = None
 
     def understand(
         self,
@@ -92,10 +95,12 @@ class FakeVLM:
         content_type: str,
         folders: list[dict],
         entities: list[dict],
+        corrections: list[dict],
     ) -> PhotoUnderstanding:
         self.calls += 1
         self.last_folders = folders
         self.last_entities = entities
+        self.last_corrections = corrections
         return self.result
 
 
@@ -227,6 +232,19 @@ DEFAULT_ROUTE_DECISIONS: dict[str, RouteDecision] = {
     "Which receipts were taken at target?": RouteDecision(
         mode="metadata", location="target", recent=False
     ),
+    # ---- Phase 34 詢問三路：實體路與待辦路（design3.md §6 的目標問句）----
+    # entity_name 刻意兩種語言都填中文的「我的 MacBook」：實體名單有注入 prompt，
+    # 所以模型該把問句對回**清單裡的原文**，而不是照抄問句寫法（ROUTE_PROMPT 的例外規則）。
+    "跟我 MacBook 有關的全部": RouteDecision(
+        mode="entity", entity_name="我的 MacBook"
+    ),
+    "Show me everything about my MacBook": RouteDecision(
+        mode="entity", entity_name="我的 MacBook"
+    ),
+    "這週要交什麼？": RouteDecision(mode="task", due_within_days=7),
+    "What is due this week?": RouteDecision(mode="task", due_within_days=7),
+    # 沒講期限＝列出全部待辦（含沒有到期日的那些）
+    "我有哪些待辦？": RouteDecision(mode="task"),
 }
 
 
@@ -235,14 +253,21 @@ class FakeRouter:
 
     遇到沒登記過的問題（例如模糊問題「幫我找找之前那個」）就丟例外，
     模擬「LLM 無法判斷」，用來驗證 fallback 一定會走語意查詢。
+
+    entity_names 只是為了與 RouterClient 協定一致（Phase 34 加入）：
+    假件用問句查表，不會真的看名單，但會把收到的清單記在 last_entity_names，
+    讓測試驗得出「端點真的把資料庫裡的實體名單傳進來了」——
+    與 FakeVLM 記 last_folders／last_entities 是同一個手法。
     """
 
     def __init__(self, decisions: dict[str, RouteDecision] | None = None) -> None:
         self.decisions = (
             DEFAULT_ROUTE_DECISIONS if decisions is None else decisions
         )
+        self.last_entity_names: list[str] | None = None
 
-    def route(self, question: str) -> RouteDecision:
+    def route(self, question: str, entity_names: list[str]) -> RouteDecision:
+        self.last_entity_names = entity_names
         if question not in self.decisions:
             raise RuntimeError(f"無法判斷問題類型：{question}")
         return self.decisions[question]
@@ -284,3 +309,21 @@ class FakeAnswerLLM:
         if english:
             return "Based on the photos: " + "; ".join(pieces)
         return "依照片內容回答：" + "；".join(pieces)
+
+
+class FakeCloudChat:
+    """長得像 ollama.Client 的最小假件：chat() 回固定內容、記下每次呼叫。
+
+    給雲端實作（OllamaCloudVLM／OllamaCloudRouter／OllamaCloudAnswerer／
+    OllamaCloudEntitySuggester）的單元測試用：建構真物件後把 _client 換成這個，
+    練的是「回覆 → 解析」那一段，不碰網路（教訓見 ollama_cloud 模組 docstring——
+    ollama.com 對 format= 不強制，解析層必須自己扛）。
+    """
+
+    def __init__(self, content: str | None):
+        self._content = content
+        self.calls: list[dict] = []
+
+    def chat(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(message=SimpleNamespace(content=self._content))

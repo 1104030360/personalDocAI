@@ -44,6 +44,7 @@ class 分頁VLM:
         content_type: str,
         folders: list[dict],
         entities: list[dict],
+        corrections: list[dict],
     ) -> PhotoUnderstanding:
         self.calls += 1
         if self.calls in self.看得懂的頁碼:

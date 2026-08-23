@@ -1,5 +1,7 @@
 """照片 router：POST /photos（上傳）＋ GET /photos/{id}/thumbnail、/image（讀圖）＋ PATCH /photos/{id}/folder（歸類）。"""
 
+import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -21,11 +23,17 @@ from app.schemas.photo import (
 )
 from app.services import indexing_service, pdf_service, storage_service, vlm_service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["photos"])
 
 # PDF 的每一頁渲染出來都是 PNG，之後就完全是一次普通的單圖上傳
 #（原圖存成 .png、讀圖端點照舊，不必為 PDF 另開一條路）
 PDF_PAGE_CONTENT_TYPE = "image/png"
+
+# 看圖 prompt 要注入幾筆「建議被你改掉」的糾錯例子（design3.md D11／§7 的暫定 N＝5）。
+# 刻意寫在這裡而不是 config：它是產品的暫定值，不是部署時要調的環境設定。
+FEW_SHOT_CORRECTIONS = 5
 
 
 def _folder_out(folder: dict) -> FolderOut:
@@ -90,16 +98,27 @@ def upload_photo(
     #（「不儲存原始照片檔」是 v4 的舊決策，design1.md §1.1 已明示推翻）
     upload_bytes = file.file.read()
 
-    # 資料夾與實體清單在這裡各讀一次就好：PDF 每一頁都要用同一份清單注入 prompt，
-    # 而上傳過程中不會有人新增資料夾或實體（自創都是彈窗的事，發生在這之後）。
+    # 資料夾、實體與糾錯例子在這裡各讀一次就好：PDF 每一頁都要用同一份注入 prompt，
+    # 而上傳過程中不會有人新增資料夾或實體（自創都是彈窗的事，發生在這之後），
+    # 也不會多出糾錯（糾錯是 PATCH 定案時才記的）。
     folders = photo_repository.list_folders()
     entities = photo_repository.list_entities()
+    corrections = photo_repository.recent_corrections(limit=FEW_SHOT_CORRECTIONS)
 
     if file.content_type == config.PDF_CONTENT_TYPE:
-        return _ingest_pdf(upload_bytes, vlm, embeddings, now, folders, entities)
+        return _ingest_pdf(
+            upload_bytes, vlm, embeddings, now, folders, entities, corrections
+        )
 
     return _ingest_image(
-        upload_bytes, file.content_type, vlm, embeddings, now, folders, entities
+        upload_bytes,
+        file.content_type,
+        vlm,
+        embeddings,
+        now,
+        folders,
+        entities,
+        corrections,
     )
 
 
@@ -111,6 +130,7 @@ def _ingest_image(
     now: datetime | None,
     folders: list[dict],
     entities: list[dict],
+    corrections: list[dict],
 ) -> UploadResponse:
     """一張圖的完整入庫：看圖 → 轉向量 → 寫入「未分類」→ 存檔 → 回應。
 
@@ -123,14 +143,31 @@ def _ingest_image(
     PDF 的每一頁也是呼叫這裡（Phase 28），所以「看不懂＝422」的語意兩邊共用：
     單圖的 422 直接回給使用者，PDF 則由 _ingest_pdf 接住、記成跳過的頁。
     """
-    # ② 看圖（把現有資料夾與實體清單當變數注入 prompt——design1.md §8、design3.md D12）
+    # ② 看圖（把現有資料夾、實體清單與最近的糾錯例子注入 prompt——
+    #    design1.md §8、design3.md D12、D11）
     #    仍然只有這一次看圖呼叫，沒有第二個分類模型：實體與待辦是同一次輸出多出來的欄位。
-    understanding = vlm.understand(image_bytes, content_type, folders, entities)
+    #    起訖各記一筆 log：真模型一張圖要看數分鐘，終端機沒有動靜時分不出
+    #    「還在算」與「卡死」，這兩行就是給人盯進度用的。
+    logger.info("AI 看圖開始：%s，%d bytes", content_type, len(image_bytes))
+    看圖起點 = time.monotonic()
+    understanding = vlm.understand(
+        image_bytes, content_type, folders, entities, corrections
+    )
+    看圖秒數 = time.monotonic() - 看圖起點
     if not understanding.understood or not understanding.text.strip():
+        logger.info("AI 看圖完成（%.1f 秒）：看不懂 → 422 不儲存", 看圖秒數)
         raise HTTPException(
             status_code=422,
             detail="VLM 無法理解照片內容，未儲存任何資料",
         )
+    logger.info(
+        "AI 看圖完成（%.1f 秒）：text %d 字、建議類別「%s」、建議實體「%s」、待辦「%s」",
+        看圖秒數,
+        len(understanding.text),
+        understanding.category,
+        understanding.entity,
+        understanding.task_title,
+    )
 
     # ★③ VLM 給的類別只當「建議」：夾回清單內，清單外一律變「未分類」
     #    next(...)＝從清單裡挑出第一個符合條件的元素。
@@ -139,6 +176,11 @@ def _ingest_image(
     suggested_name = vlm_service.clamp_category(understanding.category, folders)
     inbox = next(folder for folder in folders if folder["is_inbox"])
     suggested = next(folder for folder in folders if folder["name"] == suggested_name)
+
+    #    建議要**存進照片**（Phase 35 已釐清 B）：定案時才有東西可以比對「猜的 vs 選的」，
+    #    待決定分頁也才畫得出選項①。建議指向收件箱＝clamp 失敗＝根本沒有建議 → 存 NULL，
+    #    這種照片之後一律不算糾錯（沒建議不是猜錯）。
+    suggested_category = None if suggested["is_inbox"] else suggested_name
 
     #    實體的建議同樣要夾，但沒有「未分類」這種保底：清單外或都不像 → None，
     #    實體彈窗那時就只剩②改選現有／③自創／④不釘（design3.md §2、D12）。
@@ -164,6 +206,7 @@ def _ingest_image(
         content_time=content_time,
         embedding=embedding,
         uploaded_at=now,
+        suggested_category=suggested_category,
     )
     photo_id = row["id"]
 
@@ -192,6 +235,8 @@ def _ingest_image(
         photo_repository.delete_photo(photo_id)
         # 原始錯誤原封不動往外丟（re-raise），讓框架回 500 並在 log 留下 traceback
         raise
+
+    logger.info("照片已入庫：photo_id=%d（先進「未分類」，等使用者歸類）", photo_id)
 
     # ★⑥ 回 201：把三個彈窗要用的東西一次帶齊（抽屜、實體、待辦）
     return UploadResponse(
@@ -222,6 +267,7 @@ def _ingest_pdf(
     now: datetime | None,
     folders: list[dict],
     entities: list[dict],
+    corrections: list[dict],
 ) -> PdfUploadResponse:
     """一份 PDF 的入庫：逐頁渲染成 PNG，每一頁當成一張照片（design3.md D7）。
 
@@ -247,6 +293,7 @@ def _ingest_pdf(
                     now,
                     folders,
                     entities,
+                    corrections,
                 )
             )
         except HTTPException as error:
@@ -297,6 +344,35 @@ def get_photo_thumbnail(photo_id: int) -> FileResponse:
 def get_photo_image(photo_id: int) -> FileResponse:
     """原圖。使用者想看大圖時用這個。"""
     return _send_photo_file(photo_id, "original_path")
+
+
+def _record_correction_if_changed(photo: dict, chosen: str) -> None:
+    """定案的資料夾與上傳當下的建議不同時，留一筆糾錯素材（design3.md D11）。
+
+    算糾錯（已釐清 D）：②改選現有、③自建，且選定名稱 ≠ 存下來的建議。
+    不算：①採用建議（名稱相等，這裡自然就跳過，不必特判），
+          以及 suggested_category 是空的——那代表 clamp 失敗＝**根本沒有建議**，
+          不是猜錯（上傳時建議若是「未分類」就存 NULL，所以這一個檢查就夠了）。
+    比對用 casefold()：使用者自建「project x」而建議是「Project X」時算同一個，
+          不該被當成糾錯（與 find_folder_by_name 的大小寫不敏感是同一套規矩）。
+          這其實是**防禦性寫法**：正常路徑下 chosen 來自 folder["name"]、
+          suggested 來自存進 photo 的建議名稱，兩邊都是資料夾的正規名稱；
+          大小寫變體早在 find_folder_by_name 那關就被 409 擋掉了（自建重名時），
+          實務上根本走不到「同名不同大小寫」這條分支——casefold() 只是多一層保險，
+          就算哪天上游的正規化規則變了，這裡也不會誤記一筆假糾錯。
+
+    糾錯只是**學習素材**，不是使用者交辦的事：寫不進去就記一行 warning 算了，
+    絕不可以讓已經成功的歸類變成 500（這是本函式唯一吞例外的理由）。
+    """
+    suggested = photo["suggested_category"]
+    if not suggested or suggested.casefold() == chosen.casefold():
+        return
+    try:
+        photo_repository.record_folder_correction(
+            suggested=suggested, chosen=chosen, photo_text=photo["text"]
+        )
+    except Exception:
+        logger.warning("糾錯素材寫入失敗，歸類本身不受影響", exc_info=True)
 
 
 @router.patch("/photos/{photo_id}/folder", response_model=AssignFolderResponse)
@@ -366,6 +442,11 @@ def assign_folder(
         category=folder["name"],
         embedding=embedding,
     )
+
+    # ⑦ 歸類成功了才輪到糾錯（design3.md D11）：使用者這次選的和上傳當下的建議不一樣，
+    #    就留一筆 few-shot 素材給下一次看圖。放在最後一步是刻意的——
+    #    409／422／embedding 失敗那幾條路根本走不到這裡，自然不會亂記。
+    _record_correction_if_changed(row, folder["name"])
 
     return AssignFolderResponse(
         id=row["id"],

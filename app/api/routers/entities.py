@@ -40,14 +40,17 @@ def pin_entity(photo_id: int, payload: PinEntityRequest) -> PinEntityResponse:
     """把一個實體釘到照片上：釘現有的，或當場自創一個（design3.md D12）。
 
     順序是刻意排的：所有檢查都在前面，寫資料庫的動作全部在最後——
-    任何一關擋下來時，資料庫一個字都沒被寫過（不會留下沒人用的空實體，
-    也不會出現「建了實體卻沒釘上」的半套狀態）。
+    任何一關擋下來時，資料庫一個字都沒被寫過。
+
+    「不會留下沒人用的空實體、不會出現『建了實體卻沒釘上』的半套狀態」這件事，
+    在**寫入本身失敗**時靠的是 create_and_pin_entity 的單一交易（Phase 37 補的）——
+    光靠排順序只擋得住檢查失敗那幾條路。
     """
     # ① 這張照片存在嗎（先照片後實體，錯誤訊息才符合直覺；與 assign_folder 同一套順序）
     if photo_repository.fetch_photo(photo_id) is None:
         raise HTTPException(status_code=404, detail="找不到照片")
 
-    # ② 決定要釘哪一個。這一段只查不寫：自創那條路的 create_entity 排在最後（見 ④）。
+    # ② 決定要釘哪一個。這一段只查不寫：真正的寫入排在每條路的最後（見 ④／⑤）。
     if payload.entity_id is not None:
         # 實體清單很短（只在使用者按「自創」時才 +1），
         # 用現成的 list_entities() 挑出那一筆就好，不必為此多寫一條 SQL。
@@ -65,14 +68,19 @@ def pin_entity(photo_id: int, payload: PinEntityRequest) -> PinEntityResponse:
         #    自創那條路不必查：名稱沒撞到就代表這個實體還不存在，當然沒被釘過。
         if photo_repository.is_pinned(photo_id, entity["id"]):
             raise HTTPException(status_code=409, detail="這張照片已釘過這個實體")
+        # ④ 釘現有＝只寫一列連結，單一 INSERT 天然原子（失敗就什麼都沒寫）
+        photo_repository.pin_entity(photo_id, entity["id"])
     else:
         # 自創：重名交由這裡擋（大小寫不敏感），資料庫的 name UNIQUE 是最後防線
         if photo_repository.find_entity_by_name(payload.name) is not None:
             raise HTTPException(status_code=409, detail="實體名稱已存在")
-        # ④ 全部檢查都過了才真的建（名稱已由驗證器去過空白）
-        entity = photo_repository.create_entity(payload.name, payload.description)
-
-    photo_repository.pin_entity(photo_id, entity["id"])
+        # ⑤ 全部檢查都過了才真的寫（名稱已由驗證器去過空白）。
+        #    「建實體」與「釘上去」交給 repository 放進**同一個交易**——
+        #    分成兩次呼叫的話，中間出事會留下一個沒釘上的空實體，
+        #    使用者重試同名還會撞 409，走進死路（Phase 21「不留空資料夾」同一條規則）。
+        entity = photo_repository.create_and_pin_entity(
+            photo_id, name=payload.name, description=payload.description
+        )
 
     # 回完整清單（自創時已經 +1），彈窗直接拿去換掉下拉選單
     return PinEntityResponse(

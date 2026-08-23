@@ -10,11 +10,27 @@
 
 <header class="site-header">
   <h1 class="site-brand">PersonalDocAI</h1>
-  <nav class="site-nav" aria-label="主要導覽">
-    <a href="/ui/upload.html" aria-current="page">上傳照片</a>
-    <a href="/ui/browse.html">瀏覽資料夾</a>
-    <a href="/ui/ask.html">問問題</a>
-  </nav>
+  <div class="site-header-right">
+    <nav class="site-nav" aria-label="主要導覽">
+      <a href="/ui/upload.html" aria-current="page">上傳照片</a>
+      <a href="/ui/browse.html">瀏覽資料夾</a>
+      <a href="/ui/ask.html">問問題</a>
+    </nav>
+    <!-- AI 後端開關（2026-08-22）：撥到「雲端」＝看圖與問答都改走 Ollama Cloud。
+         狀態存在伺服器（PUT /settings/ai-backend），全站同一個開關狀態
+         （相機頁的拍照走同一個 get_vlm，所以也跟著）；
+         行為在共用檔 /ui/ai_switch.js（問問題頁放的是同一顆）。 -->
+    <div class="ai-switch">
+      <span id="ai-switch-label" class="ai-switch-label">AI 模型</span>
+      <button type="button" id="ai-toggle" class="ai-toggle" role="switch"
+              aria-checked="false" aria-labelledby="ai-switch-label"
+              title="切換 AI 走本機 Ollama 或 Ollama Cloud（看圖與問答都跟著）">
+        <span class="ai-side" data-side="local">本機</span>
+        <span class="ai-side" data-side="cloud">雲端</span>
+      </button>
+      <span id="ai-switch-msg" class="ai-switch-msg" aria-live="polite"></span>
+    </div>
+  </div>
 </header>
 
 <main class="page">
@@ -28,6 +44,10 @@
   <button type="submit" id="submit-button" class="btn btn-primary">上傳</button>
 </form>
 
+<!-- 無線鏡頭（Phase 36）：東西在手上、還沒進電腦時走這條，省掉 AirDrop 那一步 -->
+<p class="note">東西還在手上？<a href="/ui/camera-desk.html">用手機拍</a>——
+電腦顯示 QR，手機掃了就變成這台電腦的鏡頭，拍完直接入庫。</p>
+
 <section class="panel" id="result" aria-live="polite">
   <p class="panel-empty">尚未上傳任何照片。</p>
 </section>
@@ -37,6 +57,8 @@
 <script src="/ui/folder_modal.js"></script>
 <script src="/ui/entity_modal.js"></script>
 <script src="/ui/task_modal.js"></script>
+<script src="/ui/classify_chain.js"></script>
+<script src="/ui/ai_switch.js"></script>
 
 <script>
 // ===== 上傳頁自己的程式（這段不會搬走）=====
@@ -87,78 +109,12 @@ function renderError(label, detail) {
     '<p>' + esc(說明) + '</p>';
 }
 
-// 上傳成功後：畫結果卡片，並開彈窗要使用者決定這張照片收進哪個資料夾。
+// 上傳成功後：開三關彈窗鏈（抽屜 → 實體 → 待辦）。
+// 鏈的邏輯在共用檔 /ui/classify_chain.js（相機頁走的是同一份）；
+// 這一頁只提供「結果卡怎麼畫」與 PDF 的前言。
 // 前言＝寫在說明最前面的補充，PDF 用它交代整份的入庫結果；單圖傳空字串。
-// 彈窗鏈（design3.md §2、§2.1）：抽屜 → 實體——順序固定，
-// 而且抽屜按「稍後再說」鏈**仍然繼續**走到實體窗（照片留在待決定不影響釘實體）。
 function 開始歸類(photo, 前言) {
-  // design2.md D6：AI 建議被 clamp 成「未分類」＝不確定 → 不顯示①，交給「稍後再說」
-  const 建議可用 = photo.suggested_folder.id !== photo.folder.id;
-  renderResult(
-    photo,
-    "未分類（待決定）",
-    前言 + (建議可用
-      ? "AI 建議放進「" + photo.suggested_folder.name + "」，請在彈出的視窗裡決定。"
-      : "AI 不確定這張要放哪，請在視窗裡選一個資料夾，或稍後再說。")
-  );
-  openFolderModal({
-    photoId: photo.id,
-    // design2.md D7：下拉選單排除收件箱——定案目標必須是真資料夾
-    folders: photo.folders.filter(function (f) { return f.id !== photo.folder.id; }),
-    primary: 建議可用 ? photo.suggested_folder : null,
-    primaryVerb: "採用",
-    onAssigned: function (folder) {
-      接著釘實體(photo, 前言, folder.name, "✅ 已歸到「" + folder.name + "」。");
-    },
-    onClosed: function () {
-      接著釘實體(
-        photo,
-        前言,
-        "未分類（待決定）",
-        "已放進待決定區，之後到瀏覽頁的「待決定」分頁完成歸類。"
-      );
-    }
-  });
-}
-
-// 彈窗 2【實體】：抽屜窗結束（不論定案或稍後再說）就接著開。
-// 資料夾結果先寫上卡片，實體的成果等使用者按④再補上去——卡片永遠反映目前進度。
-function 接著釘實體(photo, 前言, 資料夾名稱, 資料夾結果) {
-  renderResult(photo, 資料夾名稱, 前言 + 資料夾結果 + "接著決定要不要釘上實體——");
-  openEntityModal({
-    photoId: photo.id,
-    entities: photo.entities,            // 上傳回應帶的完整實體清單（②下拉）
-    suggested: photo.suggested_entity,   // clamp 過的建議；null＝①不顯示
-    onDone: function (pinned) {
-      const 實體結果 = pinned.length > 0
-        ? "已釘上 " + pinned.length + " 個實體：" +
-          pinned.map(function (e) { return e.name; }).join("、") + "。"
-        : "未釘實體。";
-      接著確認待辦(photo, 前言 + 資料夾結果 + 實體結果, 資料夾名稱);
-    }
-  });
-}
-
-// 彈窗 3【待辦】：只有 VLM 判斷有 actionable（suggested_task 有標題）才出現——
-// 「空關不跳」（design3.md §2.1）；建立／略過之後整條鏈才算收工。
-function 接著確認待辦(photo, 前文, 資料夾名稱) {
-  const 建議 = photo.suggested_task;
-  if (!建議 || !建議.title) {
-    renderResult(photo, 資料夾名稱, 前文);   // 沒有待辦建議：鏈到實體就結束
-    return;
-  }
-  renderResult(photo, 資料夾名稱, 前文 + "最後確認一件待辦——");
-  openTaskModal({
-    photoId: photo.id,
-    suggestion: 建議,
-    onDone: function (task) {
-      const 待辦結果 = task
-        ? "已建立待辦「" + task.title + "」" +
-          (task.due_date ? "（到期 " + task.due_date + "）" : "") + "。"
-        : "略過待辦。";
-      renderResult(photo, 資料夾名稱, 前文 + 待辦結果);
-    }
-  });
+  startClassifyChain({ photo: photo, 前言: 前言, render: renderResult });
 }
 
 // PDF 的 201 回應（design3.md D7）：pages 總頁數、created 每頁一筆、skipped_pages 看不懂的頁。
@@ -180,7 +136,11 @@ form.addEventListener("submit", async function (event) {
   }
 
   button.disabled = true;
-  renderNotice("上傳中…（本機模型看圖可能要等 10〜60 秒，請耐心等候）");
+  // 等待提示跟著開關走：本機看圖實測要數分鐘（Phase 33 記錄），雲端快得多。
+  // aiBackendNow() 來自共用檔 /ui/ai_switch.js
+  renderNotice(aiBackendNow() === "cloud"
+    ? "上傳中…（AI 看圖走 Ollama Cloud，通常幾秒〜半分鐘）"
+    : "上傳中…（本機模型看圖可能要等數分鐘，請耐心等候）");
 
   // FormData 會自動組成 multipart/form-data，欄位名必須是 file
   const formData = new FormData();

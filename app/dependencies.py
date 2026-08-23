@@ -1,6 +1,11 @@
 """依賴注入點：router 用 Depends(...) 取用；pytest 才用 dependency_overrides 換成假件。
 
-追正式上傳：get_vlm() → OllamaVLM。不要在這個檔找 FakeVLM（它在 tests/）。
+追正式上傳：get_vlm() → OllamaVLM（開關撥到「雲端」時 → OllamaCloudVLM）。
+不要在這個檔找 FakeVLM（它在 tests/）。
+
+AI 後端開關（config.AI_BACKEND，2026-08-22）管四個注入點：get_vlm／get_router／
+get_answerer／get_entity_suggester——每個都是「本機類別或雲端類別」二選一。
+get_embeddings 永遠本機：向量必須跟資料庫裡既有的 bge-m3 向量同源。
 
 design.md §4.2：get_vlm / get_embeddings / get_now 是三個主要注入點；
 詢問流程另外需要 get_router / get_answerer / get_today（Phase 11 已補上）；
@@ -15,6 +20,7 @@ from functools import lru_cache
 from fastapi import Depends
 from langchain_core.embeddings import Embeddings
 
+from app.core import config
 from app.services import (
     ask_workflow,
     entity_suggestion_service,
@@ -34,12 +40,22 @@ def _ollama_embeddings() -> Embeddings:
     return indexing_service.build_ollama_embeddings()
 
 
+@lru_cache(maxsize=1)
+def _ollama_cloud_vlm() -> vlm_service.OllamaCloudVLM:
+    """只建立一次，之後重複使用（建立物件本身不會連線，與 _ollama_vlm 同理）。"""
+    return vlm_service.OllamaCloudVLM()
+
+
 def get_vlm() -> vlm_service.VLMClient:
-    """給 router 的看圖物件。正式執行永遠是 OllamaVLM。
+    """給 router 的看圖物件。跟著頁首的 AI 開關走：本機（預設）或 Ollama Cloud。
+
+    每個請求都當場讀一次 config.AI_BACKEND——開關撥完，下一次上傳立刻生效。
 
     pytest 若要換成 FakeVLM：app.dependency_overrides[get_vlm] = ...
     那個覆寫只活在測試裡，不影響 uvicorn。
     """
+    if config.AI_BACKEND == "cloud":
+        return _ollama_cloud_vlm()
     return _ollama_vlm()
 
 
@@ -66,11 +82,27 @@ def _ollama_answerer() -> ask_workflow.OllamaAnswerer:
     return ask_workflow.OllamaAnswerer()
 
 
+@lru_cache(maxsize=1)
+def _ollama_cloud_router() -> ask_workflow.OllamaCloudRouter:
+    return ask_workflow.OllamaCloudRouter()
+
+
+@lru_cache(maxsize=1)
+def _ollama_cloud_answerer() -> ask_workflow.OllamaCloudAnswerer:
+    return ask_workflow.OllamaCloudAnswerer()
+
+
 def get_router() -> ask_workflow.RouterClient:
+    """判斷查法的模型。跟著 AI 開關走（理由與寫法同 get_vlm）。"""
+    if config.AI_BACKEND == "cloud":
+        return _ollama_cloud_router()
     return _ollama_router()
 
 
 def get_answerer() -> ask_workflow.AnswerClient:
+    """產生回答的模型。跟著 AI 開關走（理由與寫法同 get_vlm）。"""
+    if config.AI_BACKEND == "cloud":
+        return _ollama_cloud_answerer()
     return _ollama_answerer()
 
 
@@ -80,8 +112,17 @@ def _ollama_entity_suggester() -> entity_suggestion_service.OllamaEntitySuggeste
     return entity_suggestion_service.OllamaEntitySuggester()
 
 
+@lru_cache(maxsize=1)
+def _ollama_cloud_entity_suggester() -> (
+    entity_suggestion_service.OllamaCloudEntitySuggester
+):
+    return entity_suggestion_service.OllamaCloudEntitySuggester()
+
+
 def get_entity_suggester() -> entity_suggestion_service.EntitySuggesterClient:
-    """給「再建議一個實體」端點的物件。正式執行永遠是 OllamaEntitySuggester。"""
+    """給「再建議一個實體」端點的物件。跟著 AI 開關走（理由與寫法同 get_vlm）。"""
+    if config.AI_BACKEND == "cloud":
+        return _ollama_cloud_entity_suggester()
     return _ollama_entity_suggester()
 
 

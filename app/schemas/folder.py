@@ -28,12 +28,17 @@ class PhotoSummary(BaseModel):
     thumbnail_url 是「網址」不是硬碟路徑：資料庫的 thumbnail_path 有值時
     換算成 /photos/{id}/thumbnail（Phase 19 的讀圖端點）；舊資料沒有路徑時
     是 None（JSON 的 null），前端顯示灰底占位（design1.md §10）。
+
+    Phase 35 從四鍵變五鍵（design1「摘要恰四鍵」由 phase-35 明文修訂）：
+    suggested_category ＝上傳當下 VLM 的建議，待決定分頁靠它畫出選項①；
+    沒有建議的照片是 None，彈窗就照舊只有②③④。
     """
 
     id: int
     thumbnail_url: str | None
     text: str
     uploaded_at: datetime   # 轉成 JSON 時是 ISO 字串，例如 2026-08-18T10:00:00+08:00
+    suggested_category: str | None
 
 
 class FolderDetailResponse(BaseModel):

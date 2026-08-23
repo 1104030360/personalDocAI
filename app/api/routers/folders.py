@@ -35,6 +35,8 @@ def get_folder(folder_id: int) -> FolderDetailResponse:
             ),
             text=row["text"],
             uploaded_at=row["uploaded_at"],
+            # 上傳當下的建議（Phase 35）：待決定分頁用它畫選項①；沒建議就是 null
+            suggested_category=row["suggested_category"],
         )
         for row in photo_repository.list_photos_in_folder(folder_id)
     ]

@@ -16,11 +16,30 @@ DATABASE_URL = os.getenv(
 # Ollama 本機服務網址（不是雲端，不需要 API key）
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
+# --- Ollama Cloud（2026-08-22 產品負責人指示新增：看圖與詢問可切雲端）---
+# API key 放 .env（OLLAMA_API_KEY=…）。沒填時開關切不到雲端（PUT 回 422）；
+# 填好之後要重啟伺服器才生效——config 只在啟動時讀一次 .env。
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
+# Ollama Cloud 的網址（官方套件的雲端用法就是指到這裡＋帶 Bearer key）
+OLLAMA_CLOUD_HOST = os.getenv("OLLAMA_CLOUD_HOST", "https://ollama.com")
+
 # --- 模型名稱（換模型只改這裡，或改 .env）---
 # 多模態模型：看圖用
 VLM_MODEL = os.getenv("VLM_MODEL", "gemma4")
+# 雲端看圖用的模型名稱：預設跟本機同名，雲端上叫別的名字就在 .env 覆蓋
+OLLAMA_CLOUD_VLM_MODEL = os.getenv("OLLAMA_CLOUD_VLM_MODEL", VLM_MODEL)
 # 同一個多模態模型也拿來做「判斷查法」與「產生回答」
 LLM_MODEL = os.getenv("LLM_MODEL", "gemma4")
+# 雲端的文字模型（詢問路由／回答、實體建議）：預設同本機，可在 .env 覆蓋
+OLLAMA_CLOUD_LLM_MODEL = os.getenv("OLLAMA_CLOUD_LLM_MODEL", LLM_MODEL)
+
+# AI 後端的**執行中狀態**："local"（本機 Ollama，預設）或 "cloud"（Ollama Cloud）。
+# 上傳頁與問問題頁頁首的開關透過 PUT /settings/ai-backend 撥它（同一個系統狀態），
+# 管的是**所有 gemma4 呼叫**：看圖、詢問路由、回答、實體建議。embeddings 不歸它管
+# ——向量必須跟資料庫裡既有的 bge-m3 向量同源，永遠本機。
+# 伺服器重啟一律回到 "local"。讀它的地方一律寫 config.AI_BACKEND 在函式裡即時讀
+# （同 DATA_DIR 的理由，見下），絕不要 from … import AI_BACKEND 定死值。
+AI_BACKEND = "local"
 # embedding 模型：把文字轉成向量。bge-m3 是多語模型，同時支撐中文與英文
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
 
@@ -51,7 +70,12 @@ PDF_CONTENT_TYPE = "application/pdf"
 ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", PDF_CONTENT_TYPE})
 
 # 對外回應用的檢索方式名稱。內部用短代號，回應用規格寫的全名。
+# 前兩個是 自然語言詢問.feature 明文寫的全名，**一個字都不能動**；
+# 後兩個是 Phase 34 新增的兩路（design3.md §6），規格檔沒提到，
+# 只會出現在回應欄位——所以措辭沿用同一種「名詞片語 + search」的長相。
 SEARCH_MODE_LABELS = {
     "metadata": "metadata search",
     "vector": "vector semantic search",
+    "entity": "entity pin search",
+    "task": "task search",
 }

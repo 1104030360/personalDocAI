@@ -72,7 +72,9 @@ def test_無法判斷時走語意查詢(deps, 一張Target收據):
 
 def test_路由回傳格式不對也走語意查詢(一張Target收據):
     class 壞掉的Router:
-        def route(self, question):
+        # 簽名跟著 RouterClient 協定走（Phase 34 加了 entity_names）——
+        # 少收一個參數會變成 TypeError，那就測不到「回傳格式不符」這件事了
+        def route(self, question, entity_names):
             return {"mode": "metadata"}      # 不是 RouteDecision，格式不符
 
     deps = AskDeps(

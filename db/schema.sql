@@ -49,7 +49,11 @@ CREATE TABLE photo (
   embedding      vector(1024) NOT NULL,              -- 文字＋欄位合併內容的向量
   original_path  text,                               -- 原圖位置，如 data/photos/1.jpg；舊資料可空
   thumbnail_path text,                               -- 縮圖位置，如 data/thumbs/1.jpg；舊資料可空
-  content_type   text                                -- image/jpeg 或 image/png
+  content_type   text,                               -- image/jpeg 或 image/png
+  -- 上傳當下 VLM 建議的資料夾名稱（clamp 過，一定是 folder.name 之一）。Phase 35 加。
+  -- NULL ＝「沒有建議」：clamp 成「未分類」的、以及遷移進來的舊照片都是 NULL，
+  -- 定案時一律不算糾錯（沒建議不是猜錯）。這欄不影響照片實際歸屬（那是 folder_id）。
+  suggested_category text
 );
 
 -- 向量索引：HNSW ＋ cosine 距離（pgvector 官方語法）。

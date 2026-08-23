@@ -140,18 +140,30 @@ async function showPending() {
     wall.appendChild(照片卡(photo, true));
   });
 
-  // 待決定分頁的彈窗：沒有①（這裡沒有持久化的 AI 建議，design2.md D5）；
-  // 下拉排除收件箱（design2.md D7）；「稍後再說」＝什麼都不做、照片留在這裡。
+  // 待決定分頁的彈窗：下拉排除收件箱（design2.md D7）；
+  //「稍後再說」＝什麼都不做、照片留在這裡。
+  // ①：Phase 35 起有了——上傳當下的建議存在照片上（suggested_category），
+  //    這裡照名字對回資料夾清單即可，不必為了畫①再看一次圖（那要 2〜5 分鐘）。
+  //    沒建議（clamp 成未分類的、以及遷移進來的舊照片）就照舊沒有①。
   const 可選資料夾 = folders.filter(function (f) { return !f.is_inbox; });
+  const 照片對照 = {};
+  detail.photos.forEach(function (photo) { 照片對照[photo.id] = photo; });
+
   wall.addEventListener("click", function (event) {
     const card = event.target.closest(".photo");
     if (!card || !card.dataset.photoId) return;
     const photoId = Number(card.dataset.photoId);
+    const 建議名稱 = (照片對照[photoId] || {}).suggested_category;
+    // find 找不到會回 undefined，彈窗要的是 null（|| null 一併處理沒建議的情況）
+    const 建議資料夾 = 建議名稱
+      ? 可選資料夾.find(function (f) { return f.name === 建議名稱; }) || null
+      : null;
 
     openFolderModal({
       photoId: photoId,
       folders: 可選資料夾,
-      primary: null,
+      primary: 建議資料夾,
+      primaryVerb: "採用",
       // 彈窗鏈（design3.md §2.1）：抽屜窗結束——定案**或**稍後再說——都接著開實體窗；
       // 整頁重讀移到鏈的最尾端（歸檔可能已發生，等實體窗收工一次刷新最單純）。
       onAssigned: function () { 接著釘實體(photoId); },

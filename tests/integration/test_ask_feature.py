@@ -1,4 +1,7 @@
-"""把 docs/spec/features/自然語言詢問.feature 當測試跑（5 條 Rule）。"""
+"""把 docs/spec/features/自然語言詢問.feature 當測試跑（5 條已落地 Rule）。
+
+design3.md 追加的實體別針／待辦兩路（@未實作）等 Phase 34 落地後再摘標驗收。
+"""
 
 from __future__ import annotations
 
@@ -97,6 +100,25 @@ def 沒有任何照片():
     assert photo_repository.count_photos() == 0
 
 
+@given(parsers.parse('照片 {spec_id} 釘上實體 "{name}"'))
+def 照片釘上實體(context, spec_id, name):
+    entity = photo_repository.find_entity_by_name(name)
+    if entity is None:
+        entity = photo_repository.create_entity(name, "")
+    photo_repository.pin_entity(context["id_map"][spec_id], entity["id"])
+
+
+@given("系統中有底下待辦")
+def 建立待辦(context, datatable):
+    for row in _rows(datatable):
+        due_text = row["due"].strip()
+        photo_repository.create_task(
+            context["id_map"][row["photo_id"]],
+            title=row["title"],
+            due_date=date.fromisoformat(due_text) if due_text else None,
+        )
+
+
 # ------------------------------- When ------------------------------
 @when(parsers.parse('使用者詢問 "{question}"'))
 def 使用者詢問(context, client, question):
@@ -132,3 +154,10 @@ def 回答提及物品(context, datatable):
     answer = context["response"].json()["answer"]
     for row in _rows(datatable):
         assert row["name"] in answer, f"回答裡沒有提到「{row['name']}」：{answer}"
+
+
+@then("回答依據的待辦如下")
+def 回答依據的待辦為(context, datatable):
+    answer = context["response"].json()["answer"]
+    for row in _rows(datatable):
+        assert row["title"] in answer, f"回答裡沒有提到「{row['title']}」：{answer}"

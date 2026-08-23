@@ -1,12 +1,24 @@
-"""FastAPI app 組裝：掛上五個 router ＋ 極簡網頁介面（靜態檔案）。"""
+"""FastAPI app 組裝：掛上七個 router ＋ 極簡網頁介面（靜態檔案）。"""
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import ask, entities, folders, photos, tasks
+from app.api.routers import ask, camera, entities, folders, photos, settings, tasks
+
+# 讓 app.* 的 INFO log 顯示在 uvicorn 終端機。
+# uvicorn 只配置它自家的 logger（uvicorn / uvicorn.access），應用程式的 logger
+# 沒有 handler 時只有 WARNING 以上會被 Python 的最後防線印出來——
+# 「AI 看圖開始／完成」這類追蹤訊息是 INFO，必須自己掛 handler 才看得到。
+_app_logger = logging.getLogger("app")
+if not _app_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+    _app_logger.addHandler(_handler)
+    _app_logger.setLevel(logging.INFO)
 
 app = FastAPI(title="PersonalDocAI")
 
@@ -15,6 +27,12 @@ app.include_router(ask.router)
 app.include_router(folders.router)
 app.include_router(entities.router)
 app.include_router(tasks.router)
+# 無線鏡頭（Phase 36）：三支 HTTP 進 /openapi.json，
+# 信令用的 WebSocket 依 FastAPI 的行為不會出現在 openapi.json
+app.include_router(camera.router)
+# AI 後端開關（2026-08-22 產品負責人指示；管看圖＋詢問路由／回答＋實體建議）：
+# GET／PUT /settings/ai-backend 兩支（端點一律數 19；清點測試在 test_ask_three_paths.py）
+app.include_router(settings.router)
 
 
 @app.get("/health")

@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用手機拍 — PersonalDocAI</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <h1 class="site-brand">PersonalDocAI</h1>
+  <div class="site-header-right">
+    <nav class="site-nav" aria-label="主要導覽">
+      <a href="/ui/upload.html">上傳照片</a>
+      <a href="/ui/browse.html">瀏覽資料夾</a>
+      <a href="/ui/ask.html">問問題</a>
+    </nav>
+    <!-- AI 後端開關（2026-08-22）：與上傳頁、問問題頁是同一顆（同一個伺服器狀態）。
+         手機拍的照片走 POST /camera/{token}/photos → _ingest_image() → get_vlm，
+         跟一般上傳共用同一個注入點，所以這裡撥了、手機拍的看圖就跟著切。
+         行為在共用檔 /ui/ai_switch.js。 -->
+    <div class="ai-switch">
+      <span id="ai-switch-label" class="ai-switch-label">AI 模型</span>
+      <button type="button" id="ai-toggle" class="ai-toggle" role="switch"
+              aria-checked="false" aria-labelledby="ai-switch-label"
+              title="切換 AI 走本機 Ollama 或 Ollama Cloud（看圖與問答都跟著）">
+        <span class="ai-side" data-side="local">本機</span>
+        <span class="ai-side" data-side="cloud">雲端</span>
+      </button>
+      <span id="ai-switch-msg" class="ai-switch-msg" aria-live="polite"></span>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+
+<a class="back-link" href="/ui/upload.html">← 回上傳頁</a>
+
+<h2>用手機拍</h2>
+<p class="lead">手機掃下面這個 QR，就變成這台電腦的無線鏡頭：你在手機上對準什麼，這裡就看到什麼。
+快門兩邊都能按，拍下的照片直接入庫，接著在<strong>這台電腦</strong>上完成歸類。
+手機與電腦要在同一個 Wi-Fi。</p>
+
+<div class="cd-layout">
+
+  <!-- 左欄：配對（QR＋網址＋連線狀態） -->
+  <section class="panel cd-pair">
+    <h3 class="cd-h">① 用手機掃這個</h3>
+    <div class="cd-qr" id="cd-qr" aria-label="配對用的 QR code"></div>
+    <p class="cd-url" id="cd-url">建立配對中…</p>
+    <p class="cd-hint">掃不到的話，把上面這串網址打進手機瀏覽器也一樣。<br>
+      配對 10 分鐘有效；關掉這一頁配對就結束。</p>
+    <p class="status" id="cd-link" aria-live="polite">尚未連線</p>
+  </section>
+
+  <!-- 右欄：即時預覽＋遙控 -->
+  <section class="panel cd-stage">
+    <h3 class="cd-h">② 這裡會出現手機的即時畫面</h3>
+    <div class="cd-video-box">
+      <!-- muted＋playsinline：瀏覽器才肯自動播；沒有聲音軌，本來就是靜音的 -->
+      <video id="cd-video" autoplay playsinline muted></video>
+      <p class="cd-video-empty" id="cd-video-empty">等待手機連上…</p>
+    </div>
+    <div class="cd-controls">
+      <button type="button" id="cd-capture" class="btn btn-primary" disabled>按快門</button>
+      <button type="button" id="cd-retake" class="btn" disabled>重拍</button>
+      <button type="button" id="cd-switch" class="btn" disabled>切換鏡頭</button>
+      <button type="button" id="cd-torch" class="btn" disabled>開閃光</button>
+    </div>
+    <p class="cd-hint" id="cd-torch-note"></p>
+  </section>
+
+</div>
+
+<section class="panel" id="cd-result" aria-live="polite">
+  <p class="panel-empty">還沒有拍到任何照片。</p>
+</section>
+
+</main>
+
+<script src="/ui/folder_modal.js"></script>
+<script src="/ui/entity_modal.js"></script>
+<script src="/ui/task_modal.js"></script>
+<script src="/ui/classify_chain.js"></script>
+<script src="/ui/ai_switch.js"></script>
+
+<script>
+// ===== 桌面端：配對 → 看即時畫面 → 遙控 → 收照片接彈窗鏈（Phase 36 路線 B）=====
+//
+// 這一頁自己不碰鏡頭。它做四件事：
+//   ① POST /camera/session 拿 token 與 QR
+//   ② 開 WebSocket（信令＋遙控指令的水管，伺服器只轉發不解讀）
+//   ③ 當 WebRTC 的「接收端」：手機送 offer，這裡回 answer，然後畫面就出來了
+//   ④ 手機說 uploaded → GET /camera/{token}/latest → 走既有的三關彈窗鏈
+//
+// WebRTC 的影像是兩台裝置**直接**傳的，不經過伺服器；
+// 同一個 Wi-Fi 用 host candidate 就連得起來，所以 iceServers 是空的（不接 STUN／TURN）。
+
+const cdVideo = document.getElementById("cd-video");
+const cdVideoEmpty = document.getElementById("cd-video-empty");
+const cdResult = document.getElementById("cd-result");
+const cdLink = document.getElementById("cd-link");
+const cdTorchNote = document.getElementById("cd-torch-note");
+const cd按鈕 = {
+  capture: document.getElementById("cd-capture"),
+  retake: document.getElementById("cd-retake"),
+  switch: document.getElementById("cd-switch"),
+  torch: document.getElementById("cd-torch")
+};
+
+let cdToken = null;
+let cdSocket = null;
+let cdPc = null;          // RTCPeerConnection（接收端）
+let cd待處理ice = [];      // 比 offer 早到的 ICE candidate 先排在這裡
+let cd閃光開著 = false;
+// 手機那支裝置到底支不支援閃光：null＝還沒回報、true／false＝手機說了。
+// **沒收到回報之前一律當作不能用**——寧可少一顆按鈕，也不要按了沒反應
+// 卻讓兩邊都以為開了（iPhone Safari 正是這種情況）。
+let cd閃光能力 = null;
+// 快門按下去之後、照片回來（或失敗）之前不接受第二次快門，
+// 狀態列也不讓後續的點擊蓋掉「正在等照片」這件事。
+let cd等照片中 = false;
+
+// 把使用者／AI 產生的文字安全地放進 HTML（與 upload.html 同一份寫法）。
+// 不做這件事的話，照片描述裡的一個 "<" 就會把版面弄壞，更糟的是被當成程式碼執行。
+function esc(value) {
+  const 文字 = (value === null || value === undefined || value === "") ? "（無）" : value;
+  return String(文字)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// 狀態列。ok＝綠點、error＝紅點、其他＝沒有點（沿用全站的 status 樣式）
+function 連線狀態(文字, 種類) {
+  cdLink.textContent = 文字;                       // 動態內容一律 textContent
+  cdLink.className = "status" + (種類 ? " status-" + 種類 : "");
+}
+
+function 遙控可用(可用) {
+  Object.keys(cd按鈕).forEach(function (名字) {
+    // 閃光另有「手機回報支援才給按」的規則，不跟著這裡一起開
+    if (名字 !== "torch") { cd按鈕[名字].disabled = !可用; }
+  });
+  // 快門在等照片時另外鎖住（避免連按送出好幾張）
+  cd按鈕.capture.disabled = !可用 || cd等照片中;
+  cd按鈕.torch.disabled = !可用 || cd閃光能力 !== true;
+}
+
+function 送(訊息) {
+  if (cdSocket && cdSocket.readyState === WebSocket.OPEN) {
+    cdSocket.send(JSON.stringify(訊息));
+  }
+}
+
+// ---------- ① 建立配對 ----------
+
+async function 建立配對() {
+  let response;
+  try {
+    response = await fetch("/camera/session", { method: "POST" });
+  } catch (error) {
+    // 最常見：uvicorn 沒在跑、或網址／埠號不對。寫進頁面，不用 alert。
+    連線狀態("連不上伺服器：" + error + "。請確認 uvicorn 還在跑。", "error");
+    return;
+  }
+  if (response.status !== 201) {
+    連線狀態("建立配對失敗（HTTP " + response.status + "）", "error");
+    return;
+  }
+  const body = await response.json();
+  cdToken = body.token;
+  // QR 是伺服器用 segno 在本機畫好的 SVG 字串（不接任何雲端 QR 服務）。
+  // 這裡是全頁唯一一處直接塞標記，安全性理由要講清楚：segno 產出的 SVG 只有
+  // <path d="…"> 的黑白格子座標，**網址是被編碼成格子、不會以文字出現在 SVG 裡**，
+  // 所以就算 Host 標頭被亂填，也不可能從那裡夾帶任何標記進來。
+  document.getElementById("cd-qr").innerHTML = body.qr_svg;
+  document.getElementById("cd-url").textContent = body.phone_url;
+  開信令();
+}
+
+// ---------- ② 信令水管 ----------
+
+function 開信令() {
+  const 協定 = location.protocol === "https:" ? "wss:" : "ws:";
+  cdSocket = new WebSocket(協定 + "//" + location.host + "/camera/" + cdToken + "/signal?role=desk");
+
+  cdSocket.addEventListener("open", function () {
+    連線狀態("等手機掃碼…");
+    送({ type: "desk-ready" });      // 手機若已經在線就會立刻開始協商
+  });
+
+  cdSocket.addEventListener("message", function (event) {
+    let 訊息;
+    try { 訊息 = JSON.parse(event.data); } catch (error) { return; }
+    處理訊息(訊息);
+  });
+
+  cdSocket.addEventListener("close", function (event) {
+    遙控可用(false);
+    連線狀態(
+      event.code === 4409
+        ? "這一頁被另一個分頁取代了（同時只能有一個配對）"
+        : "配對已結束。重新整理這一頁可以再產生一組新的 QR。",
+      "error"
+    );
+  });
+}
+
+function 處理訊息(訊息) {
+  if (訊息.type === "phone-ready") {
+    // 手機比桌面晚連上：再宣告一次，它才知道可以開始協商
+    連線狀態("手機已連上，正在建立畫面…");
+    送({ type: "desk-ready" });
+  } else if (訊息.type === "offer") {
+    收到offer(訊息);
+  } else if (訊息.type === "ice") {
+    收到ice(訊息.candidate);
+  } else if (訊息.type === "torch-supported") {
+    閃光可用();
+  } else if (訊息.type === "torch-unsupported") {
+    閃光不支援();
+  } else if (訊息.type === "uploaded") {
+    收到照片();
+  } else if (訊息.type === "uploading") {
+    // 等待提示跟著頁首的 AI 開關走。aiBackendNow() 來自共用檔 /ui/ai_switch.js
+    連線狀態(aiBackendNow() === "cloud"
+      ? "手機正在上傳這一張…（AI 看圖走 Ollama Cloud，通常幾秒〜半分鐘）"
+      : "手機正在上傳這一張…（本機模型看圖可能要等 1〜5 分鐘）");
+  } else if (訊息.type === "upload-failed") {
+    等照片(false);
+    連線狀態("手機那一張沒有存成功：" + (訊息.detail || "未知原因"), "error");
+  }
+}
+
+// ---------- ③ WebRTC：這一頁是接收端 ----------
+
+async function 收到offer(訊息) {
+  if (cdPc) { cdPc.close(); }
+  cd待處理ice = [];
+  cdPc = new RTCPeerConnection({ iceServers: [] });   // 同區網直連，不用 STUN／TURN
+
+  cdPc.addEventListener("track", function (event) {
+    cdVideo.srcObject = event.streams[0];
+    cdVideoEmpty.hidden = true;
+    遙控可用(true);
+    連線狀態("即時預覽中——快門兩邊都能按", "ok");
+  });
+  cdPc.addEventListener("icecandidate", function (event) {
+    if (event.candidate) { 送({ type: "ice", candidate: event.candidate }); }
+  });
+  cdPc.addEventListener("connectionstatechange", function () {
+    if (cdPc.connectionState === "failed" || cdPc.connectionState === "disconnected") {
+      遙控可用(false);
+      cdVideoEmpty.hidden = false;
+      連線狀態("畫面中斷了。請確認兩台裝置在同一個 Wi-Fi，或重新整理手機那一頁。", "error");
+    }
+  });
+
+  await cdPc.setRemoteDescription({ type: "offer", sdp: 訊息.sdp });
+  const answer = await cdPc.createAnswer();
+  await cdPc.setLocalDescription(answer);
+  送({ type: "answer", sdp: answer.sdp });
+
+  // remoteDescription 設好之前收到的 candidate 現在才補進去
+  cd待處理ice.forEach(加入ice);
+  cd待處理ice = [];
+}
+
+function 收到ice(candidate) {
+  if (!candidate) { return; }
+  if (cdPc && cdPc.remoteDescription) {
+    加入ice(candidate);
+  } else {
+    cd待處理ice.push(candidate);
+  }
+}
+
+// 加 candidate 失敗（多半是連線已經換過一輪、這顆過期了）不是錯誤，
+// 只要吞掉就好——不吞的話 console 會被 unhandled rejection 洗版。
+function 加入ice(candidate) {
+  cdPc.addIceCandidate(candidate).catch(function () { /* 過期的 candidate，忽略 */ });
+}
+
+// ---------- 遙控三鍵＋重拍 ----------
+
+// 等照片期間鎖住快門：連按三下不該送出三張。
+function 等照片(等待中) {
+  cd等照片中 = 等待中;
+  cd按鈕.capture.disabled = 等待中 || cd按鈕.switch.disabled;
+}
+
+cd按鈕.capture.addEventListener("click", function () {
+  if (cd等照片中) { return; }
+  等照片(true);
+  送({ type: "capture" });
+  連線狀態("已按下快門，等手機把照片送上來…");
+});
+
+cd按鈕.switch.addEventListener("click", function () {
+  送({ type: "switch" });
+});
+
+cd按鈕.torch.addEventListener("click", function () {
+  cd閃光開著 = !cd閃光開著;
+  cd按鈕.torch.textContent = cd閃光開著 ? "關閃光" : "開閃光";
+  送({ type: "torch", on: cd閃光開著 });
+});
+
+// 重拍＝回到取景再拍一張新的。已經入庫的那張**不會**被刪掉——
+// 本專案沒有刪除照片這件事（計畫「已知限制」），它就留在待決定區。
+cd按鈕.retake.addEventListener("click", function () {
+  cdResult.innerHTML = '<p class="panel-empty">已回到取景，請重新對準後再按快門。</p>';
+  等照片(false);
+  送({ type: "retake" });
+  連線狀態("即時預覽中——快門兩邊都能按", "ok");
+});
+
+// 手機回報「這支裝置真的有閃光」才把按鈕交出去（I3：能力由手機說了算）
+function 閃光可用() {
+  cd閃光能力 = true;
+  cdTorchNote.textContent = "";
+  cd按鈕.torch.disabled = cd按鈕.switch.disabled;   // 遙控本身還沒開就先不亮
+}
+
+function 閃光不支援() {
+  cd閃光能力 = false;
+  cd按鈕.torch.disabled = true;
+  cd按鈕.torch.textContent = "開閃光";
+  cd閃光開著 = false;
+  // iPhone Safari 的 torch 不可靠（計畫「已知限制」第一條）：優雅降級，不是報錯
+  cdTorchNote.textContent = "這支手機的瀏覽器不支援閃光，請改用手電筒或找亮一點的地方。";
+}
+
+// ---------- ④ 收到照片 → 三關彈窗鏈 ----------
+
+async function 收到照片() {
+  等照片(false);                       // 照片回來了，快門解鎖
+  let response;
+  try {
+    response = await fetch("/camera/" + cdToken + "/latest");
+  } catch (error) {
+    連線狀態("連不上伺服器：" + error + "。照片可能已經入庫，請到瀏覽頁確認。", "error");
+    return;
+  }
+  if (response.status !== 200) {
+    連線狀態("拿不到剛剛那張照片（HTTP " + response.status + "）", "error");
+    return;
+  }
+  連線狀態("照片已入庫，請在彈出的視窗裡完成歸類", "ok");
+  // 鏈的邏輯與上傳頁共用（/ui/classify_chain.js）；這一頁只提供結果卡與收尾語
+  startClassifyChain({
+    photo: await response.json(),
+    render: renderResult,
+    完成語: "可以繼續拍下一張了。"
+  });
+}
+
+// ===== 結果卡：鏈的每一步都會呼叫這裡，把目前進度寫上去 =====
+// 鏈本身（抽屜 → 實體 → 待辦）在共用檔 /ui/classify_chain.js，與上傳頁同一份。
+
+function renderResult(body, folderName, note) {
+  const m = body.metadata;
+  const items = (m.items && m.items.length > 0) ? m.items.join(" · ") : "";
+  cdResult.innerHTML =
+    '<p class="status status-ok">手機拍的這張已入庫</p>' +
+    '<dl class="kv">' +
+      '<dt>照片</dt><dd class="mono">#' + esc(body.id) + '</dd>' +
+      '<dt>文字描述</dt><dd>' + esc(body.text) + '</dd>' +
+      '<dt>資料夾</dt><dd>' + esc(folderName) + '</dd>' +
+      '<dt>地點</dt><dd>' + esc(m.location) + '</dd>' +
+      '<dt>物品</dt><dd>' + esc(items) + '</dd>' +
+      '<dt>內容時間</dt><dd>' + esc(m.content_time) + '</dd>' +
+    '</dl>' +
+    '<p class="note">' + esc(note) + '</p>';
+}
+
+建立配對();
+</script>
+
+</body>
+</html>

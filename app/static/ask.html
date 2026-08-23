@@ -10,11 +10,26 @@
 
 <header class="site-header">
   <h1 class="site-brand">PersonalDocAI</h1>
-  <nav class="site-nav" aria-label="主要導覽">
-    <a href="/ui/upload.html">上傳照片</a>
-    <a href="/ui/browse.html">瀏覽資料夾</a>
-    <a href="/ui/ask.html" aria-current="page">問問題</a>
-  </nav>
+  <div class="site-header-right">
+    <nav class="site-nav" aria-label="主要導覽">
+      <a href="/ui/upload.html">上傳照片</a>
+      <a href="/ui/browse.html">瀏覽資料夾</a>
+      <a href="/ui/ask.html" aria-current="page">問問題</a>
+    </nav>
+    <!-- AI 後端開關（2026-08-22）：與上傳頁是同一顆開關（同一個伺服器狀態）——
+         撥到「雲端」＝這一頁的判斷查法與產生回答都改走 Ollama Cloud。
+         行為在共用檔 /ui/ai_switch.js。 -->
+    <div class="ai-switch">
+      <span id="ai-switch-label" class="ai-switch-label">AI 模型</span>
+      <button type="button" id="ai-toggle" class="ai-toggle" role="switch"
+              aria-checked="false" aria-labelledby="ai-switch-label"
+              title="切換 AI 走本機 Ollama 或 Ollama Cloud（看圖與問答都跟著）">
+        <span class="ai-side" data-side="local">本機</span>
+        <span class="ai-side" data-side="cloud">雲端</span>
+      </button>
+      <span id="ai-switch-msg" class="ai-switch-msg" aria-live="polite"></span>
+    </div>
+  </div>
 </header>
 
 <main class="page">
@@ -35,6 +50,8 @@
 </section>
 
 </main>
+
+<script src="/ui/ai_switch.js"></script>
 
 <script>
 const form = document.getElementById("ask-form");
@@ -89,7 +106,10 @@ form.addEventListener("submit", async function (event) {
   }
 
   button.disabled = true;
-  renderNotice("思考中…（本機模型要判斷查法再產生回答，可能要等一下）");
+  // 等待提示跟著頁首的開關走。aiBackendNow() 來自共用檔 /ui/ai_switch.js
+  renderNotice(aiBackendNow() === "cloud"
+    ? "思考中…（AI 走 Ollama Cloud 判斷查法並產生回答）"
+    : "思考中…（本機模型要判斷查法再產生回答，可能要等一下）");
 
   try {
     const response = await fetch("/ask", {

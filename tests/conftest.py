@@ -96,6 +96,15 @@ def isolated_data_dir(tmp_path, monkeypatch):
     yield data_dir
 
 
+def pytest_bdd_apply_tag(tag, function):
+    """規格裡標 @未實作 的例子先跳過，等對應 phase 落地再摘標。"""
+    if tag == "未實作":
+        marker = pytest.mark.skip(reason="規格已寫、對應 phase 尚未實作")
+        marker(function)
+        return True
+    return None
+
+
 @pytest.fixture
 def client() -> TestClient:
     """可以直接呼叫自己 API 的測試用戶端（不需要真的啟動伺服器）。"""

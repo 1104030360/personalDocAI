@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<!-- 手機頁：不准縮放（按快門時手指容易誤觸雙指縮放），並讓版面貼齊瀏海機的安全區 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>無線鏡頭 — PersonalDocAI</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body class="cp-body">
+
+<main class="cp-page">
+
+<div class="cp-stage">
+  <!-- playsinline：iPhone 才不會把影片搶去全螢幕播；muted 才准自動播 -->
+  <video id="cp-video" autoplay playsinline muted></video>
+</div>
+
+<p class="cp-status" id="cp-status" aria-live="polite">正在開啟鏡頭…</p>
+
+<div class="cp-controls">
+  <button type="button" id="cp-switch" class="btn" disabled>切換鏡頭</button>
+  <button type="button" id="cp-capture" class="btn btn-primary" disabled>按快門</button>
+  <button type="button" id="cp-torch" class="btn" disabled>開閃光</button>
+</div>
+
+<p class="cp-hint" id="cp-hint">快門電腦那邊也能按。拍完照片會自動送進系統，接著到電腦上完成歸類。</p>
+
+</main>
+
+<script>
+// ===== 手機端：本系統的瀏覽器取景頁（Phase 36 路線 B）=====
+//
+// 這一頁做四件事：
+//   ① getUserMedia 開後鏡頭（需要 HTTPS——這是路線 B 的硬條件）
+//   ② 當 WebRTC 的「發送端」：把視訊軌送到電腦那一頁（影像不經過伺服器）
+//   ③ 三個按鈕（快門／切鏡頭／閃光）；電腦按的指令從 WebSocket 進來，效果一模一樣
+//   ④ 快門＝把當下這一幀畫進 canvas → 轉成 JPEG → POST 進系統 → 通知電腦
+//
+// ⚠ 一律不用 alert／confirm／prompt（全站鐵律）：所有提示都寫進上面的狀態列。
+
+const cpVideo = document.getElementById("cp-video");
+const cpStatus = document.getElementById("cp-status");
+const cpHint = document.getElementById("cp-hint");
+const cp按鈕 = {
+  capture: document.getElementById("cp-capture"),
+  switch: document.getElementById("cp-switch"),
+  torch: document.getElementById("cp-torch")
+};
+
+const cpToken = new URLSearchParams(location.search).get("token");
+let cpStream = null;
+let cpSocket = null;
+let cpPc = null;
+let cp待處理ice = [];
+let cp鏡頭 = "environment";     // environment＝後鏡頭（拍收據用的那一面）
+let cp閃光開著 = false;
+let cp上傳中 = false;
+let cp桌面就緒 = false;         // 電腦那一頁在線了嗎（協商要兩個條件都到齊）
+// 這支裝置支不支援閃光：null＝還沒檢查過。檢查完要「回報」給電腦，
+// 而且 WS 還在連線中時送出去會直接掉——所以連上與 desk-ready 時都要補報一次。
+let cp閃光能力 = null;
+
+function 狀態(文字, 種類) {
+  cpStatus.textContent = 文字;                     // 動態內容一律 textContent
+  cpStatus.className = "cp-status" + (種類 ? " cp-" + 種類 : "");
+}
+
+function 送(訊息) {
+  if (cpSocket && cpSocket.readyState === WebSocket.OPEN) {
+    cpSocket.send(JSON.stringify(訊息));
+  }
+}
+
+function 拍照按鈕可用(可用) {
+  cp按鈕.capture.disabled = !可用;
+  cp按鈕.switch.disabled = !可用;
+}
+
+// ---------- ① 開鏡頭 ----------
+
+async function 開鏡頭() {
+  // 沒有 mediaDevices＝這個頁面不是「安全來源」（多半是用 http:// 開的）。
+  // 手機瀏覽器只在 HTTPS 或 localhost 才給鏡頭權限——這是規格，不是設定問題。
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    狀態("這個瀏覽器不給用鏡頭。請確認網址是 https:// 開頭，且已信任這台電腦的憑證。", "error");
+    return;
+  }
+
+  if (cpStream) { cpStream.getTracks().forEach(function (t) { t.stop(); }); }
+
+  try {
+    cpStream = await navigator.mediaDevices.getUserMedia({
+      // ideal 而不是 exact：桌機或只有一顆鏡頭的裝置才不會直接失敗
+      // 解析度也開高一點——快門擷的就是這一幀，給 VLM 看的圖越清楚越好
+      video: {
+        facingMode: { ideal: cp鏡頭 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    });
+  } catch (error) {
+    狀態("開不了鏡頭：" + error.name + "。請在瀏覽器允許這個網站使用相機。", "error");
+    return;
+  }
+
+  cpVideo.srcObject = cpStream;
+  拍照按鈕可用(true);
+  更新閃光能力();
+
+  // 換鏡頭時連線已經在跑：把新的視訊軌換上去就好，不必重新協商
+  if (cpPc) {
+    const sender = cpPc.getSenders().find(function (s) {
+      return s.track && s.track.kind === "video";
+    });
+    if (sender) { await sender.replaceTrack(cpStream.getVideoTracks()[0]); }
+  }
+  狀態("取景中。對準要拍的東西，兩邊都能按快門。");
+}
+
+// ---------- ② 信令與 WebRTC（這一頁是發送端）----------
+
+function 開信令() {
+  const 協定 = location.protocol === "https:" ? "wss:" : "ws:";
+  cpSocket = new WebSocket(協定 + "//" + location.host + "/camera/" + cpToken + "/signal?role=phone");
+
+  cpSocket.addEventListener("open", function () {
+    送({ type: "phone-ready" });       // 電腦收到就會回 desk-ready，然後開始協商
+    回報閃光能力();                     // 鏡頭比 WS 早開好時，這裡才補得上那一次回報
+  });
+
+  cpSocket.addEventListener("message", function (event) {
+    let 訊息;
+    try { 訊息 = JSON.parse(event.data); } catch (error) { return; }
+    處理訊息(訊息);
+  });
+
+  cpSocket.addEventListener("close", function (event) {
+    拍照按鈕可用(false);
+    cp按鈕.torch.disabled = true;
+    狀態(
+      event.code === 4409
+        ? "這個配對被另一個分頁接手了。"
+        : "配對已結束（電腦那一頁關掉或超過 10 分鐘）。請重新掃描電腦上的 QR。",
+      "error"
+    );
+  });
+}
+
+function 處理訊息(訊息) {
+  if (訊息.type === "desk-ready") {
+    cp桌面就緒 = true;
+    回報閃光能力();                      // 電腦是後來才連上的：把能力再講一次給它聽
+    開始協商();                          // 鏡頭還沒好的話這裡會先跳過，開好後 啟動() 會再叫一次
+  } else if (訊息.type === "answer") {
+    收到answer(訊息);
+  } else if (訊息.type === "ice") {
+    收到ice(訊息.candidate);
+  } else if (訊息.type === "capture") {
+    快門();                              // 電腦按的快門，效果與手機上按一模一樣
+  } else if (訊息.type === "switch") {
+    切換鏡頭();
+  } else if (訊息.type === "torch") {
+    設定閃光(訊息.on);
+  } else if (訊息.type === "retake") {
+    // 上傳中就不要動狀態列——那會把「拍好了，上傳中…」蓋成「取景中」，
+    // 看起來像什麼事都沒發生，但那張其實正在路上。
+    if (cp上傳中) { return; }
+    狀態("取景中。對準要拍的東西，兩邊都能按快門。");
+    cpHint.textContent = "快門電腦那邊也能按。拍完照片會自動送進系統，接著到電腦上完成歸類。";
+  }
+}
+
+async function 開始協商() {
+  if (!cpStream) { return; }            // 鏡頭還沒開就先不談，等 開鏡頭() 完成後電腦會再宣告一次
+  if (cpPc) { cpPc.close(); }
+  cp待處理ice = [];
+  cpPc = new RTCPeerConnection({ iceServers: [] });   // 同區網直連，不用 STUN／TURN
+
+  cpStream.getVideoTracks().forEach(function (track) {
+    cpPc.addTrack(track, cpStream);
+  });
+  cpPc.addEventListener("icecandidate", function (event) {
+    if (event.candidate) { 送({ type: "ice", candidate: event.candidate }); }
+  });
+
+  const offer = await cpPc.createOffer();
+  await cpPc.setLocalDescription(offer);
+  送({ type: "offer", sdp: offer.sdp });
+}
+
+async function 收到answer(訊息) {
+  if (!cpPc) { return; }
+  await cpPc.setRemoteDescription({ type: "answer", sdp: 訊息.sdp });
+  cp待處理ice.forEach(加入ice);
+  cp待處理ice = [];
+}
+
+function 收到ice(candidate) {
+  if (!candidate) { return; }
+  if (cpPc && cpPc.remoteDescription) {
+    加入ice(candidate);
+  } else {
+    cp待處理ice.push(candidate);
+  }
+}
+
+// 加 candidate 失敗（多半是連線已經換過一輪、這顆過期了）不是錯誤，
+// 只要吞掉就好——不吞的話 console 會被 unhandled rejection 洗版。
+function 加入ice(candidate) {
+  cpPc.addIceCandidate(candidate).catch(function () { /* 過期的 candidate，忽略 */ });
+}
+
+// ---------- ③ 切鏡頭與閃光 ----------
+
+async function 切換鏡頭() {
+  cp鏡頭 = (cp鏡頭 === "environment") ? "user" : "environment";
+  狀態("切換鏡頭中…");
+  await 開鏡頭();
+}
+
+function 更新閃光能力() {
+  const track = cpStream && cpStream.getVideoTracks()[0];
+  const caps = (track && track.getCapabilities) ? track.getCapabilities() : {};
+  if (caps.torch) {
+    cp閃光能力 = true;
+    cp按鈕.torch.disabled = false;
+  } else {
+    // iPhone Safari 的 torch 幾乎都是這一條（計畫「已知限制」第一條）：
+    // 優雅降級——按鈕停用、電腦那邊也一起停用，切鏡頭與快門完全不受影響。
+    cp閃光能力 = false;
+    cp按鈕.torch.disabled = true;
+    cp閃光開著 = false;
+    cp按鈕.torch.textContent = "開閃光";
+  }
+  回報閃光能力();
+}
+
+// 把能力告訴電腦。WS 還在連線中（CONNECTING）時 送() 會直接把訊息丟掉，
+// 所以這個函式在「檢查完」「WS 連上」「收到 desk-ready」三個時機都會被叫一次——
+// 丟掉一次沒關係，後面一定補得回來（電腦在收到回報前不給按閃光）。
+function 回報閃光能力() {
+  if (cp閃光能力 === null) { return; }        // 還沒檢查過，沒有東西好回報
+  送({ type: cp閃光能力 ? "torch-supported" : "torch-unsupported" });
+}
+
+async function 設定閃光(要開) {
+  const track = cpStream && cpStream.getVideoTracks()[0];
+  if (!track || !track.applyConstraints || cp閃光能力 === false) {
+    閃光不支援();
+    return;
+  }
+  try {
+    await track.applyConstraints({ advanced: [{ torch: !!要開 }] });
+    // iOS Safari 對不支援的 torch 會「靜默成功」（不丟例外、燈也沒亮），
+    // 兩邊就會一起以為開了。回頭讀 getSettings() 確認真的變了才算數；
+    // 讀不到就當作不支援——寧可少一顆按鈕，也不要 UI 說謊。
+    const settings = track.getSettings ? track.getSettings() : {};
+    if (要開 && settings.torch !== true) { 閃光不支援(); return; }
+    cp閃光開著 = !!要開;
+    cp按鈕.torch.textContent = cp閃光開著 ? "關閃光" : "開閃光";
+  } catch (error) {
+    閃光不支援();
+  }
+}
+
+function 閃光不支援() {
+  cp閃光能力 = false;
+  cp閃光開著 = false;
+  cp按鈕.torch.disabled = true;
+  cp按鈕.torch.textContent = "開閃光";
+  回報閃光能力();
+}
+
+// ---------- ④ 快門 ----------
+
+async function 快門() {
+  if (!cpStream || cp上傳中) { return; }
+  if (!cpVideo.videoWidth) { 狀態("畫面還沒準備好，請等一下再按。", "error"); return; }
+
+  cp上傳中 = true;
+  拍照按鈕可用(false);
+  狀態("拍好了，上傳中…");
+  送({ type: "uploading" });
+
+  // 把當下這一幀原尺寸畫進 canvas（不是預覽縮圖——給 VLM 看的要清楚）
+  const canvas = document.createElement("canvas");
+  canvas.width = cpVideo.videoWidth;
+  canvas.height = cpVideo.videoHeight;
+  canvas.getContext("2d").drawImage(cpVideo, 0, 0, canvas.width, canvas.height);
+
+  const blob = await new Promise(function (resolve) {
+    canvas.toBlob(resolve, "image/jpeg", 0.92);
+  });
+  if (!blob) { 上傳結束("擷取畫面失敗，請再按一次快門。"); return; }
+
+  const formData = new FormData();
+  formData.append("file", blob, "camera.jpg");
+
+  try {
+    const response = await fetch("/camera/" + cpToken + "/photos", {
+      method: "POST", body: formData
+    });
+    if (response.status === 201) {
+      送({ type: "uploaded" });          // 電腦收到就會去拿這張、開彈窗鏈
+      狀態("已送出——到電腦上繼續。", "ok");
+      cpHint.textContent = "電腦上會跳出視窗請你決定資料夾。這裡可以繼續拍下一張。";
+      cp上傳中 = false;
+      拍照按鈕可用(true);
+      return;
+    }
+    const body = await response.json();
+    送({ type: "upload-failed", detail: String(body.detail) });
+    上傳結束("沒有存成功（HTTP " + response.status + "）：" + body.detail);
+  } catch (error) {
+    上傳結束("送不出去：" + error + "。請確認手機與電腦還在同一個 Wi-Fi。");
+  }
+}
+
+function 上傳結束(訊息) {
+  cp上傳中 = false;
+  拍照按鈕可用(true);
+  狀態(訊息, "error");
+}
+
+// ---------- 綁按鈕、開工 ----------
+
+cp按鈕.capture.addEventListener("click", 快門);
+cp按鈕.switch.addEventListener("click", 切換鏡頭);
+cp按鈕.torch.addEventListener("click", function () { 設定閃光(!cp閃光開著); });
+
+async function 啟動() {
+  if (!cpToken) {
+    狀態("網址少了配對用的 token。請重新掃描電腦上的 QR。", "error");
+    return;
+  }
+  // 先接信令再開鏡頭：使用者還在看「要不要允許相機」的詢問時，
+  // 電腦那一頁就已經知道「手機到了」——不然桌面會一直停在「等手機掃碼」，
+  // 看起來像 QR 掃壞了，其實只是權限還沒按。
+  開信令();
+  await 開鏡頭();
+  // 鏡頭比 desk-ready 晚好時，補叫一次協商（兩個條件到齊才談得起來）
+  if (cp桌面就緒) { 開始協商(); }
+}
+
+啟動();
+</script>
+
+</body>
+</html>

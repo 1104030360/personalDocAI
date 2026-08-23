@@ -102,7 +102,10 @@ def test_資料夾內容含照片摘要(client):
 
     assert len(body["photos"]) == 1
     photo = body["photos"][0]
-    assert set(photo) == {"id", "thumbnail_url", "text", "uploaded_at"}
+    # Phase 35 起由四鍵變五鍵：多的 suggested_category 讓待決定分頁畫得出選項①
+    assert set(photo) == {
+        "id", "thumbnail_url", "text", "uploaded_at", "suggested_category"
+    }
     assert photo["id"] == photo_id
     assert photo["text"] == "在 Target 購買可樂的收據"
     # 回的是「網址」不是硬碟路徑，指向 Phase 19 的讀圖端點

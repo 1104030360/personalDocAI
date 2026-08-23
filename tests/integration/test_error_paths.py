@@ -97,7 +97,10 @@ def test_問題缺漏或空字串回422(client, payload):
 # ---- 200：路由 AI 失敗仍然回答 ----
 def test_路由失敗仍回200並走語意查詢(client):
     class 一定壞掉的Router:
-        def route(self, question):
+        # 簽名要跟上 Phase 34 的 route(question, entity_names)：少一個參數的話，
+        # 這裡會在「進到函式本體之前」就先炸 TypeError，測的就變成「簽名不對也
+        # fallback」而不是本測試要守的「模型爆炸也 fallback」。
+        def route(self, question, entity_names):
             raise RuntimeError("模型爆炸了")
 
     app.dependency_overrides[get_router] = lambda: 一定壞掉的Router()

@@ -5,6 +5,8 @@ routers 與 services 一律呼叫這裡的函式，不得自己寫 SQL。
 資料夾（folder）相關操作（Phase 15 加入），
 實體（entity）與別針（photo_entity）相關操作（Phase 29 加入），
 以及待辦（task）相關操作（Phase 32 加入）。
+詢問的檢索查詢自 Phase 34 起共四條：search_by_metadata／search_by_vector 之外，
+再加 list_photos_with_entity（沿別針）與 search_tasks（查待辦表）。
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from app.db.session import get_connection
 # insert_photo 的 RETURNING 與 fetch_photo 的 SELECT 共用這一份，兩邊鍵名保證一致。
 PHOTO_COLUMNS = (
     "id, text, category, folder_id, location, items, content_time, uploaded_at, "
-    "original_path, thumbnail_path, content_type"
+    "original_path, thumbnail_path, content_type, suggested_category"
 )
 
 # 六筆預設資料夾（design1.md §5 原文）。
@@ -46,6 +48,11 @@ ENTITY_COLUMNS = "id, name, description"
 # 但它不會外送給前端——只外送哪幾個欄位由 schemas/task.py 的 TaskOut 決定。
 TASK_COLUMNS = "id, photo_id, title, due_date, created_at"
 
+# 待辦的三段排序，list_tasks 與 search_tasks 共用**同一份字串**——
+# 抄成兩份的話日後只改一邊就會漂移，清單頁與詢問看到的先後就對不上了
+# （與 PHOTO_COLUMNS 兩處共用是同一個慣例）。三段的用意見 list_tasks 的 docstring。
+TASK_ORDERING = "t.due_date ASC NULLS LAST, t.created_at DESC, t.id DESC"
+
 
 def to_vector_literal(embedding: list[float]) -> str:
     """把 Python 的數字清單轉成 pgvector 認得的字串，例如 '[0.1,0.2,0.3]'。"""
@@ -61,12 +68,17 @@ def insert_photo(
     content_time: date | None,
     embedding: list[float],
     uploaded_at: datetime | None = None,
+    suggested_category: str | None = None,
 ) -> dict[str, Any]:
     """寫入一張照片。一條 INSERT 寫完全部欄位，天然原子——不會存到一半。
 
     uploaded_at 傳 None（正式情況）時，由資料庫的 now() 自動記錄上傳時間；
     測試需要固定時間時才會傳入指定值。這靠下面 SQL 的 COALESCE 做到——
     COALESCE(a, b)＝a 有值就用 a、a 是空的（NULL）才改用 b。
+
+    suggested_category＝上傳當下 VLM 建議的資料夾名稱（Phase 35，已釐清 B）。
+    它與照片實際歸屬無關（歸屬看 folder_id，上傳一律是收件箱），
+    只是「當時猜了什麼」的存根；沒有建議就留 None，定案時一律不算糾錯。
     """
     # 欄位「名稱」清單用 f-string 帶入（固定常數）；欄位「值」一律用 %(名稱)s
     # 參數帶入，交給 psycopg 安全處理——避免 SQL injection（輸入內容被誤當 SQL 執行）
@@ -77,7 +89,8 @@ def insert_photo(
     # ★ category 欄位的值本身不動——把它改寫成資料夾名稱是 Phase 20（上傳）與 Phase 21（歸類）的事。
     sql = f"""
         INSERT INTO photo (
-            text, category, folder_id, location, items, content_time, uploaded_at, embedding
+            text, category, folder_id, location, items, content_time, uploaded_at,
+            embedding, suggested_category
         )
         VALUES (
             %(text)s, %(category)s,
@@ -87,7 +100,7 @@ def insert_photo(
             ),
             %(location)s, %(items)s, %(content_time)s,
             COALESCE(%(uploaded_at)s::timestamptz, now()),
-            %(embedding)s::vector
+            %(embedding)s::vector, %(suggested_category)s
         )
         RETURNING {PHOTO_COLUMNS};
     """
@@ -99,6 +112,7 @@ def insert_photo(
         "content_time": content_time,
         "uploaded_at": uploaded_at,
         "embedding": to_vector_literal(embedding),
+        "suggested_category": suggested_category,
     }
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -329,14 +343,18 @@ def create_folder(name: str, description: str) -> dict[str, Any]:
 def list_photos_in_folder(folder_id: int) -> list[dict[str, Any]]:
     """某個資料夾裡的照片摘要，新的在前（Phase 22 的縮圖牆要用）。
 
-    只取瀏覽需要的四個欄位——不回傳 embedding（1024 個數字，前端用不到）。
+    只取瀏覽需要的五個欄位——不回傳 embedding（1024 個數字，前端用不到）。
     ORDER BY id DESC＝id 由大到小；id 自動遞增，所以「大的」就是「晚上傳的」。
+
+    ★ Phase 35 從四欄變五欄：多的 suggested_category 是給「待決定」分頁畫選項①用的
+      （design1「摘要恰四鍵」由 phase-35 明文修訂）。有了它，待決定分頁就能拿出
+      上傳當下那一筆建議，不必為了畫①再看一次圖。
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, text, uploaded_at, thumbnail_path
+                SELECT id, text, uploaded_at, thumbnail_path, suggested_category
                 FROM photo
                 WHERE folder_id = %(folder_id)s
                 ORDER BY id DESC;
@@ -467,10 +485,13 @@ def find_entity_by_name(name: str) -> dict[str, Any] | None:
 
 
 def create_entity(name: str, description: str) -> dict[str, Any]:
-    """建立一個使用者自創的實體，回傳新的那一列。
+    """只建立一個實體（不釘到任何照片上），回傳新的那一列。
 
-    只有使用者按「③自創」才會走到這裡——VLM 一次只從現有清單挑一個來建議，
-    清單外的名字絕不會被自動寫成新實體（design3.md D12、§6「建議」的定義）。
+    ⚠ 使用者按「③自創」走的**不是**這一支，而是下面的 create_and_pin_entity——
+    自創一定伴隨「釘上去」，兩件事必須同生共死（見那支的說明）。
+    這一支留著當資料層的基本寫入（建立與釘選各有一支，才拼得出組合的那一支），
+    也是測試準備「已經存在的實體」時用的。
+
     重名的判斷交給呼叫端（先用 find_entity_by_name 查），
     這裡不自檢、也不管 HTTP 狀態碼——分工與 create_folder 完全一致。
     """
@@ -504,6 +525,48 @@ def pin_entity(photo_id: int, entity_id: int) -> None:
                 """,
                 {"photo_id": photo_id, "entity_id": entity_id},
             )
+
+
+def create_and_pin_entity(
+    photo_id: int, *, name: str, description: str
+) -> dict[str, Any]:
+    """自創一個實體**並且**立刻釘到照片上，回傳新的那一列（Phase 37 收尾補的）。
+
+    為什麼不是「呼叫 create_entity 再呼叫 pin_entity」就好？
+    因為那是兩條各自開連線的 SQL，中間如果出事（資料庫掛掉、連線斷掉），
+    實體已經建好、別針卻沒釘上——使用者拿到 500，之後重試「③自創」同一個名字
+    還會撞 409「實體名稱已存在」，可是那個實體其實誰也沒釘上，走進死路。
+    這正是 Phase 21「500 時不可以留下空資料夾」的同一條規則（design3 錯誤表：
+    寫入失敗時資料庫零半套狀態）。
+
+    這裡的做法是把兩筆 INSERT 放進**同一個交易**：`with get_connection()` 區塊
+    正常結束才 commit，區塊裡丟出例外就整批 rollback。所以結果只有兩種——
+    「實體建好且釘上」或「什麼都沒發生」，不會有中間狀態。
+    （Phase 19 的存檔沒辦法這樣做，因為檔案系統不是交易式的，只好自己清乾淨；
+    這裡兩邊都在資料庫裡，交由資料庫保證更可靠。）
+
+    重名與重複釘的判斷仍然交給呼叫端（router 先查、先回 409），
+    資料庫的 name UNIQUE 與 photo_entity 主鍵只是最後防線。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO entity (name, description)
+                VALUES (%(name)s, %(description)s)
+                RETURNING {ENTITY_COLUMNS};
+                """,
+                {"name": name, "description": description},
+            )
+            entity = cur.fetchone()
+            cur.execute(
+                """
+                INSERT INTO photo_entity (photo_id, entity_id)
+                VALUES (%(photo_id)s, %(entity_id)s);
+                """,
+                {"photo_id": photo_id, "entity_id": entity["id"]},
+            )
+            return entity
 
 
 def is_pinned(photo_id: int, entity_id: int) -> bool:
@@ -544,6 +607,33 @@ def list_photo_entities(photo_id: int) -> list[dict[str, Any]]:
                 ORDER BY pe.pinned_at, e.id;
                 """,
                 {"photo_id": photo_id},
+            )
+            return cur.fetchall()
+
+
+def list_photos_with_entity(entity_id: int) -> list[dict[str, Any]]:
+    """釘著某個實體的全部照片（Phase 34 詢問三路的「實體路」）。
+
+    為什麼要有這條、而不是拿 search_by_metadata 湊：
+    別針是**明確的人工連結**，問「跟我 MacBook 有關的全部」時就該沿著它走，
+    不是去賭照片描述裡剛好有沒有寫到「MacBook」這幾個字（design3.md §6）。
+
+    SELECT 的欄位刻意就是 retrieval_service.row_to_document 要的那六個：
+    多帶 embedding 是白撈 1024 個浮點數，少一個則會讓那邊 KeyError。
+    ORDER BY p.id ＝與 search_by_metadata 同一種穩定順序（照片 id 遞增），
+    不用 pinned_at：使用者問的是「這些照片」，不是「我什麼時候釘的」。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.id, p.text, p.category, p.location, p.items, p.content_time
+                FROM photo_entity pe
+                JOIN photo p ON p.id = pe.photo_id
+                WHERE pe.entity_id = %(entity_id)s
+                ORDER BY p.id;
+                """,
+                {"entity_id": entity_id},
             )
             return cur.fetchall()
 
@@ -613,12 +703,99 @@ def list_tasks() -> list[dict[str, Any]]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT t.id, t.photo_id, t.title, t.due_date, t.created_at,
                        p.thumbnail_path
                 FROM task t
                 JOIN photo p ON p.id = t.photo_id
-                ORDER BY t.due_date ASC NULLS LAST, t.created_at DESC, t.id DESC;
+                ORDER BY {TASK_ORDERING};
                 """
+            )
+            return cur.fetchall()
+
+
+def search_tasks(due_before: date | None) -> list[dict[str, Any]]:
+    """詢問用的待辦查詢（Phase 34 詢問三路的「待辦路」）。
+
+    和 list_tasks 是兩個函式而不是一個帶參數的，理由是它們服務兩件事：
+      list_tasks   ＝待辦分頁要「畫清單」，所以 JOIN 取 thumbnail_path。
+      search_tasks ＝詢問要「餵給 LLM 回答」，所以 JOIN 取 text（照片描述）；
+                     縮圖對回答一點用都沒有。
+    排序共用 TASK_ORDERING 這一份常數，兩邊看到的先後才一致（理由見 list_tasks）。
+
+    due_before 是「這週要交什麼」抽出來的範圍上界（route 給 due_within_days，
+    檢索層換算成日期）：
+      None ＝不限期限，就是「我有哪些待辦」，全部都回。
+      有值 ＝**必須有到期日**且落在該日（含當日）以前。
+             沒期限的那筆在這裡刻意被排除——它不是「最早到期」，
+             而是「這件事沒有 deadline」，列進「這週要交什麼」只會製造假的急迫感。
+    """
+    params: dict[str, Any] = {}
+    where = ""
+    if due_before is not None:
+        where = "WHERE t.due_date IS NOT NULL AND t.due_date <= %(due_before)s"
+        params["due_before"] = due_before
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT t.id, t.photo_id, t.title, t.due_date, t.created_at,
+                       p.text
+                FROM task t
+                JOIN photo p ON p.id = t.photo_id
+                {where}
+                ORDER BY {TASK_ORDERING};
+                """,
+                params,
+            )
+            return cur.fetchall()
+
+
+# ---------- 抽屜糾錯（folder_correction），Phase 35 加入 ----------
+# 「糾錯」＝上傳時 VLM 建議 A、使用者定案時選了 B，而且 A≠B。
+# 這些例子會被注入下一次看圖的 prompt 當 few-shot（design3.md D11）——
+# 不是第二個模型、也不是微調，只是把「你上次猜錯了什麼」擺在模型眼前。
+
+
+def record_folder_correction(*, suggested: str, chosen: str, photo_text: str) -> None:
+    """記一筆糾錯素材。什麼情況才算糾錯由呼叫端（router）判斷，這裡只負責寫。
+
+    分工與 create_folder／create_entity／create_task 一致：資料層不做規則判斷。
+    三個欄位就是 few-shot 例子的全部——題幹（photo_text）＋猜錯的（suggested）
+    ＋正確的（chosen）；照片 id 刻意不存，因為 prompt 用不到，
+    存了反而讓「刪掉照片」多一層牽扯（本系統也沒有刪除端點）。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO folder_correction (suggested, chosen, photo_text)
+                VALUES (%(suggested)s, %(chosen)s, %(photo_text)s);
+                """,
+                {"suggested": suggested, "chosen": chosen, "photo_text": photo_text},
+            )
+
+
+def recent_corrections(limit: int = 5) -> list[dict[str, Any]]:
+    """最近幾筆糾錯，新的在前（第 6 筆進來時最舊的那筆就落榜）。
+
+    ORDER BY id DESC ＝新的在前（id 自動遞增，大的就是晚寫的；
+    不用 created_at 排序，同一秒內寫兩筆時它分不出先後）。
+    只回 few-shot 要用的三個欄位，鍵名即 build_vlm_prompt() 期待的形狀。
+
+    limit 的預設 5 對應 design3.md §7 的暫定 N；正式路徑上的權威值寫在呼叫端
+    （api/routers/photos.py 的 FEW_SHOT_CORRECTIONS），這裡的預設只是方便手動呼叫。
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT suggested, chosen, photo_text
+                FROM folder_correction
+                ORDER BY id DESC
+                LIMIT %(limit)s;
+                """,
+                {"limit": limit},
             )
             return cur.fetchall()

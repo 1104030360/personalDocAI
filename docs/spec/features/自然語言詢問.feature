@@ -1,8 +1,13 @@
 # 來源：docs/spec/draft/design-draft.md
+# 2026-08-22 依 docs/design/design3.md D14／§6 追加兩條 Rule（產品負責人指示補 features）：
+#   問到已確認的實體名稱 → 沿別針列出掛著的照片
+#   問到待辦／到期 → 查待辦表
+# 這兩條套 @未實作（Phase 34 尚未落地）；既有 Q1〜Q5 例子一字未動
 Feature: 自然語言詢問
   使用者直接用自然語言詢問照片相關問題。
-  系統使用 LangGraph 建立 retrieval workflow，根據問題類型決定走 vector semantic search
-  或 PostgreSQL metadata search，最後把檢索到的內容交給 LLM 產生回答。
+  系統使用 LangGraph 建立 retrieval workflow，根據問題類型決定走 vector semantic search、
+  PostgreSQL metadata search、實體別針查詢或待辦查詢，最後把檢索到的內容交給 LLM 產生回答。
+  仍是一次一問一答；檢索來源由路由／檢索層決定，不讓模型自己呼叫工具。
 
   Rule: 詢問時，系統根據問題類型決定走 vector semantic search 或 PostgreSQL metadata search
     # 分類標準：由 LLM 判斷——問題帶明確過濾條件（商家、類別、時間）走 metadata search；語意/內容描述型走 vector semantic search
@@ -63,3 +68,37 @@ Feature: 自然語言詢問
       Then 回答提及底下物品
         | name |
         | 可樂 |
+
+  Rule: 問到已確認的實體名稱時，系統沿實體別針列出掛著的照片
+    # 驗收問句來自 design3.md §6；檢索方式對外全名為 entity pin search
+
+    @未實作
+    Example: 問跟我 MacBook 有關的全部
+      Given 系統中有底下照片
+        | id | text     | category | location | items | content_time | uploaded_at      |
+        | 1  | 維修發票 | 收據     |          |       |              | 2026-08-18 10:00 |
+        | 2  | 海邊風景 | 風景     | 海邊     |       |              | 2026-08-18 10:10 |
+      And 照片 1 釘上實體 "我的 MacBook"
+      When 使用者詢問 "跟我 MacBook 有關的全部"
+      Then 系統選擇的檢索方式為 "entity pin search"
+      And 回答依據的檢索結果為底下照片
+        | id |
+        | 1  |
+
+  Rule: 問到待辦或到期時，系統查待辦表
+    # 驗收問句來自 design3.md §6；檢索方式對外全名為 task search
+
+    @未實作
+    Example: 問這週要交什麼
+      Given 現在時間為 "2026-08-18 10:00"
+      And 系統中有底下照片
+        | id | text       | category | location | items | content_time | uploaded_at      |
+        | 1  | Canvas截圖 | 文件     |          |       |              | 2026-08-18 10:00 |
+      And 系統中有底下待辦
+        | title        | due        | photo_id |
+        | 交 Project 2 | 2026-09-18 | 1        |
+      When 使用者詢問 "這週要交什麼"
+      Then 系統選擇的檢索方式為 "task search"
+      And 回答依據的待辦如下
+        | title        |
+        | 交 Project 2 |

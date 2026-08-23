@@ -1,6 +1,6 @@
-/* PersonalDocAI 三頁共用樣式（Phase 26；Phase 31／33 起彈窗變三份）。
-   upload.html / browse.html / ask.html / folder_modal.js / entity_modal.js / task_modal.js
-   全部只吃這一支檔案。
+/* PersonalDocAI 全站共用樣式（Phase 26；Phase 31／33 起彈窗變三份；Phase 36 起五頁）。
+   upload.html / browse.html / ask.html / camera-desk.html / camera-phone.html /
+   folder_modal.js / entity_modal.js / task_modal.js 全部只吃這一支檔案。
    彈窗共用原則：fm-* 的「class」是三個彈窗（抽屜／實體／待辦）共用的視覺語言，
    各彈窗只有「id」不同（fm-／em-／tm- 前綴）——樣式零複製，行為互不相碰。
 
@@ -154,6 +154,57 @@ img { max-width: 100%; display: block; }
   color: var(--c-text);
   border-bottom-color: var(--c-accent);
 }
+
+/* ── AI 後端開關（2026-08-22）：上傳頁與問問題頁頁首的「本機｜雲端」二段式切換
+   （同一個伺服器狀態，行為在共用檔 ai_switch.js）──
+   語言沿用導覽列：小字、無陰影；選中側用唯一強調色填滿（同主要按鈕）。
+   狀態來源是 role="switch" 的 aria-checked——樣式直接跟著無障礙屬性走，
+   JS 只改屬性，兩者永遠一致。 */
+.site-header-right {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.ai-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-small);
+}
+
+.ai-switch-label { color: var(--c-text-muted); }
+
+.ai-toggle {
+  display: inline-flex;
+  padding: 0;
+  overflow: hidden;                 /* 讓填色的那一側跟著圓角走 */
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-s);
+  background: var(--c-surface);
+  transition: opacity var(--motion) ease;
+}
+.ai-toggle:disabled { opacity: 0.5; cursor: progress; }
+
+.ai-side {
+  padding: var(--sp-1) var(--sp-3);
+  color: var(--c-text-muted);
+  transition: background var(--motion) ease, color var(--motion) ease;
+}
+
+.ai-toggle[aria-checked="false"] .ai-side[data-side="local"],
+.ai-toggle[aria-checked="true"]  .ai-side[data-side="cloud"] {
+  background: var(--c-accent);
+  color: var(--c-accent-text);
+}
+
+/* 開關旁的一句話回饋（「AI 改走 Ollama Cloud」／「尚未設定 OLLAMA_API_KEY…」） */
+.ai-switch-msg { max-width: 20rem; color: var(--c-text-muted); }
+.ai-switch-msg.is-error { color: var(--c-danger); }
 
 .page {
   max-width: var(--page-max);
@@ -585,10 +636,131 @@ a.task-row:hover { border-color: var(--c-text); }
 }
 
 
+/* ══ 無線鏡頭·桌面頁（camera-desk.html，Phase 36；id 與 class 都用 cd- 前綴）═════
+   兩欄：左邊配對（QR＋網址），右邊舞台（即時預覽＋遙控鈕）。
+   取景區是唯一深色的地方——那是「螢幕」，不是深色模式；
+   用的仍然是既有的文字色 token，沒有新增色碼。 */
+.cd-layout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) 1fr;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.cd-pair,
+.cd-stage { margin: 0; }
+
+/* 面板小標：比 h2 小一級，用標籤感的 display 字體 */
+.cd-h {
+  margin: 0 0 var(--sp-3);
+  font-family: var(--f-display);
+  font-size: var(--fs-card);
+  font-weight: 600;
+}
+
+/* QR 一定要白底＋留白（安靜區），手機才掃得到 */
+.cd-qr {
+  display: flex;
+  justify-content: center;
+  padding: var(--sp-3);
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-m);
+}
+.cd-qr svg { width: 100%; height: auto; max-width: 15rem; }
+
+/* 掃不到時照著念的網址：等寬字（與照片 id、日期同一套「收據字」規則） */
+.cd-url {
+  margin: var(--sp-3) 0 0;
+  font-family: var(--f-mono);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.cd-hint,
+.cp-hint {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+}
+
+.cd-video-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  background: var(--c-text);          /* 取景區＝暗背景，畫面才立體 */
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+.cd-video-box video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;                /* 整幀都看得到，不裁切（要判斷有沒有拍歪） */
+}
+.cd-video-empty {
+  position: absolute;
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--c-surface-2);
+}
+.cd-video-empty[hidden] { display: none; }
+
+.cd-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+
+/* ══ 無線鏡頭·手機頁（camera-phone.html，Phase 36；cp- 前綴）═══════════
+   手機直握、單手可按：畫面佔滿上方，三顆按鈕在下緣（拇指區）。
+   這一頁沒有站台頁首與導覽——它只有一個用途，多一個連結都是誤觸來源。 */
+.cp-body { height: 100dvh; overflow: hidden; }
+
+.cp-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--sp-2) var(--sp-2) max(var(--sp-4), env(safe-area-inset-bottom));
+  gap: var(--sp-2);
+}
+
+.cp-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;                      /* 沒有這行，flex 子元素不肯縮小 */
+  background: var(--c-text);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+.cp-stage video { width: 100%; height: 100%; object-fit: cover; }
+
+.cp-status {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+  text-align: center;
+}
+.cp-ok { color: var(--c-ok); }
+.cp-error { color: var(--c-danger); }
+
+/* 三顆按鈕等寬、夠高——手機上按得到才算數 */
+.cp-controls { display: flex; gap: var(--sp-2); }
+.cp-controls .btn { flex: 1; padding: var(--sp-3) var(--sp-2); }
+
+.cp-hint { text-align: center; }
+
+
 /* ══ 手機不破版就好（不做完美適配）═══════════════════════════════════ */
 @media (max-width: 32rem) {
   .site-header { flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
   .site-nav { gap: var(--sp-3); }
   .kv { grid-template-columns: 1fr; gap: var(--sp-1) 0; }
   .kv dt { padding-top: var(--sp-2); }
+  .cd-layout { grid-template-columns: 1fr; }   /* 窄螢幕：配對與舞台上下排 */
 }

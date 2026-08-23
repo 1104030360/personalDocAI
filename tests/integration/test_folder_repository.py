@@ -118,7 +118,10 @@ def test_列出資料夾內的照片新的在前():
     assert [p["id"] for p in photos] == [第二張["id"], 第一張["id"]]  # id 大的（新的）在前
     assert photos[0]["text"] == "第二張收據"
     assert photos[0]["thumbnail_path"] is None  # 還沒有人寫檔（Phase 17〜19 才做）
-    assert set(photos[0]) == {"id", "text", "uploaded_at", "thumbnail_path"}
+    # Phase 35 起由四鍵變五鍵：多的 suggested_category 讓待決定分頁畫得出選項①
+    assert set(photos[0]) == {
+        "id", "text", "uploaded_at", "thumbnail_path", "suggested_category"
+    }
 
 
 def test_空資料夾回傳空清單():

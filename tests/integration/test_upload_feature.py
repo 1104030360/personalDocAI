@@ -1,8 +1,9 @@
-"""把 docs/spec/features/上傳照片.feature 當測試跑（11 條 Rule）。
+"""把 docs/spec/features/上傳照片.feature 當測試跑（15 條有例子的 Rule）。
 
 2026-08-20 規格改版後：上傳當下 category 一律「未分類」，
 VLM 給的類別只出現在回應的 suggested_folder，不落庫。
-2026-08-21 追加第 11 條 Rule（design3.md D7）：PDF 一頁存成一張照片。
+2026-08-21 追加 PDF Rule（design3.md D7）：PDF 一頁存成一張照片。
+2026-08-22 追加實體／待辦建議 Rule（design3.md D8／D12／D13）：只出現在回應，不落庫。
 """
 
 from __future__ import annotations
@@ -99,6 +100,14 @@ def vlm看不懂(context):
     context["understanding"] = PhotoUnderstanding(understood=False)
 
 
+@given("系統中有底下實體")
+def 建立實體(datatable):
+    header, *rows = datatable
+    for row in rows:
+        data = dict(zip(header, row))
+        photo_repository.create_entity(data["name"], data.get("description") or "")
+
+
 # ------------------------------- When ------------------------------
 @when("使用者上傳一個非圖片格式的檔案")
 def 上傳非圖片檔(context, client):
@@ -122,6 +131,27 @@ def 上傳照片並指定推薦類別(context, client, category):
         location=None,
         items=[],
         content_time=None,
+    )
+    _upload(context, client)
+
+
+_TARGET_TEXT = "在 Target 購買可樂與洋芋片的收據，日期 2026-08-10"
+
+
+@when(parsers.parse('使用者上傳一張照片，VLM 建議的實體為 "{name}"'))
+def 上傳照片並指定建議實體(context, client, name):
+    context["understanding"] = understanding_for_text(_TARGET_TEXT).model_copy(
+        update={"entity": name}
+    )
+    _upload(context, client)
+
+
+@when(parsers.parse(
+    '使用者上傳一張照片，VLM 建議的待辦標題為 "{title}"，到期日為 "{due}"'
+))
+def 上傳照片並指定建議待辦(context, client, title, due):
+    context["understanding"] = understanding_for_text(_TARGET_TEXT).model_copy(
+        update={"task_title": title, "task_due": due}
     )
     _upload(context, client)
 
@@ -257,3 +287,49 @@ def 回應包含縮圖網址(context):
 def 回應包含幾筆照片(context, count):
     """PDF 的回應是一串單圖回應（created），一頁一筆。"""
     assert len(_body(context)["created"]) == count
+
+
+@then("回應的建議實體如下")
+def 回應建議實體為(context, datatable):
+    expected = first_row(datatable)
+    suggested = _body(context)["suggested_entity"]
+    assert suggested is not None, "回應沒有建議實體"
+    assert suggested["name"] == expected["name"]
+    assert suggested["name"] in [e["name"] for e in _body(context)["entities"]]
+
+
+@then("回應的實體清單包含以下名稱")
+def 回應實體清單包含(context, datatable):
+    回應清單 = [e["name"] for e in _body(context)["entities"]]
+    for name in column(datatable, "name"):
+        assert name in 回應清單, f"回應的實體清單少了「{name}」：{回應清單}"
+
+
+@then("回應沒有建議實體")
+def 回應沒有建議實體(context):
+    assert _body(context)["suggested_entity"] is None
+
+
+@then(parsers.parse("該照片釘上的實體數量為 {count:d}"))
+def 照片釘上的實體數量為(context, count):
+    pinned = photo_repository.list_photo_entities(_body(context)["id"])
+    assert len(pinned) == count
+
+
+@then("回應的建議待辦如下")
+def 回應建議待辦為(context, datatable):
+    expected = first_row(datatable)
+    suggested = _body(context)["suggested_task"]
+    assert suggested is not None, "回應沒有建議待辦"
+    assert suggested["title"] == expected["title"]
+    assert (suggested["due"] or "") == expected["due"].strip()
+
+
+@then("回應沒有建議待辦")
+def 回應沒有建議待辦(context):
+    assert _body(context)["suggested_task"] is None
+
+
+@then("該照片沒有待辦")
+def 該照片沒有待辦(context):
+    assert photo_repository.get_task_by_photo(_body(context)["id"]) is None

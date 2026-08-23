@@ -17,15 +17,23 @@
 | 待辦：重複建立 | 409；標題空白／到期格式錯 422 | P32 |
 | 實體／待辦寫入失敗 | 500 不吞錯；資料庫零半套狀態 | P30/32 |
 | 詢問：實體名對不到 | 查無句式、不虛構 | P34 |
+| 詢問：待辦問句但無待辦 | 查無句式、不虛構 | P34 |
+| 糾錯：record 寫入失敗 | 歸類本體照樣成功（log warning） | P35 |
+| 鏡頭：亂 token／過期 token | HTTP 三支一律 404 | P36 |
+| 鏡頭：亂 token 連 WS | 拒絕連線（不 accept 成功） | P36 |
+| 鏡頭：session 汰舊 | 舊 token 立即 404（同時只有一個 session） | P36 |
 | 無刪除端點（照片／實體／待辦） | 掃碼證明 DELETE 動詞不存在 | design3 §3 |
 
 ## 「明確不做」最終掃碼（design3 §3 不做清單逐項）
 
 自動拍、第二模型、agent tool calling、Gmail／Calendar、雲端 VLM、刪除、多使用者、螢幕錄製、實體當資料夾。
+（P36 追加：無雲端信令／STUN／TURN、無第三方 QR 服務、token 不落資料庫。）
 
 ## 收尾
 
-- [ ] 全量 `pytest -q` 全綠＝零 Ollama 同顆數（外部依賴零實證）
-- [ ] `/openapi.json` 端點數與總覽 §3 一致；SQL 只在 repository 掃碼
-- [ ] 正式庫四查詢健檢（六表、外鍵、孤兒連結＝0）
-- [ ] CLAUDE.md 現況段更新；unfinish/ 歸檔至 finish/（隨 commit）
+- [x] 全量 `pytest -q`＝**341 passed＋2 skipped**＝零 Ollama 同顆數（外部依賴零實證；
+      錯誤表首跑揪出並修復「自創實體＋釘選非原子」真缺陷——`create_and_pin_entity` 單一交易）
+- [x] `/openapi.json` 端點數＝**17**、DELETE=0；SQL 只在 repository（三項皆自動化測試）
+- [x] 正式庫健檢（六表＋photo.suggested_category 欄、孤兒連結全 0、收件箱唯一）
+- [x] CLAUDE.md 現況段更新（已修正「31〜33 未 commit」——實際已含在 commit 0cabb45）；
+      unfinish/ 歸檔至 finish/＝隨 commit（本輪產品負責人指示不 commit，歸檔留待 commit 時執行）

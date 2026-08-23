@@ -15,6 +15,7 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from app.core import config
+from app.services import ollama_cloud
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,16 @@ class EntitySuggesterClient(Protocol):
         ...
 
 
+def _build_pick_prompt(photo: dict, candidates: list[dict]) -> str:
+    """組出挑實體的 prompt 最終字串（本機與雲端共用，兩邊逐字相同）。"""
+    candidate_lines = "\n".join(
+        f"- {entity['name']}：{entity['description']}" for entity in candidates
+    )
+    return ENTITY_PICK_PROMPT.format(
+        photo=_describe_photo(photo), candidates=candidate_lines
+    )
+
+
 def _describe_photo(photo: dict) -> str:
     """把照片那一列整理成給模型看的幾行字（就是 embedding 用的那些欄位）。"""
     items = "、".join(photo["items"] or []) or "（無）"
@@ -81,14 +92,7 @@ class OllamaEntitySuggester:
         多花一次推論的時間換一個「本來就可以沒有」的建議並不划算。
         但一定要留 log，不然「Ollama 沒開」會無聲變成「AI 覺得都不像」。
         """
-        candidate_lines = "\n".join(
-            f"- {entity['name']}：{entity['description']}" for entity in candidates
-        )
-        message = HumanMessage(
-            content=ENTITY_PICK_PROMPT.format(
-                photo=_describe_photo(photo), candidates=candidate_lines
-            )
-        )
+        message = HumanMessage(content=_build_pick_prompt(photo, candidates))
         try:
             result = self._model.invoke([message])
         except Exception:
@@ -98,3 +102,41 @@ class OllamaEntitySuggester:
             return result.entity
         logger.warning("實體建議未回傳有效的結構化結果，這次就不給建議")
         return None
+
+
+# 雲端挑實體的輸出格式補充指令。ollama.com 對 format= 不強制、要用講的——
+# 教訓與三道保險的作法詳見 ollama_cloud 模組 docstring。
+CLOUD_PICK_JSON_INSTRUCTION = """
+輸出格式（最後、也最優先的規則）：
+只輸出一個 JSON 物件。不要條列、不要 markdown、不要程式碼圍欄、不要 JSON 以外的任何文字。
+長相示意：{"entity": "候選清單裡的名稱原文，都不像就填 null"}
+"""
+
+
+class OllamaCloudEntitySuggester:
+    """用 Ollama Cloud 從候選實體裡挑一個（AI 後端開關撥到「雲端」時）。
+
+    prompt 與失敗語意都鏡射 OllamaEntitySuggester：只試一次、
+    任何失敗（含雲端回了解析不出的東西）回 None 不往外丟，但一定留 log。
+    """
+
+    def __init__(self, model: str | None = None) -> None:
+        self._model_name = model or config.OLLAMA_CLOUD_LLM_MODEL
+        self._client = ollama_cloud.build_client()
+
+    def pick(self, photo: dict, candidates: list[dict]) -> str | None:
+        prompt = _build_pick_prompt(photo, candidates) + CLOUD_PICK_JSON_INSTRUCTION
+        try:
+            response = self._client.chat(
+                model=self._model_name,
+                messages=[{"role": "user", "content": prompt}],
+                format=EntityPick.model_json_schema(),
+                options={"temperature": 0},
+            )
+            result = EntityPick.model_validate_json(
+                ollama_cloud.extract_json_object(response.message.content or "")
+            )
+        except Exception:
+            logger.warning("實體建議（雲端）呼叫失敗，這次就不給建議", exc_info=True)
+            return None
+        return result.entity

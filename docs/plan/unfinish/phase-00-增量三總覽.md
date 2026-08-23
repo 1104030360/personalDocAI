@@ -15,7 +15,7 @@
 ```text
 進圖（擇一）                      三關（三個彈窗依序）                 落庫
   桌面上傳 JPEG/PNG/PDF   ──►  同一個 gemma4 看一次  ──►  彈窗1 抽屜(強制,design2)
-  無線原生相機(QR,人按快門)      吐三類建議：              彈窗2 實體(可不釘,可釘多個)
+  無線鏡頭(QR,瀏覽器取景,人按快門) 吐三類建議：              彈窗2 實體(可不釘,可釘多個)
                                 抽屜1·實體1·待辦0或1      彈窗3 待辦(有actionable才出現)
                                 照片先進「待決定」                │
                                                                   ▼
@@ -37,10 +37,18 @@
 | 31 | 實體彈窗 | `entity_modal.js`（①採用②改選③自創④不釘＋「再建議一個」）；上傳頁與待決定 tab 接上彈窗鏈 1→2 | 本輪 | [x] |
 | 32 | 待辦資料層與端點 | task 相關 repository 函式；`POST /photos/{id}/task`、`GET /tasks` | 本輪 | [x] |
 | 33 | 待辦彈窗與瀏覽第三入口 | `task_modal.js`（建立／略過）；鏈 1→2→3；瀏覽頁三 tab「待決定｜資料夾｜待辦」 | 本輪 | [x] |
-| 34 | 詢問三路 | route 擴充 entity／task 兩路檢索；真模型煙霧（「跟我 MacBook 有關的全部」「這週要交什麼」） | 下輪 | [ ] |
-| 35 | 抽屜糾錯 few-shot | 記最近 N=5 次「建議被改掉」注入看圖 prompt（表已由 P29 建好） | 下輪 | [ ] |
-| 36 | 無線鏡頭 | QR 配對＋手機原生相機（**實作前需產品負責人釐清技術路線**，見 phase-36 檔） | 下輪 | [ ] |
-| 37 | 增量三錯誤收尾與全量回歸 | design3 版錯誤表逐列把關＋「明確不做」掃碼＋全量回歸 | 下輪 | [ ] |
+| 34 | 詢問三路 | route 擴充 entity／task 兩路檢索；真模型煙霧（「跟我 MacBook 有關的全部」「這週要交什麼」） | 本輪 | [x] |
+| 35 | 抽屜糾錯 few-shot | 記最近 N=5 次「建議被改掉」注入看圖 prompt（表已由 P29 建好） | 本輪 | [x] |
+| 36 | 無線鏡頭 | QR 配對＋手機瀏覽器取景＋桌面即時預覽與遙控（**路線 B 已於 2026-08-22 定案**，見 phase-36 檔） | 本輪 | [x]* |
+| 37 | 增量三錯誤收尾與全量回歸 | design3 版錯誤表逐列把關＋「明確不做」掃碼＋全量回歸 | 本輪 | [x] |
+
+> **2026-08-22 第二輪完成註記**：Phase 34〜37 全數實作完成（TDD＋BDD、逐 phase 獨立 review＋fix loop、未 commit）。
+> 全量 `pytest -q`＝**341 passed＋2 skipped**（`OLLAMA_BASE_URL` 指死埠同顆數；2 skipped＝
+> `自然語言詢問.feature` 兩條 P34 Rule 的 `@未實作` 標——steps 已預寫、摘標屬產品負責人）；
+> `/openapi.json` 端點＝**17**、DELETE 動詞 0。真模型煙霧：P34 五問全對（實體路修正後 zh/en 重驗）、
+> P35 端到端閉環（真上傳→建議落庫→改歸→糾錯→prompt 注入）、P36 HTTPS 啟動驗證通過。
+> *P36＝程式與自動化測試完成；**真機（iPhone）驗收待產品負責人手動**（手冊：scratchpad task-36-report.md §7）。
+> 歸檔 unfinish/→finish/ 依慣例隨 commit 執行（本輪不 commit）。
 
 **依賴順序**：29 → 30 → 31；29 → 32 → 33；28 獨立可先做；34 依賴 29〜33 落庫的資料；35 依賴 29 的表；36 獨立；37 最後。
 
@@ -48,6 +56,9 @@
 
 - **端點 9 → 14**：+`GET /entities`、+`POST /photos/{id}/entities`、+`POST /photos/{id}/entity-suggestion`、
   +`POST /photos/{id}/task`、+`GET /tasks`（`GET /` 轉址不計入的算法不變——清點一律用 `/openapi.json`）。
+  **（2026-08-22 校準）下輪 P36 再 +3 → 17**：+`POST /camera/session`、+`POST /camera/{token}/photos`、
+  +`GET /camera/{token}/latest`；WS `/camera/{token}/signal` 不進 openapi.json、不計入。
+  P35 另為 photo 加 `suggested_category` 欄（遷移擴充 `db/migrate_design3.sql`，仍冪等）。
 - **`POST /photos` 收 PDF**：回應形狀＝單圖不變；PDF 回 `{pages, created:[單圖回應…], skipped_pages}`。
 - **上傳回應加欄位**：`suggested_entity`／`entities`／`suggested_task`（既有欄位一個不動、.feature 既有 Rule 全綠）。
 - **網頁仍三頁**，瀏覽頁二 tab → 三 tab；彈窗檔案由 1 個變 3 個（folder／entity／task modal，各自獨立、fm/em/tm 前綴隔離）。

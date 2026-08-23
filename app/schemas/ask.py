@@ -19,5 +19,10 @@ class AskResponse(BaseModel):
     """
 
     answer: str
-    search_mode: str            # "metadata search" 或 "vector semantic search"
+    # 四選一，全名見 config.SEARCH_MODE_LABELS：規格 .feature 認得的
+    # "metadata search"／"vector semantic search"，加 Phase 34 的
+    # "entity pin search"／"task search"
+    search_mode: str
+    # 一律是**照片** id。待辦路回的是那筆待辦的來源照片，不是待辦本身的 id——
+    # 拿這個 id 就能直接去 /photos/{id}/image 看原圖
     retrieved_photo_ids: list[int]

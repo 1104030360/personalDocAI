@@ -59,7 +59,7 @@ def test_clamp_entity_清單為空一律回None():
 
 def test_build_vlm_prompt_含實體名稱與說明():
     """清單是變數：使用者自創的實體，下一次上傳時模型就看得到。"""
-    prompt = build_vlm_prompt(FOLDERS, ENTITIES)
+    prompt = build_vlm_prompt(FOLDERS, ENTITIES, [])
 
     assert "現有實體" in prompt
     for entity in ENTITIES:
@@ -68,7 +68,7 @@ def test_build_vlm_prompt_含實體名稱與說明():
 
 
 def test_build_vlm_prompt_實體規則明講只能選一個且不符合填null():
-    prompt = build_vlm_prompt(FOLDERS, ENTITIES)
+    prompt = build_vlm_prompt(FOLDERS, ENTITIES, [])
 
     assert "都不符合" in prompt
     assert "填 null" in prompt
@@ -76,14 +76,14 @@ def test_build_vlm_prompt_實體規則明講只能選一個且不符合填null()
 
 def test_build_vlm_prompt_實體清單為空時明講一律填null():
     """實體表一開始是空的，那一段不能留著一串空白讓模型自由發揮。"""
-    prompt = build_vlm_prompt(FOLDERS, [])
+    prompt = build_vlm_prompt(FOLDERS, [], [])
 
     assert "目前沒有任何實體，entity 一律填 null" in prompt
 
 
 def test_build_vlm_prompt_含待辦判斷規則():
     """design3.md D13：同一輪判斷有沒有 actionable，有才抽標題與到期。"""
-    prompt = build_vlm_prompt(FOLDERS, ENTITIES)
+    prompt = build_vlm_prompt(FOLDERS, ENTITIES, [])
 
     assert "task_title" in prompt
     assert "task_due" in prompt
@@ -92,7 +92,7 @@ def test_build_vlm_prompt_含待辦判斷規則():
 
 def test_build_vlm_prompt_資料夾那一段原封不動():
     """實體與待辦是「加」上去的，既有的六欄位規則一字不變（回歸防線）。"""
-    prompt = build_vlm_prompt(FOLDERS, ENTITIES)
+    prompt = build_vlm_prompt(FOLDERS, ENTITIES, [])
 
     assert "現有資料夾（category 只能從這裡選一個，禁止自創名稱）" in prompt
     assert "不確定就填「未分類」" in prompt
