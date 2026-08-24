@@ -428,10 +428,11 @@ def test_端點數不變(client):
     信令用的 WebSocket 依 FastAPI 的行為不會出現在 openapi.json，所以不計入。
     17 → 19 是 2026-08-22 AI 後端開關的兩支（GET／PUT `/settings/ai-backend`，
     產品負責人指示、未走 phase 計畫；見 test_ai_backend_switch.py）。
+    19 → 20 是增量四 Phase 38 的 `GET /photos/{photo_id}`（design4.md D5）。
     詢問這一路仍然一支都沒加——這顆測試守的是那件事，不是總數本身。
     """
     paths = client.get("/openapi.json").json()["paths"]
     運算元 = [(path, method) for path, item in paths.items() for method in item]
 
-    assert len(運算元) == 19
+    assert len(運算元) == 20
     assert [路徑 for 路徑, _ in 運算元 if 路徑.startswith("/ask")] == ["/ask"]

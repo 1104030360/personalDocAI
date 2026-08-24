@@ -27,7 +27,7 @@
 const FOLDER_MODAL_HTML = `
 <div class="fm-backdrop" id="fm-backdrop" hidden>
   <div class="fm-box" role="dialog" aria-modal="true" aria-labelledby="fm-title">
-    <h3 id="fm-title">要把這張照片放到哪個資料夾？</h3>
+    <h3 id="fm-title">要把這張照片放到<span class="fm-nowrap">哪個資料夾？</span></h3>
 
     <div class="fm-option" id="fm-primary-option">
       <button type="button" id="fm-primary">（載入中）</button>
@@ -143,7 +143,7 @@ async function fmAssign(body) {
     // 409＝資料夾名稱重複；422＝名稱空白或兩種 body 都給了；404＝照片或資料夾不存在
     fmSetError("（HTTP " + response.status + "）" + fmDetailText(payload));
   } catch (error) {
-    fmSetError("請求失敗：" + error + "（uvicorn 是不是沒在跑？）");
+    fmSetError("目前無法完成歸類。請確認服務已啟動後再試一次。");
   } finally {
     fmSetBusy(false);
   }

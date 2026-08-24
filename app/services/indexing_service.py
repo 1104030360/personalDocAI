@@ -7,6 +7,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_ollama import OllamaEmbeddings
 
 from app.core import config
+from app.services.ai_timing import AiTarget
 
 
 def build_document(
@@ -53,6 +54,11 @@ def build_ollama_embeddings() -> OllamaEmbeddings:
         model=config.EMBEDDING_MODEL,
         base_url=config.OLLAMA_BASE_URL,
     )
+
+
+def embedding_timing_target(embeddings: Embeddings) -> AiTarget:
+    model = getattr(embeddings, "model", config.EMBEDDING_MODEL)
+    return AiTarget(backend="local", model=str(model))
 
 
 def embed_document(embeddings: Embeddings, document: Document) -> list[float]:

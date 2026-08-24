@@ -5,11 +5,15 @@ format_entity_names 只有正式路徑的 OllamaRouter 會用（假件查表、�
 （留白會讓模型自行想像清單然後挑一個不存在的名字），要有人守著。
 """
 
+import logging
+from datetime import date
+
 import pytest
 from langchain_core.documents import Document
 from pydantic import ValidationError
 
 from app.core import config
+from app.services import ask_workflow
 from app.services.ask_workflow import (
     CLOUD_ROUTE_JSON_INSTRUCTION,
     OllamaCloudAnswerer,
@@ -18,7 +22,7 @@ from app.services.ask_workflow import (
     build_route_prompt,
     format_entity_names,
 )
-from tests.fakes import FakeCloudChat
+from tests.fakes import FakeAnswerLLM, FakeCloudChat, FakeEmbeddings
 
 
 def test_有清單時逐行列出():
@@ -33,6 +37,117 @@ def test_空清單輸出明示話而不是留白():
     # 措辭可以微調，但兩個重點不能掉：不是空字串、且明講「不可能用 entity 查法」
     assert text != ""
     assert "entity" in text
+
+
+def test_本機路由用function_calling強制結構化輸出(monkeypatch):
+    captured = {}
+
+    class 假ChatOllama:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        def with_structured_output(self, schema, **kwargs):
+            captured["schema"] = schema
+            captured["structured"] = kwargs
+            return object()
+
+    monkeypatch.setattr(ask_workflow, "ChatOllama", 假ChatOllama)
+
+    router = ask_workflow.OllamaRouter(model="qa-model", base_url="http://qa")
+
+    assert router._model is not None
+    assert captured["init"] == {
+        "model": "qa-model",
+        "base_url": "http://qa",
+        "temperature": 0,
+    }
+    assert captured["schema"] is ask_workflow.RouteDecision
+    assert captured["structured"] == {"method": "function_calling"}
+    assert router.timing_target == ask_workflow.ai_timing.AiTarget(
+        backend="local", model="qa-model"
+    )
+
+
+def test_詢問計時沿用請求已選client而非重讀全域開關(
+    caplog, monkeypatch
+):
+    class 已選本機Router:
+        timing_target = ask_workflow.ai_timing.AiTarget(
+            backend="local", model="frozen-router"
+        )
+
+        def route(self, question, entity_names):
+            return ask_workflow.RouteDecision(mode="metadata")
+
+    class 已選本機Answerer:
+        timing_target = ask_workflow.ai_timing.AiTarget(
+            backend="local", model="frozen-answerer"
+        )
+
+        def answer(self, question, documents):
+            return "查無相關照片"
+
+    class 空檢索器:
+        def invoke(self, request):
+            return []
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(config, "AI_BACKEND", "cloud")
+    monkeypatch.setattr(
+        ask_workflow.retrieval_service, "photo_retriever", 空檢索器()
+    )
+    deps = ask_workflow.AskDeps(
+        router=已選本機Router(),
+        answerer=已選本機Answerer(),
+        embeddings=FakeEmbeddings(),
+        today=date(2026, 8, 24),
+    )
+
+    assert ask_workflow.run_ask("幫我找照片", deps)["answer"] == "查無相關照片"
+    assert any(
+        "kind=route backend=local model=frozen-router" in message
+        for message in caplog.messages
+    )
+    assert any(
+        "kind=answer backend=local model=frozen-answerer" in message
+        for message in caplog.messages
+    )
+
+
+def test_路由回傳None時route計時標ok為false(caplog, monkeypatch):
+    class 回傳None的Router:
+        def route(self, question, entity_names):
+            return None
+
+    class 空檢索器:
+        def invoke(self, request):
+            return []
+
+    # Given：任意 RouterClient 違反契約，回傳 None；其餘相依皆為本機假件。
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(config, "AI_BACKEND", "local")
+    monkeypatch.setattr(
+        ask_workflow.retrieval_service, "photo_retriever", 空檢索器()
+    )
+    deps = ask_workflow.AskDeps(
+        router=回傳None的Router(),
+        answerer=FakeAnswerLLM(),
+        embeddings=FakeEmbeddings(),
+        today=date(2026, 8, 24),
+    )
+
+    # When：跑完整 workflow，讓 route 節點自行處理無效結果。
+    state = ask_workflow.run_ask("幫我找照片", deps)
+
+    # Then：對外仍 fallback 成 vector，但這次 route 呼叫必須被計為失敗。
+    assert state["mode"] == "vector"
+    結束 = [
+        message
+        for message in caplog.messages
+        if message.startswith("AI 結束 kind=route ")
+    ]
+    assert len(結束) == 1, caplog.messages
+    assert "ok=false" in 結束[0]
 
 
 # ---- 雲端路由與回答（2026-08-22 AI 後端開關擴及詢問）----

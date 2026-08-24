@@ -20,7 +20,7 @@ from langchain_core.runnables import chain
 
 from app.core import config
 from app.repositories import photo_repository
-from app.services import indexing_service
+from app.services import ai_timing, indexing_service
 
 
 @dataclass
@@ -82,7 +82,14 @@ def vector_search(
     today: date,
 ) -> list[Document]:
     """語意查詢：問題轉成向量，找最接近的 TOP_K 張。"""
-    question_vector = embeddings.embed_query(question)
+    # 只有這一條路會把問題轉成向量——metadata／entity／task 三路都不必，
+    # 所以 log 上「有沒有 kind=embed」就看得出這次走的是哪一種查法（design4.md §5.2）。
+    # 只包這一行：底下的 search_by_vector 與組裝是查 SQL 與資料處理，
+    # 包進去只會讓 elapsed_s 說謊（把資料庫時間算成模型時間）。
+    with ai_timing.log_ai(
+        "embed", target=indexing_service.embedding_timing_target(embeddings)
+    ):
+        question_vector = embeddings.embed_query(question)
     rows = photo_repository.search_by_vector(
         embedding=question_vector,
         recent=filters.recent,

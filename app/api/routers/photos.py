@@ -1,7 +1,7 @@
-"""照片 router：POST /photos（上傳）＋ GET /photos/{id}/thumbnail、/image（讀圖）＋ PATCH /photos/{id}/folder（歸類）。"""
+"""照片 router：POST /photos（上傳）＋ GET /photos/{id}/thumbnail、/image（讀圖）
+＋ GET /photos/{id}（詳情，Phase 38）＋ PATCH /photos/{id}/folder（歸類）。"""
 
 import logging
-import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -17,11 +17,18 @@ from app.schemas.photo import (
     AssignFolderResponse,
     FolderOut,
     PdfUploadResponse,
+    PhotoDetailOut,
     PhotoMetadata,
     TaskSuggestion,
     UploadResponse,
 )
-from app.services import indexing_service, pdf_service, storage_service, vlm_service
+from app.services import (
+    ai_timing,
+    indexing_service,
+    pdf_service,
+    storage_service,
+    vlm_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,28 +153,32 @@ def _ingest_image(
     # ② 看圖（把現有資料夾、實體清單與最近的糾錯例子注入 prompt——
     #    design1.md §8、design3.md D12、D11）
     #    仍然只有這一次看圖呼叫，沒有第二個分類模型：實體與待辦是同一次輸出多出來的欄位。
-    #    起訖各記一筆 log：真模型一張圖要看數分鐘，終端機沒有動靜時分不出
-    #    「還在算」與「卡死」，這兩行就是給人盯進度用的。
-    logger.info("AI 看圖開始：%s，%d bytes", content_type, len(image_bytes))
-    看圖起點 = time.monotonic()
-    understanding = vlm.understand(
-        image_bytes, content_type, folders, entities, corrections
-    )
-    看圖秒數 = time.monotonic() - 看圖起點
-    if not understanding.understood or not understanding.text.strip():
-        logger.info("AI 看圖完成（%.1f 秒）：看不懂 → 422 不儲存", 看圖秒數)
-        raise HTTPException(
-            status_code=422,
-            detail="VLM 無法理解照片內容，未儲存任何資料",
+    #    計時 log 走全站共用的 ai_timing（design4.md §5）：真模型一張圖要看數分鐘，
+    #    終端機沒有動靜時分不出「還在算」與「卡死」，這兩行就是給人盯進度用的。
+    #    「看不懂 → 422」刻意寫在 with 區塊**裡面**：那一頁對這次呼叫來說就是失敗，
+    #    結束行要標 ok=false（design4.md §5.2 的 PDF 規則）。例外原封不動往外丟，
+    #    422 的語意一個字都沒變。
+    with ai_timing.log_ai(
+        "vlm", target=vlm_service.vlm_timing_target(vlm)
+    ) as 計時:
+        understanding = vlm.understand(
+            image_bytes, content_type, folders, entities, corrections
         )
-    logger.info(
-        "AI 看圖完成（%.1f 秒）：text %d 字、建議類別「%s」、建議實體「%s」、待辦「%s」",
-        看圖秒數,
-        len(understanding.text),
-        understanding.category,
-        understanding.entity,
-        understanding.task_title,
-    )
+        if not understanding.understood or not understanding.text.strip():
+            計時.note = (
+                f"understood=false text_chars={len(understanding.text)}"
+            )
+            raise HTTPException(
+                status_code=422,
+                detail="VLM 無法理解照片內容，未儲存任何資料",
+            )
+        計時.note = (
+            f"understood=true text_chars={len(understanding.text)} "
+            f"item_count={len(understanding.items)} "
+            f"category_present={'true' if understanding.category else 'false'} "
+            f"entity_present={'true' if understanding.entity else 'false'} "
+            f"task_present={'true' if understanding.task_title else 'false'}"
+        )
 
     # ★③ VLM 給的類別只當「建議」：夾回清單內，清單外一律變「未分類」
     #    next(...)＝從清單裡挑出第一個符合條件的元素。
@@ -196,7 +207,10 @@ def _ingest_image(
         items=understanding.items,
         content_time=content_time_text,
     )
-    embedding = indexing_service.embed_document(embeddings, document)
+    with ai_timing.log_ai(
+        "embed", target=indexing_service.embedding_timing_target(embeddings)
+    ):
+        embedding = indexing_service.embed_document(embeddings, document)
 
     row = photo_repository.insert_photo(
         text=understanding.text,
@@ -346,6 +360,39 @@ def get_photo_image(photo_id: int) -> FileResponse:
     return _send_photo_file(photo_id, "original_path")
 
 
+@router.get("/photos/{photo_id}", response_model=PhotoDetailOut)
+def get_photo_detail(photo_id: int) -> PhotoDetailOut:
+    """一張照片的完整說明（design4.md §4.4）。唯讀：不看圖、不重算向量、不寫任何東西。
+
+    只要資料庫有這一列就 200——**不管檔案還在不在磁碟上**。
+    「路徑 NULL 或檔案不見了就 404」那是 /image 與 /thumbnail 的規則，
+    因為那兩支是真的要開檔案；這一支只回 JSON，跟磁碟無關。
+    圖載不出來由前端的 <img> onerror 降級成占位，不該讓整個窗變成 404。
+    """
+    row = photo_repository.fetch_photo(photo_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="找不到照片")
+
+    return PhotoDetailOut(
+        id=row["id"],
+        text=row["text"],
+        metadata=PhotoMetadata(
+            category=row["category"],
+            location=row["location"],
+            items=row["items"],
+            content_time=(
+                row["content_time"].isoformat() if row["content_time"] else None
+            ),
+        ),
+        # 有存過檔才給網址；沒有就是 None → JSON null → 前端畫灰底占位
+        thumbnail_url=(
+            f"/photos/{photo_id}/thumbnail" if row["thumbnail_path"] else None
+        ),
+        image_url=f"/photos/{photo_id}/image" if row["original_path"] else None,
+        uploaded_at=row["uploaded_at"],
+    )
+
+
 def _record_correction_if_changed(photo: dict, chosen: str) -> None:
     """定案的資料夾與上傳當下的建議不同時，留一筆糾錯素材（design3.md D11）。
 
@@ -429,7 +476,10 @@ def assign_folder(
         items=list(photo["items"]),
         content_time=content_time.isoformat() if content_time else None,
     )
-    embedding = indexing_service.embed_document(embeddings, document)
+    with ai_timing.log_ai(
+        "embed", target=indexing_service.embedding_timing_target(embeddings)
+    ):
+        embedding = indexing_service.embed_document(embeddings, document)
 
     # ⑤ embedding 到手了，才開始動資料庫：自建那條路此時才真的建資料夾
     if payload.folder_id is None:

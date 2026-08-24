@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.core import config
 from app.services import ollama_cloud
+from app.services.ai_timing import AiTarget
 
 logger = logging.getLogger(__name__)
 
@@ -204,12 +205,18 @@ class OllamaVLM:
     """本機的看圖實作。開關在預設的「本機」時，上傳實際跑的就是這一個（gemma4）。"""
 
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
+        model_name = model or config.VLM_MODEL
+        self._timing_target = AiTarget(backend="local", model=model_name)
         # temperature=0 ＝要模型盡量穩定、不要每次答不一樣
         self._model = ChatOllama(
-            model=model or config.VLM_MODEL,
+            model=model_name,
             base_url=base_url or config.OLLAMA_BASE_URL,
             temperature=0,
         ).with_structured_output(PhotoUnderstanding)
+
+    @property
+    def timing_target(self) -> AiTarget:
+        return self._timing_target
 
     def understand(
         self,
@@ -286,7 +293,12 @@ class OllamaCloudVLM:
 
     def __init__(self, model: str | None = None) -> None:
         self._model_name = model or config.OLLAMA_CLOUD_VLM_MODEL
+        self._timing_target = AiTarget(backend="cloud", model=self._model_name)
         self._client = ollama_cloud.build_client()
+
+    @property
+    def timing_target(self) -> AiTarget:
+        return self._timing_target
 
     def understand(
         self,
@@ -326,6 +338,17 @@ class OllamaCloudVLM:
                 # 全收斂成「看不懂」，但 log 要留原因——不然全都無聲變成 422
                 logger.warning("雲端 VLM 呼叫失敗，視為看不懂", exc_info=True)
         return PhotoUnderstanding(understood=False)
+
+
+def vlm_timing_target(vlm: VLMClient) -> AiTarget:
+    target = getattr(vlm, "timing_target", None)
+    if isinstance(target, AiTarget):
+        return target
+    是雲端 = config.AI_BACKEND == "cloud"
+    return AiTarget(
+        backend=config.AI_BACKEND,
+        model=config.OLLAMA_CLOUD_VLM_MODEL if 是雲端 else config.VLM_MODEL,
+    )
 
 
 def parse_content_time(value: str | None) -> date | None:

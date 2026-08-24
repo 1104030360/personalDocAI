@@ -20,7 +20,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from app.core import config
-from app.services import ollama_cloud, retrieval_service
+from app.services import ai_timing, ollama_cloud, retrieval_service
 from app.services.retrieval_service import QueryFilters
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,11 @@ class RouteDecision(BaseModel):
     # 結構化輸出解析失敗＝路由失敗＝走既有的 fallback vector——
     # 比在檢索層默默 clamp 成「十年內」誠實（那是改寫使用者沒說過的話）。
     due_within_days: int | None = Field(default=None, ge=0, le=3650)
+
+
+class _InvalidRouteDecisionError(TypeError):
+    def __init__(self, actual_type: str) -> None:
+        super().__init__(f"expected RouteDecision, got {actual_type}")
 
 
 ROUTE_PROMPT = """你要判斷使用者的問題應該用哪一種方式查資料，並抽出過濾條件。
@@ -134,11 +139,19 @@ class OllamaRouter:
     """
 
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
+        model_name = model or config.LLM_MODEL
+        self._timing_target = ai_timing.AiTarget(
+            backend="local", model=model_name
+        )
         self._model = ChatOllama(
-            model=model or config.LLM_MODEL,
+            model=model_name,
             base_url=base_url or config.OLLAMA_BASE_URL,
             temperature=0,
-        ).with_structured_output(RouteDecision)
+        ).with_structured_output(RouteDecision, method="function_calling")
+
+    @property
+    def timing_target(self) -> ai_timing.AiTarget:
+        return self._timing_target
 
     def route(self, question: str, entity_names: list[str]) -> RouteDecision:
         message = HumanMessage(content=build_route_prompt(question, entity_names))
@@ -167,7 +180,14 @@ class OllamaCloudRouter:
 
     def __init__(self, model: str | None = None) -> None:
         self._model_name = model or config.OLLAMA_CLOUD_LLM_MODEL
+        self._timing_target = ai_timing.AiTarget(
+            backend="cloud", model=self._model_name
+        )
         self._client = ollama_cloud.build_client()
+
+    @property
+    def timing_target(self) -> ai_timing.AiTarget:
+        return self._timing_target
 
     def route(self, question: str, entity_names: list[str]) -> RouteDecision:
         response = self._client.chat(
@@ -229,11 +249,19 @@ class OllamaAnswerer:
     """用本機 Ollama 的模型依照片內容產生回答。"""
 
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
+        model_name = model or config.LLM_MODEL
+        self._timing_target = ai_timing.AiTarget(
+            backend="local", model=model_name
+        )
         self._model = ChatOllama(
-            model=model or config.LLM_MODEL,
+            model=model_name,
             base_url=base_url or config.OLLAMA_BASE_URL,
             temperature=0,
         )
+
+    @property
+    def timing_target(self) -> ai_timing.AiTarget:
+        return self._timing_target
 
     def answer(self, question: str, documents: list[Document]) -> str:
         message = HumanMessage(content=build_answer_prompt(question, documents))
@@ -249,7 +277,14 @@ class OllamaCloudAnswerer:
 
     def __init__(self, model: str | None = None) -> None:
         self._model_name = model or config.OLLAMA_CLOUD_LLM_MODEL
+        self._timing_target = ai_timing.AiTarget(
+            backend="cloud", model=self._model_name
+        )
         self._client = ollama_cloud.build_client()
+
+    @property
+    def timing_target(self) -> ai_timing.AiTarget:
+        return self._timing_target
 
     def answer(self, question: str, documents: list[Document]) -> str:
         response = self._client.chat(
@@ -303,15 +338,19 @@ def build_workflow(deps: AskDeps):
     def route_node(state: AskState) -> dict[str, Any]:
         """判斷查法。任何失敗都 fallback 成語意查詢、條件全空。"""
         try:
-            decision = deps.router.route(state["question"], deps.entity_names)
+            # 計時包在 try 裡面：例外要先穿過 log_ai（打 ok=false）再被下面接住，
+            # 「失敗就 fallback 成語意查詢」的語意一個字都沒變（design4.md §9 第 5 列）
+            with ai_timing.log_ai(
+                "route", target=getattr(deps.router, "timing_target", None)
+            ):
+                decision = deps.router.route(state["question"], deps.entity_names)
+                if not isinstance(decision, RouteDecision):
+                    raise _InvalidRouteDecisionError(type(decision).__name__)
         except Exception:
             # fallback 是設計，但一定要留 log：不然「模型名打錯」「Ollama 沒開」
             # 「雲端 404」全都無聲變成「怎麼每一題都走語意查詢」
             # （2026-08-22 雲端煙霧的教訓——路由 404 被吞掉、只有回答那步炸出來）
             logger.warning("路由呼叫失敗，fallback 成語意查詢", exc_info=True)
-            decision = None
-
-        if not isinstance(decision, RouteDecision):
             decision = RouteDecision(mode="vector")
 
         return {
@@ -360,8 +399,17 @@ def build_workflow(deps: AskDeps):
         return _retrieve(state, "task")
 
     def generate_node(state: AskState) -> dict[str, Any]:
-        """只依撈到的照片內容產生回答；撈不到就由 LLM 回覆查無相關照片。"""
-        return {"answer": deps.answerer.answer(state["question"], state["retrieved"])}
+        """只依撈到的照片內容產生回答；撈不到就由 LLM 回覆查無相關照片。
+
+        刻意**不加** try/except：回答失敗仍然 500 不吞錯（design.md 錯誤處理總表的
+        既有決定）。log_ai 打完 ok=false 之後例外要繼續往外飛。
+        """
+        with ai_timing.log_ai(
+            "answer", target=getattr(deps.answerer, "timing_target", None)
+        ):
+            return {
+                "answer": deps.answerer.answer(state["question"], state["retrieved"])
+            }
 
     graph = StateGraph(AskState)
     graph.add_node("route", route_node)

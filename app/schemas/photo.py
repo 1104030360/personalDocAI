@@ -1,5 +1,7 @@
 """上傳照片的 API 資料格式（Pydantic 模型）。"""
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.entity import EntityOut
@@ -114,3 +116,23 @@ class AssignFolderResponse(BaseModel):
     id: int
     folder: FolderOut
     metadata: PhotoMetadata
+
+
+class PhotoDetailOut(BaseModel):
+    """GET /photos/{photo_id} 的回應（HTTP 200，design4.md §4.4）。
+
+    唯讀詳情彈窗要的東西，不多不少：
+      - text ＋ metadata 四欄 ＝ 使用者要看的說明
+      - 兩個網址        ＝ 圖要去哪裡拿（不是硬碟路徑）
+      - uploaded_at     ＝ 什麼時候進來的
+
+    刻意「不回」：embedding（1024 個數字，前端用不到）、folder 物件、
+    suggested_category、釘著的實體清單——那些不是這顆窗要回答的問題。
+    """
+
+    id: int
+    text: str
+    metadata: PhotoMetadata
+    thumbnail_url: str | None   # thumbnail_path 有值才給網址，舊照片是 None
+    image_url: str | None       # original_path 有值才給網址，舊照片是 None
+    uploaded_at: datetime       # 轉成 JSON 時是 ISO 字串，例如 2026-08-18T10:00:00+08:00

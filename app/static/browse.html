@@ -23,6 +23,7 @@
 
 <script src="/ui/folder_modal.js"></script>
 <script src="/ui/entity_modal.js"></script>
+<script src="/ui/photo_detail_modal.js"></script>
 <script>
 const view = document.getElementById("view");
 
@@ -30,7 +31,7 @@ const view = document.getElementById("view");
 //   browse.html               → 待決定分頁（預設——先處理待辦的檔案櫃心智，design2.md D4）
 //   browse.html?tab=folders   → 資料夾分頁
 //   browse.html?tab=tasks     → 待辦分頁（design3.md D15 的第三入口）
-//   browse.html?folder=N      → 某個資料夾的縮圖牆（純瀏覽）
+//   browse.html?folder=N      → 某個資料夾的縮圖牆（點照片開唯讀詳情窗）
 const 網址參數 = new URLSearchParams(location.search);
 const folderIdInUrl = 網址參數.get("folder");
 const tabInUrl = 網址參數.get("tab");
@@ -42,6 +43,10 @@ function el(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined && text !== null) node.textContent = text;
   return node;
+}
+
+function 保護數字單位(text) {
+  return String(text).replace(/(\d)\s+(年|月|日|元)/g, "$1\u00a0$2");
 }
 
 async function getJson(url) {
@@ -71,25 +76,37 @@ function renderTabs(active, pendingCount, taskCount) {
   view.appendChild(tabs);
 }
 
-// 一張照片卡。可點（待決定分頁）＝ <button>；純瀏覽（資料夾牆）＝ <div>，
-// 連游標都不是手指——已定案的照片沒有任何假入口（design2.md D4）。
-function 照片卡(photo, 可點) {
-  const card = 可點 ? el("button", "photo") : el("div", "photo photo-static");
-  if (可點) {
-    card.type = "button";
-    card.dataset.photoId = photo.id;      // event delegation 用得到
-  }
+// 一張照片卡。兩個牆（待決定、資料夾）都是可點的 <button>，
+// 差別只在「點下去開哪一種窗」——那由各自的牆自己決定（見下面兩個 addEventListener）。
+function 照片卡(photo) {
+  const card = el("button", "photo");
+  card.type = "button";
+  card.dataset.photoId = photo.id;      // event delegation 用得到
 
   if (photo.thumbnail_url) {
     const image = document.createElement("img");
     image.src = photo.thumbnail_url;      // 例如 /photos/7/thumbnail
     image.alt = photo.text;
+    image.addEventListener("error", function () {
+      image.replaceWith(el("div", "placeholder", "無縮圖"));
+    });
     card.appendChild(image);
   } else {
     // 舊資料沒有原圖：畫灰底占位，不假裝有圖（design1.md §10）
     card.appendChild(el("div", "placeholder", "無縮圖"));
   }
-  card.appendChild(el("div", "caption", photo.text));
+  const caption = el("div", "caption");
+  const 說明 = 保護數字單位(photo.text);
+  const 片語 = "待決定分頁的";
+  const 片語位置 = 說明.indexOf(片語);
+  if (片語位置 === -1) {
+    caption.textContent = 說明;
+  } else {
+    caption.appendChild(document.createTextNode(說明.slice(0, 片語位置)));
+    caption.appendChild(el("span", "caption-nowrap", 片語));
+    caption.appendChild(document.createTextNode(說明.slice(片語位置 + 片語.length)));
+  }
+  card.appendChild(caption);
 
   const item = document.createElement("li");
   item.appendChild(card);
@@ -137,7 +154,7 @@ async function showPending() {
 
   const wall = el("ul", "wall");
   detail.photos.forEach(function (photo) {
-    wall.appendChild(照片卡(photo, true));
+    wall.appendChild(照片卡(photo));
   });
 
   // 待決定分頁的彈窗：下拉排除收件箱（design2.md D7）；
@@ -198,7 +215,7 @@ async function showFolderList() {
   view.appendChild(list);
 }
 
-// ---------- 分頁三：待辦（design3.md D13、D15；§7＝能列、能點回來源圖就好）----------
+// ---------- 分頁三：待辦（design3.md D13、D15；點一列開唯讀詳情窗＝design4.md D1）----------
 async function showTasks() {
   const folders = await getJson("/folders");
   const inbox = folders.find(function (f) { return f.is_inbox; });
@@ -212,22 +229,25 @@ async function showTasks() {
       "還沒有待辦。上傳時 AI 判斷有可辦事項、且你按「建立」的會出現在這裡。"));
     return;
   }
-  view.appendChild(el("p", "message", "點一列可開來源照片的原圖。"));
+  view.appendChild(el("p", "message",
+    "點一列可以看這件待辦的來源照片與完整說明。"));
 
   const list = el("ul", "tasks");
   tasks.forEach(function (task) {
-    const row = el("a", "task-row");
-    // 「能點回來源圖」（design3.md §7）：直接連原圖端點、開新分頁。
-    // 舊照片沒有原圖時端點回 404——與縮圖占位同一套「不假裝有圖」的態度。
-    row.href = "/photos/" + task.photo_id + "/image";
-    row.target = "_blank";
-    row.rel = "noopener";
+    // 改開頁內詳情窗（design4.md D1／§1.1）：不再開新分頁——新分頁只有一張裸圖，
+    // 看不到 AI 寫的說明，也回不去這一頁。
+    // （刻意不寫出舊的 target 屬性值：驗收會 grep 掃它，註解不能誤中。）
+    const row = el("button", "task-row");
+    row.type = "button";
 
     if (task.thumbnail_url) {
       const image = document.createElement("img");
       image.className = "task-thumb";
       image.src = task.thumbnail_url;
       image.alt = task.title;
+      image.addEventListener("error", function () {
+        image.replaceWith(el("div", "task-thumb-empty", "無縮圖"));
+      });
       row.appendChild(image);
     } else {
       row.appendChild(el("div", "task-thumb-empty", "無縮圖"));
@@ -236,6 +256,16 @@ async function showTasks() {
     row.appendChild(el("span", "task-due",
       task.due_date ? "到期 " + task.due_date : "無到期日"));
 
+    // 每一列各掛一個監聽（不用縮圖牆那種事件委派）：待辦列表短，
+    // 而且每列要帶三個欄位——塞進 dataset 全都會變字串、null 會變 "null"。
+    // 用閉包直接抓住 task 這個物件最單純。
+    row.addEventListener("click", function () {
+      openPhotoDetailModal({
+        photoId: task.photo_id,
+        task: { title: task.title, due_date: task.due_date }
+      });
+    });
+
     const item = document.createElement("li");
     item.appendChild(row);
     list.appendChild(item);
@@ -243,7 +273,7 @@ async function showTasks() {
   view.appendChild(list);
 }
 
-// ---------- 畫面三：某個資料夾的縮圖牆（純瀏覽，design2.md D4）----------
+// ---------- 畫面三：某個資料夾的縮圖牆（點照片開唯讀詳情窗，design4.md §1.1 第 1 列）----------
 async function showFolderPhotos(folderId) {
   const detail = await getJson("/folders/" + folderId);
 
@@ -262,10 +292,22 @@ async function showFolderPhotos(folderId) {
     return;
   }
 
+  view.appendChild(el("p", "message",
+    "點一張照片可以看大圖與完整說明。已定案的照片不能改資料夾。"));
+
   const wall = el("ul", "wall");
   detail.photos.forEach(function (photo) {
-    wall.appendChild(照片卡(photo, false));   // 已定案：純瀏覽、不可點
+    wall.appendChild(照片卡(photo));
   });
+
+  // 資料夾牆：點照片開**唯讀**詳情窗（design4.md D1／D2）。
+  // 這裡刻意不帶 task——待辦那一行只有待辦分頁才畫（Phase 40）。
+  wall.addEventListener("click", function (event) {
+    const card = event.target.closest(".photo");
+    if (!card || !card.dataset.photoId) return;
+    openPhotoDetailModal({ photoId: Number(card.dataset.photoId), task: null });
+  });
+
   view.appendChild(wall);
 }
 
@@ -284,7 +326,7 @@ async function showFolderPhotos(folderId) {
   } catch (error) {
     view.textContent = "";
     view.appendChild(el("p", "message",
-      "載入失敗：" + error + "。uvicorn 是不是沒在跑？"));
+      "目前無法載入資料。請確認服務已啟動後重新整理頁面。"));
   }
 })();
 </script>

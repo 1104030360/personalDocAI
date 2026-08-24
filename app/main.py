@@ -31,7 +31,7 @@ app.include_router(tasks.router)
 # 信令用的 WebSocket 依 FastAPI 的行為不會出現在 openapi.json
 app.include_router(camera.router)
 # AI 後端開關（2026-08-22 產品負責人指示；管看圖＋詢問路由／回答＋實體建議）：
-# GET／PUT /settings/ai-backend 兩支（端點一律數 19；清點測試在 test_ask_three_paths.py）
+# GET／PUT /settings/ai-backend 兩支（端點一律數 20；清點測試在 test_photo_detail.py）
 app.include_router(settings.router)
 
 

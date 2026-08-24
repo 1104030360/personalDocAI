@@ -378,6 +378,12 @@ input[type="file"].field { padding: var(--sp-2); }
 
 .message { margin: 0 0 var(--sp-4); color: var(--c-text-muted); }
 
+:where(.folder-desc, .caption, .message, .fm-desc) {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
+}
+
 .back-link {
   display: inline-block;
   margin-bottom: var(--sp-4);
@@ -445,10 +451,6 @@ input[type="file"].field { padding: var(--sp-2); }
 }
 .photo:hover { border-color: var(--c-text); }
 
-/* 資料夾牆的純瀏覽卡（design2.md D4）：已定案照片沒有互動，連手指游標都不給 */
-.photo-static { cursor: default; }
-.photo-static:hover { border-color: var(--c-border); }
-
 .photo img,
 .placeholder {
   aspect-ratio: 1 / 1;             /* 正方形格子，長短邊照片排在一起也整齊 */
@@ -483,6 +485,7 @@ input[type="file"].field { padding: var(--sp-2); }
   -webkit-line-clamp: 2;           /* 最多兩行，超過用「…」收掉 */
   -webkit-box-orient: vertical;
 }
+.caption-nowrap { white-space: nowrap; }
 
 
 /* ══ signature：資料夾卡片的牛皮紙索引 tab（本站唯一的視覺簽名）═══════
@@ -532,12 +535,15 @@ input[type="file"].field { padding: var(--sp-2); }
 
 #fm-title,
 #em-title,
-#tm-title {
+#tm-title,
+#pd-title {
   margin: 0 var(--sp-6) var(--sp-4) 0;
   font-family: var(--f-display);
   font-size: var(--fs-section);
   font-weight: 600;
 }
+
+.fm-nowrap { white-space: nowrap; }
 
 /* 三個選項之間用分隔線隔開，讓「這是三條不同的路」一眼看得出來 */
 .fm-option {
@@ -582,6 +588,81 @@ input[type="file"].field { padding: var(--sp-2); }
 body.fm-open { overflow: hidden; }
 
 
+/* ══ 詳情彈窗（photo_detail_modal.js；唯讀，沿用 fm-* 外框，內容用 pd-*）════
+   跟另外三顆窗的差別只有兩處：多一顆右上角的 ×（這顆關得掉），
+   以及裡面是「一張圖＋一段說明＋四個欄位」的閱讀版面，不是一排選項。 */
+.pd-close {
+  position: absolute;               /* .fm-box 已經是 position: relative，直接以窗為基準 */
+  top: var(--sp-3);
+  right: var(--sp-3);
+  padding: 0 var(--sp-2);
+  font: inherit;
+  font-size: var(--fs-section);
+  line-height: 1;
+  color: var(--c-text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.pd-close:hover { color: var(--c-text); }
+
+.pd-image { margin-bottom: var(--sp-4); }
+
+/* contain＝整張圖塞得下、不裁切。與縮圖牆的 cover 刻意不同：
+   那裡是要排整齊，這裡是要看清楚。 */
+.pd-image img {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+}
+
+/* 既有的 .placeholder 是為縮圖牆的正方形格子寫的；這裡的圖是橫躺的主角，換成扁一點的比例 */
+.pd-image .placeholder { aspect-ratio: 16 / 9; }
+
+.pd-text {
+  margin: 0 0 var(--sp-4);
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+/* 四欄 metadata：標籤窄、值佔滿剩下的寬度（空的欄位由 JS 寫「無」，不會消失） */
+.pd-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-2) var(--sp-3);
+  margin: 0;
+}
+.pd-fields dt { color: var(--c-text-muted); font-size: var(--fs-small); }
+.pd-fields dd { margin: 0; }
+
+:where(.pd-text, .pd-fields dd, .pd-task-due) {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* 待辦標題與到期日：只有從待辦分頁進來才畫，與下面的大圖之間隔一條線 */
+.pd-task {
+  padding-bottom: var(--sp-3);
+  margin-bottom: var(--sp-4);
+  border-bottom: var(--bw) solid var(--c-border);
+}
+/* hidden 的預設 display:none，只要哪天有人給 .pd-task 設 display 就會失效
+   （.fm-option 踩過同一個坑）——先寫死，資料夾牆進來時這一區才真的不見 */
+.pd-task[hidden] { display: none; }
+
+.pd-task-title {
+  margin: 0;
+  font-family: var(--f-display);
+  font-size: var(--fs-section);
+}
+.pd-task-due {
+  margin: var(--sp-1) 0 0;
+  color: var(--c-text-muted);
+  font-size: var(--fs-small);
+}
+
+
 /* ══ 待辦列表（browse.html 第三分頁，design3.md D15）═════════════════ */
 /* 待辦不是照片牆——它是清單：一列一件事，掃「要做什麼、何時到期」比看圖重要 */
 ul.tasks {
@@ -593,11 +674,19 @@ ul.tasks {
   gap: var(--sp-2);
 }
 
-a.task-row {
+/* 選擇器不挑標籤（Phase 40 起這一列是 <button>，不再是 <a>）。
+   下面四項是 <button> 才需要的重設——<a> 本來就有的行為，button 全都沒有：
+   預設寬度是內容寬、不繼承頁面字型、文字置中、游標是箭頭。
+   ⚠ color 那行不能刪：button 不繼承文字顏色（預設 buttontext），刪掉標題會變純黑。 */
+.task-row {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+  width: 100%;
   padding: var(--sp-3);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   background: var(--c-surface);
   border: var(--bw) solid var(--c-border);
   border-radius: var(--radius-m);
@@ -605,7 +694,7 @@ a.task-row {
   color: var(--c-text);
   transition: border-color var(--motion) ease;
 }
-a.task-row:hover { border-color: var(--c-text); }
+.task-row:hover { border-color: var(--c-text); }
 
 .task-thumb,
 .task-thumb-empty {
@@ -760,6 +849,7 @@ a.task-row:hover { border-color: var(--c-text); }
 @media (max-width: 32rem) {
   .site-header { flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
   .site-nav { gap: var(--sp-3); }
+  .caption { padding-inline: var(--sp-1); }
   .kv { grid-template-columns: 1fr; gap: var(--sp-1) 0; }
   .kv dt { padding-top: var(--sp-2); }
   .cd-layout { grid-template-columns: 1fr; }   /* 窄螢幕：配對與舞台上下排 */

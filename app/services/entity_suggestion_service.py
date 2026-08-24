@@ -15,7 +15,7 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from app.core import config
-from app.services import ollama_cloud
+from app.services import ai_timing, ollama_cloud
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,11 @@ class EntityPick(BaseModel):
     """模型這一次挑了哪一個實體。挑不出來就是 null。"""
 
     entity: str | None = None
+
+
+class _InvalidEntityPickError(TypeError):
+    def __init__(self, actual_type: str) -> None:
+        super().__init__(f"expected EntityPick, got {actual_type}")
 
 
 ENTITY_PICK_PROMPT = """你要從「候選實體」裡挑出最能代表這張照片的那一個。
@@ -78,11 +83,19 @@ class OllamaEntitySuggester:
     """用本機 Ollama 的文字模型從候選實體裡挑一個。"""
 
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
+        model_name = model or config.LLM_MODEL
+        self._timing_target = ai_timing.AiTarget(
+            backend="local", model=model_name
+        )
         self._model = ChatOllama(
-            model=model or config.LLM_MODEL,
+            model=model_name,
             base_url=base_url or config.OLLAMA_BASE_URL,
             temperature=0,
-        ).with_structured_output(EntityPick)
+        ).with_structured_output(EntityPick, method="function_calling")
+
+    @property
+    def timing_target(self) -> ai_timing.AiTarget:
+        return self._timing_target
 
     def pick(self, photo: dict, candidates: list[dict]) -> str | None:
         """挑一個候選實體的名稱；挑不出來或呼叫失敗回 None。
@@ -94,14 +107,22 @@ class OllamaEntitySuggester:
         """
         message = HumanMessage(content=_build_pick_prompt(photo, candidates))
         try:
-            result = self._model.invoke([message])
+            with ai_timing.log_ai(
+                "entity_suggest", target=self.timing_target
+            ):
+                result = self._model.invoke([message])
+                if not isinstance(result, EntityPick):
+                    raise _InvalidEntityPickError(type(result).__name__)
+        except _InvalidEntityPickError:
+            logger.warning(
+                "實體建議未回傳有效的結構化結果，這次就不給建議",
+                exc_info=True,
+            )
+            return None
         except Exception:
             logger.warning("實體建議呼叫失敗，這次就不給建議", exc_info=True)
             return None
-        if isinstance(result, EntityPick):
-            return result.entity
-        logger.warning("實體建議未回傳有效的結構化結果，這次就不給建議")
-        return None
+        return result.entity
 
 
 # 雲端挑實體的輸出格式補充指令。ollama.com 對 format= 不強制、要用講的——
@@ -122,20 +143,32 @@ class OllamaCloudEntitySuggester:
 
     def __init__(self, model: str | None = None) -> None:
         self._model_name = model or config.OLLAMA_CLOUD_LLM_MODEL
+        self._timing_target = ai_timing.AiTarget(
+            backend="cloud", model=self._model_name
+        )
         self._client = ollama_cloud.build_client()
+
+    @property
+    def timing_target(self) -> ai_timing.AiTarget:
+        return self._timing_target
 
     def pick(self, photo: dict, candidates: list[dict]) -> str | None:
         prompt = _build_pick_prompt(photo, candidates) + CLOUD_PICK_JSON_INSTRUCTION
         try:
-            response = self._client.chat(
-                model=self._model_name,
-                messages=[{"role": "user", "content": prompt}],
-                format=EntityPick.model_json_schema(),
-                options={"temperature": 0},
-            )
-            result = EntityPick.model_validate_json(
-                ollama_cloud.extract_json_object(response.message.content or "")
-            )
+            # 解析也包進計時裡：雲端回了解析不出來的東西，對這次呼叫來說就是失敗
+            #（與看圖那邊「看不懂 → ok=false」的處理一致）
+            with ai_timing.log_ai(
+                "entity_suggest", target=self.timing_target
+            ):
+                response = self._client.chat(
+                    model=self._model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    format=EntityPick.model_json_schema(),
+                    options={"temperature": 0},
+                )
+                result = EntityPick.model_validate_json(
+                    ollama_cloud.extract_json_object(response.message.content or "")
+                )
         except Exception:
             logger.warning("實體建議（雲端）呼叫失敗，這次就不給建議", exc_info=True)
             return None
