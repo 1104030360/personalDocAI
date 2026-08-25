@@ -4,6 +4,11 @@
 
 ```text
 ┌─ ⛔ 開工前檢查（兩道閘門，缺一不可）─────────────────────────────
+│ ✅ **2026-08-24：G1 已通過。** 產品負責人以 dev-prompt
+│    `docs/plan/dev-prompts/phase0824.md` 指示「根據 phase-45〜phase-51 進行開發」，
+│    並註明「過程中所有的決策都不必徵求任何我的同意」——這就是對 2026-08-23 交出的
+│    G1 驗收包（`docs/plan/report/2026-08-23-G1驗收包-請產品負責人確認.md`）的明示放行。
+│    下面那句「沒有這句話就停手」保留原文，供日後回看流程用。
 │ ① 閘門 G1：產品負責人是否已「明示」G1 通過？
 │    沒有這句話 → 停手，回去做 phase-44 的 G1 驗收包。G1 是**人**的動作。
 │ ② 閘門 G2：phase-46 §5.2 的 diff 是否**沒有任何輸出**？
@@ -115,13 +120,13 @@ lsof -iTCP:8000 -sTCP:LISTEN
 
 ### 4.1 停 Docker 的 db、改埠（design4 §8.6 丙-2 第 1、2 步）
 
-- [ ] 停掉 container（**不要用 `down`**）：
+- [x] 停掉 container（**不要用 `down`**）：
 
 ```bash
 docker compose stop db
 ```
 
-- [ ] 編輯 `compose.yaml`，把埠那一行與它的註解改成：
+- [x] 編輯 `compose.yaml`，把埠那一行與它的註解改成：
 
 ```yaml
     ports:
@@ -130,19 +135,19 @@ docker compose stop db
       - "127.0.0.1:5433:5432"
 ```
 
-- [ ] **不要動 `volumes:` 那一段**——同一個 named volume `pgdata`
+- [x] **不要動 `volumes:` 那一段**——同一個 named volume `pgdata`
       （＝Docker 自己管理、有名字的那塊硬碟空間，Phase 46 建的），
       換的只是「外面用哪個埠進來」。資料完全不受影響。
 
 ### 4.2 停 brew（design4 §8.6 丙-2 第 3、4 步）
 
-- [ ] 停服務（**只停服務，不移除任何檔案**）：
+- [x] 停服務（**只停服務，不移除任何檔案**）：
 
 ```bash
 brew services stop postgresql@17
 ```
 
-- [ ] 確認 5433 真的空了：
+- [x] 確認 5433 真的空了：
 
 ```bash
 lsof -iTCP:5433 -sTCP:LISTEN
@@ -150,7 +155,7 @@ lsof -iTCP:5433 -sTCP:LISTEN
 
   預期：**沒有輸出**。有輸出代表 brew 還沒真的停，等幾秒再看一次。
 
-- [ ] 順手確認 `@14` 沒被波及：
+- [x] 順手確認 `@14` 沒被波及：
 
 ```bash
 brew services list | grep postgresql
@@ -158,7 +163,7 @@ brew services list | grep postgresql
 
   預期：`postgresql@14` 仍是 `started`、`postgresql@17` 變成 `stopped` 或 `none`。
 
-- [ ] 確認 brew 的資料目錄**還在**（後悔藥第 1 層）：
+- [x] 確認 brew 的資料目錄**還在**（後悔藥第 1 層）：
 
 ```bash
 ls -d /opt/homebrew/var/postgresql@17
@@ -168,7 +173,7 @@ ls -d /opt/homebrew/var/postgresql@17
 
 ### 4.3 讓 Docker 接手 5433（design4 §8.6 丙-2 第 5、6 步）
 
-- [ ] 起來：
+- [x] 起來：
 
 ```bash
 docker compose up -d db
@@ -177,7 +182,7 @@ docker compose ps
 
   預期：`STATUS` ＝ `Up … (healthy)`；`PORTS` ＝ `127.0.0.1:5433->5432/tcp`。
 
-- [ ] 確認現在 5433 上的是 Docker 那一套：
+- [x] 確認現在 5433 上的是 Docker 那一套：
 
 ```bash
 lsof -iTCP:5433 -sTCP:LISTEN
@@ -185,7 +190,7 @@ lsof -iTCP:5433 -sTCP:LISTEN
 
   預期：看得到 `com.docker` 或 `docker` 之類的行程名（不是 `postgres`）。
 
-- [ ] 用**與 Phase 45 完全相同**的查詢打 5433，數字必須相同：
+- [x] 用**與 Phase 45 完全相同**的查詢打 5433，數字必須相同：
 
 > 🔗 **下面的 SQL 與三個 `echo "=== … ==="` 標題，跟 phase-45 §4.3、phase-46 §5.1 逐字相同**
 > ——這一節的 `diff`（以及 phase-50 §4.5 ① 再對一次的那個 `diff`）就是靠這件事成立的。
@@ -225,7 +230,7 @@ diff <(tail -n +2 ~/PersonalDocAI-docker遷移前快照.txt) \
 
 ### 4.4 改連線字串（`.env` 與 `tests/conftest.py` 同一次改）
 
-- [ ] `.env` 的 `DATABASE_URL` 改成：
+- [x] `.env` 的 `DATABASE_URL` 改成：
 
 ```text
 DATABASE_URL=postgresql://postgres@localhost:5433/PersonalDocAI
@@ -235,7 +240,7 @@ DATABASE_URL=postgresql://postgres@localhost:5433/PersonalDocAI
   沒有密碼是因為容器設了 `POSTGRES_HOST_AUTH_METHOD=trust`，而且埠只綁 127.0.0.1」。
   （`.env` 不入版控，改了不會出現在 `git status`。）
 
-- [ ] `tests/conftest.py` 第 7 行：
+- [x] `tests/conftest.py` 第 7 行：
 
 ```python
 TEST_DATABASE_URL = "postgresql://postgres@localhost:5433/PersonalDocAI_test"
@@ -244,7 +249,7 @@ TEST_DATABASE_URL = "postgresql://postgres@localhost:5433/PersonalDocAI_test"
   第 26 行那個「URL 必須含 `PersonalDocAI_test` 才准清表」的斷言**一個字都不要動**——
   它是防止測試清到正式庫的安全網，加了帳號之後照樣成立。
 
-- [ ] `~/.zshrc` 補**兩行**（讓互動 `psql` 不必每次打 `-h 127.0.0.1 -U postgres`）：
+- [x] `~/.zshrc` 補**兩行**（讓互動 `psql` 不必每次打 `-h 127.0.0.1 -U postgres`）：
 
 ```bash
 export PGUSER=postgres
@@ -268,16 +273,16 @@ export PGHOST=127.0.0.1
 
 ### 4.5 驗證系統仍然可跑
 
-- [ ] 測試（連的是 Docker 裡的 `PersonalDocAI_test`）：
+- [x] 測試（連的是 Docker 裡的 `PersonalDocAI_test`）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 pytest -q
 ```
 
-  預期：**387 passed ＋ 2 skipped**（與遷移前完全相同的顆數）。
+  預期：**402 passed ＋ 2 skipped**（與遷移前完全相同的顆數）。
 
-- [ ] 零外部依賴實證（把 Ollama 網址指到一個沒人聽的埠，顆數還是要一樣）：
+- [x] 零外部依賴實證（把 Ollama 網址指到一個沒人聽的埠，顆數還是要一樣）：
 
 ```bash
 OLLAMA_BASE_URL=http://localhost:9 pytest -q
@@ -285,7 +290,7 @@ OLLAMA_BASE_URL=http://localhost:9 pytest -q
 
   預期：與上一步**同顆數**（證明測試從頭到尾沒打到真的 Ollama）。
 
-- [ ] 伺服器（**仍然是 host 上的 uvicorn**，app 容器化是下一個 phase；
+- [x] 伺服器（**仍然是 host 上的 uvicorn**，app 容器化是下一個 phase；
       在**已啟用 venv** 的終端機執行）：
 
 ```bash
@@ -300,10 +305,18 @@ curl -s http://localhost:8000/health
 
   預期：`{"status":"ok"}`
 
-- [ ] 瀏覽器開 `http://localhost:8000/ui/browse.html?tab=folders`：
+> **2026-08-24 校準：HTTPS 版也可以，而且更貼近目前的實況。**
+> 本 phase 開工前，host 上跑著的那支 uvicorn 是 **HTTPS 版**
+> （`uvicorn app.main:app --host 0.0.0.0 --port 8000 --ssl-keyfile certs/key.pem
+> --ssl-certfile certs/cert.pem`，Phase 36 之後的常用起法）。兩種都行，
+> **但協定要跟著換**：HTTPS 起的話 `curl` 要寫 `curl -k https://127.0.0.1:8000/health`
+> （`-k` ＝不驗自簽憑證），用 `http://` 打會連不上而讓你以為服務壞了。
+> 本 phase 只是要證明「換了連線字串之後 app 還連得到資料庫」，用哪一種都證得出來。
+
+- [x] 瀏覽器開 `http://localhost:8000/ui/browse.html?tab=folders`：
       資料夾、照片、縮圖都看得到（縮圖來自 host 的 `data/`，本 phase 完全沒動它）。
-- [ ] 點一張照片：Phase 39 的詳情窗照常開得起來。
-- [ ] 上傳一張新照片：201、`data/` 出現檔案、彈窗鏈照跑。
+- [x] 點一張照片：Phase 39 的詳情窗照常開得起來。
+- [x] 上傳一張新照片：201、`data/` 出現檔案、彈窗鏈照跑。
       （這一步同時證明「寫入」也正常，不只是讀取。）
 
 ---
@@ -346,20 +359,20 @@ curl -s http://localhost:8000/health
 
 ## 6. 驗收清單
 
-- [ ] `compose.yaml` 的埠是 `127.0.0.1:5433:5432`，`volumes` 那段沒動過
-- [ ] `docker compose ps`：`db` 是 `Up … (healthy)`、`PORTS` 顯示 `127.0.0.1:5433->5432/tcp`
-- [ ] `brew services list`：`postgresql@17` ＝ `stopped`；`postgresql@14` ＝ `started`
-- [ ] `/opt/homebrew/var/postgresql@17` **仍然存在**（沒有刪、沒有 uninstall）
-- [ ] `lsof -iTCP:5433 -sTCP:LISTEN` 顯示的是 Docker 的行程
-- [ ] §4.3 的 `diff` **沒有任何輸出**（資料完好）
-- [ ] `.env` 的 `DATABASE_URL` 含 `postgres@`
-- [ ] `tests/conftest.py` 的 `TEST_DATABASE_URL` 含 `postgres@`，且第 26 行的安全網斷言沒動
-- [ ] `pytest -q` ＝ **387 passed ＋ 2 skipped**
-- [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
-- [ ] host 上 `uvicorn` 起得來、`/health` 回 200、瀏覽頁看得到照片、上傳一張會成功
-- [ ] **新開一個終端機**打 `psql -d PersonalDocAI` 連得到 Docker 那一套
+- [x] `compose.yaml` 的埠是 `127.0.0.1:5433:5432`，`volumes` 那段沒動過
+- [x] `docker compose ps`：`db` 是 `Up … (healthy)`、`PORTS` 顯示 `127.0.0.1:5433->5432/tcp`
+- [x] `brew services list`：`postgresql@17` ＝ `stopped`；`postgresql@14` ＝ `started`
+- [x] `/opt/homebrew/var/postgresql@17` **仍然存在**（沒有刪、沒有 uninstall）
+- [x] `lsof -iTCP:5433 -sTCP:LISTEN` 顯示的是 Docker 的行程
+- [x] §4.3 的 `diff` **沒有任何輸出**（資料完好）
+- [x] `.env` 的 `DATABASE_URL` 含 `postgres@`
+- [x] `tests/conftest.py` 的 `TEST_DATABASE_URL` 含 `postgres@`，且第 26 行的安全網斷言沒動
+- [x] `pytest -q` ＝ **402 passed ＋ 2 skipped**
+- [x] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
+- [x] host 上 `uvicorn` 起得來、`/health` 回 200、瀏覽頁看得到照片、上傳一張會成功
+- [x] **新開一個終端機**打 `psql -d PersonalDocAI` 連得到 Docker 那一套
       （＝`PGHOST`／`PGUSER`／`PGPORT` 三個變數都生效了）
-- [ ] 版控狀態符合預期（本 phase 只該動 `compose.yaml` 與 `tests/conftest.py`）：
+- [x] 版控狀態符合預期（本 phase 只該動 `compose.yaml` 與 `tests/conftest.py`）：
 
 ```bash
 git status --short
@@ -368,6 +381,8 @@ git status --short
   預期：`tests/conftest.py` 顯示 ` M`（已追蹤、被改過）；`compose.yaml` 與 `db/docker-init/`
   顯示 `??`（Phase 46 新建、還沒 commit——本專案依產品負責人指示暫不 commit）。
   除了這些與 `docs/` 底下的計畫檔之外，**不該有其他產品程式碼被動到**。
+  **2026-08-24 校準**：Phase 38〜44 已進 commit `507a18f`，所以「其他產品程式碼」
+  這句話現在可以驗得很硬——`git status --short -- app/` 應該是**完全空的**。
   **不要用 `git diff --stat` 來對這一條**：它只看得到「已追蹤」的檔案，
   新建的 `compose.yaml` 根本不會出現在裡面。
   `.env` 與 `~/.zshrc` 兩處也都不會出現（前者在 `.gitignore`、後者不在專案裡）。

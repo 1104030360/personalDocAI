@@ -242,6 +242,10 @@ DEFAULT_ROUTE_DECISIONS: dict[str, RouteDecision] = {
         mode="entity", entity_name="我的 MacBook"
     ),
     "這週要交什麼？": RouteDecision(mode="task", due_within_days=7),
+    # 規格 自然語言詢問.feature「問到待辦或到期時」那條 Rule 的問句**沒有問號**。
+    # 假路由是逐字查表的，差一個全形問號就查不到 → 丟例外 → fallback 成語意查詢，
+    # 規格驗收會紅在 search_mode。兩個鍵並存：有問號那個另有兩顆測試在用。
+    "這週要交什麼": RouteDecision(mode="task", due_within_days=7),
     "What is due this week?": RouteDecision(mode="task", due_within_days=7),
     # 沒講期限＝列出全部待辦（含沒有到期日的那些）
     "我有哪些待辦？": RouteDecision(mode="task"),

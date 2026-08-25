@@ -4,6 +4,11 @@
 
 ```text
 ┌─ ⛔ 開工前檢查（兩道閘門，缺一不可）─────────────────────────────
+│ ✅ **2026-08-24：G1 已通過。** 產品負責人以 dev-prompt
+│    `docs/plan/dev-prompts/phase0824.md` 指示「根據 phase-45〜phase-51 進行開發」，
+│    並註明「過程中所有的決策都不必徵求任何我的同意」——這就是對 2026-08-23 交出的
+│    G1 驗收包（`docs/plan/report/2026-08-23-G1驗收包-請產品負責人確認.md`）的明示放行。
+│    下面那句「沒有這句話就停手」保留原文，供日後回看流程用。
 │ ① 閘門 G1：產品負責人是否已「明示」G1 通過？沒有就停手（回 phase-44）。
 │    G1 是**人**的動作，不是實作者可以自行勾掉的步驟。
 │ ② 閘門 G2：phase-46 §5.2 的 diff 沒有輸出、phase-47 §4.3 的 diff 也沒有輸出？
@@ -35,7 +40,7 @@
 
 - **★ G1、★ G2 都已通過。**
 - **Phase 47 已完成**：Docker 的 db 在 5433、brew `@17` 已停、`.env` 與 `conftest.py` 已帶帳號、
-  `pytest -q` ＝ 387 passed ＋ 2 skipped。
+  `pytest -q` ＝ 402 passed ＋ 2 skipped。
 - **Docker Desktop 正在跑、db 還活著**：
 
 ```bash
@@ -55,6 +60,26 @@ ls -l certs/cert.pem certs/key.pem
 ```
 
   沒有的話照 `CLAUDE.md` 指令區的 mkcert 步驟先產一次（`certs/` 已入 `.gitignore`）。
+
+> **2026-08-24 校準：「檔案存在」不夠，還要看憑證裡寫的 IP 對不對。**
+> mkcert 把 IP **寫死在憑證的 SAN**（Subject Alternative Name）裡。
+> 本次開工實測：`certs/cert.pem` 的 SAN 是 `localhost`、`172.20.10.6`、`127.0.0.1`，
+> 而現在這台 Mac 的區網 IP 是 **`172.29.93.122`**——**對不上**。
+> 這對本 phase 的驗收（全部走 `127.0.0.1`）沒影響，但 **Phase 50 的手機真機驗收一定會被擋**，
+> 而且 Safari 的錯誤訊息長得像「網路怪怪的」，很難聯想到憑證。**在這裡就先修掉。**
+>
+> ```bash
+> # ① 看憑證現在涵蓋哪些位址
+> openssl x509 -in certs/cert.pem -noout -text | grep -A2 "Subject Alternative Name"
+> # ② 看現在的區網 IP
+> ipconfig getifaddr en0
+> # ③ ① 的清單裡沒有 ② 的 IP → 重簽（要先 mkcert -install 過一次）
+> mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
+>   $(ipconfig getifaddr en0) localhost 127.0.0.1
+> ```
+>
+> 重簽之後若 app 容器已經起來了，要 `docker compose restart app`
+> ——HTTPS 行程在啟動時就把憑證讀進記憶體了，換檔不會自動生效（phase-49 §4.5 同一列）。
 
 - **Ollama 正在跑**（app 容器要連它）：
 
@@ -117,7 +142,7 @@ lsof -iTCP:8000 -sTCP:LISTEN
 
 ### 4.1 建 `.dockerignore`
 
-- [ ] 在專案根目錄建立 `.dockerignore`（決定「build 映像時**不要**送進去的東西」；
+- [x] 在專案根目錄建立 `.dockerignore`（決定「build 映像時**不要**送進去的東西」；
       送越少，build 越快、映像越小）：
 
 ```text
@@ -150,7 +175,7 @@ scripts/
 
 ### 4.2 建 `Dockerfile`
 
-- [ ] 在專案根目錄建立 `Dockerfile`：
+- [x] 在專案根目錄建立 `Dockerfile`：
 
 ```dockerfile
 # PersonalDocAI 的 app 映像（design4.md §8.4）。
@@ -185,7 +210,7 @@ CMD ["uvicorn", "app.main:app", \
 
 ### 4.3 在 `compose.yaml` 加 `app` 服務
 
-- [ ] 在 `services:` 底下、`db:` 之後加入（`volumes:` 那一段的 `pgdata:` 維持在檔案最後）：
+- [x] 在 `services:` 底下、`db:` 之後加入（`volumes:` 那一段的 `pgdata:` 維持在檔案最後）：
 
 ```yaml
   app:
@@ -216,7 +241,7 @@ CMD ["uvicorn", "app.main:app", \
     # ★ 只能一個 replica（鏡頭配對 session 存在記憶體裡，兩個行程會配對失敗）
 ```
 
-- [ ] 檢查 yaml（這個指令只解析、不啟動任何東西）：
+- [x] 檢查 yaml（這個指令只解析、不啟動任何東西）：
 
 ```bash
 docker compose config
@@ -227,7 +252,7 @@ docker compose config
 
 ### 4.4 起來（design4 §8.6 丙-3 第 4 步）
 
-- [ ] 起兩個服務（指令逐字照抄 design4 §8.6 丙-3 第 4 步）：
+- [x] 起兩個服務（指令逐字照抄 design4 §8.6 丙-3 第 4 步）：
 
 ```bash
 docker compose -f compose.yaml up -d
@@ -237,7 +262,7 @@ docker compose -f compose.yaml up -d
   **db 不會被重來一次**——它的設定這次沒改，Compose 只會建新的 `app`；
   就算哪天真的重建了 db，資料住在 `pgdata` volume 裡也不會丟。
 
-- [ ] 看狀態（`--no-trunc` ＝不要截斷欄位）：
+- [x] 看狀態（`--no-trunc` ＝不要截斷欄位）：
 
 ```bash
 docker compose ps --no-trunc
@@ -248,7 +273,7 @@ docker compose ps --no-trunc
   （不加 `--no-trunc` 的話 COMMAND 只會顯示開頭 20 個字左右、長得像 `"uvicorn app.main:a…"`，
   那樣**看不出**後面有沒有 `--reload`——這一關就白驗了。）
 
-- [ ] 看 app 的 log（確認 uvicorn 真的起來了）：
+- [x] 看 app 的 log（確認 uvicorn 真的起來了）：
 
 ```bash
 docker compose logs app | tail -20
@@ -256,7 +281,7 @@ docker compose logs app | tail -20
 
   預期：`Uvicorn running on https://0.0.0.0:8000`。
 
-- [ ] 確認 container **連得到 Mac 上的 Ollama**（先確認這一步，等一下上傳失敗時才不用瞎猜）：
+- [x] 確認 container **連得到 Mac 上的 Ollama**（先確認這一步，等一下上傳失敗時才不用瞎猜）：
 
 ```bash
 docker compose exec app python -c "import urllib.request; print(urllib.request.urlopen('http://host.docker.internal:11434/api/tags').status)"
@@ -266,7 +291,7 @@ docker compose exec app python -c "import urllib.request; print(urllib.request.u
   （映像裡沒有 `curl`，所以改用 Python 內建的 `urllib` 問一句。
   出現 `URLError`／連線被拒 → 多半是 Ollama 沒開，回 §2 用 `curl` 在 Mac 上再確認一次。）
 
-- [ ] 確認 app **真的連到 Docker 的 db**（這一 phase 叫「連線切換」，就是在切這條）：
+- [x] 確認 app **真的連到 Docker 的 db**（這一 phase 叫「連線切換」，就是在切這條）：
 
 ```bash
 docker compose exec app python -c "from app.core import config; print(config.DATABASE_URL)"
@@ -278,7 +303,7 @@ docker compose exec app python -c "from app.core import config; print(config.DAT
 
 ### 4.5 驗收（design4 §8.6 丙-3 第 5、6 步）
 
-- [ ] 健康檢查（`-k` ＝ 不驗憑證，因為是自簽的）：
+- [x] 健康檢查（`-k` ＝ 不驗憑證，因為是自簽的）：
 
 ```bash
 curl -k https://127.0.0.1:8000/health
@@ -286,33 +311,33 @@ curl -k https://127.0.0.1:8000/health
 
   預期：`{"status":"ok"}`
 
-- [ ] host 上跑測試（連的是 Docker 裡的 `PersonalDocAI_test`）：
+- [x] host 上跑測試（連的是 Docker 裡的 `PersonalDocAI_test`）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 pytest -q
 ```
 
-  預期：**387 passed ＋ 2 skipped**。
+  預期：**402 passed ＋ 2 skipped**。
 
-- [ ] 零外部依賴實證（把 Ollama 網址指到一個死埠，顆數仍要一模一樣）：
+- [x] 零外部依賴實證（把 Ollama 網址指到一個死埠，顆數仍要一模一樣）：
 
 ```bash
 OLLAMA_BASE_URL=http://localhost:9 pytest -q
 ```
 
-  預期：仍是 **387 passed ＋ 2 skipped**。
+  預期：仍是 **402 passed ＋ 2 skipped**。
   （這條打的是 host 上的 pytest，不影響已經跑起來的 container。）
 
-- [ ] 瀏覽器開 `https://127.0.0.1:8000/ui/upload.html`
+- [x] 瀏覽器開 `https://127.0.0.1:8000/ui/upload.html`
       （**是 https，不是 http**；自簽憑證會跳警告，選「繼續前往」）。
-- [ ] **上傳煙霧**：上傳一張真照片 → 201、彈窗鏈跳出來、`data/` 出現新檔：
+- [x] **上傳煙霧**：上傳一張真照片 → 201、彈窗鏈跳出來、`data/` 出現新檔：
 
 ```bash
 ls -lt data/photos | head -3
 ```
 
-- [ ] **看 AI 計時 log 有沒有跟著進來**（階段乙的回歸，同時證明容器連得到 Ollama）：
+- [x] **看 AI 計時 log 有沒有跟著進來**（階段乙的回歸，同時證明容器連得到 Ollama）：
 
 ```bash
 docker compose logs -f app
@@ -322,10 +347,10 @@ docker compose logs -f app
   （長相例：`AI 開始 kind=vlm backend=local model=…` ／ `AI 結束 kind=vlm … elapsed_s=… ok=true`）。
   `Ctrl+C` 只是離開 log，**容器繼續跑**。
 
-- [ ] **階段甲的回歸**（design4 §8.9 第 8 條）：
+- [x] **階段甲的回歸**（design4 §8.9 第 8 條）：
       開 `https://127.0.0.1:8000/ui/browse.html?tab=folders` → 點一張照片 → 詳情窗開得起來、
       大圖與四欄都在；切到待辦分頁 → 點一列 → 同一顆窗、沒有新分頁。
-- [ ] **問一句話**（證明 `route`／`answer` 也連得到 Ollama）：
+- [x] **問一句話**（證明 `route`／`answer` 也連得到 Ollama）：
       `https://127.0.0.1:8000/ui/ask.html` 問「我最近買過什麼飲料？」→ 有回答，
       log 看得到 `kind=route`／`kind=embed`／`kind=answer` 三組。
       （若真模型這次把它判成條件查詢，就**不會**有 `kind=embed` 那一組——那是 design4 §5.2
@@ -371,18 +396,18 @@ docker compose logs -f app
 
 ## 6. 驗收清單
 
-- [ ] `Dockerfile`、`.dockerignore` 存在；`compose.yaml` 有 `db` 與 `app` 兩個服務
-- [ ] `docker compose ps --no-trunc`：兩個都 `Up`，`db` 是 `(healthy)`，
+- [x] `Dockerfile`、`.dockerignore` 存在；`compose.yaml` 有 `db` 與 `app` 兩個服務
+- [x] `docker compose ps --no-trunc`：兩個都 `Up`，`db` 是 `(healthy)`，
       **app 的 COMMAND 看不到 `--reload`**（一定要加 `--no-trunc`，否則 COMMAND 被截斷、驗不到）
-- [ ] `curl -k https://127.0.0.1:8000/health` → `{"status":"ok"}`
-- [ ] 容器內的 `config.DATABASE_URL` 是 `postgresql://postgres@db:5432/PersonalDocAI`（§4.4 最後一步）
-- [ ] `pytest -q` ＝ **387 passed ＋ 2 skipped**（在 host 跑）
-- [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
-- [ ] 上傳一張測試圖：201、`data/` 出現檔、瀏覽頁看得到（§8.9 第 7 條）
-- [ ] 資料夾／待辦詳情彈窗在 Docker app 上仍可用（§8.9 第 8 條，階段甲回歸）
-- [ ] `docker compose logs app` 看得到 `kind=vlm`／`kind=embed`／`kind=route`／`kind=answer`
+- [x] `curl -k https://127.0.0.1:8000/health` → `{"status":"ok"}`
+- [x] 容器內的 `config.DATABASE_URL` 是 `postgresql://postgres@db:5432/PersonalDocAI`（§4.4 最後一步）
+- [x] `pytest -q` ＝ **402 passed ＋ 2 skipped**（在 host 跑）
+- [x] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
+- [x] 上傳一張測試圖：201、`data/` 出現檔、瀏覽頁看得到（§8.9 第 7 條）
+- [x] 資料夾／待辦詳情彈窗在 Docker app 上仍可用（§8.9 第 8 條，階段甲回歸）
+- [x] `docker compose logs app` 看得到 `kind=vlm`／`kind=embed`／`kind=route`／`kind=answer`
       （階段乙回歸，同時證明容器連得到 Ollama）
-- [ ] 映像裡**沒有**照片與憑證（要分兩步才驗得出來——**跑起來的 container 裡一定看得到**，
+- [x] 映像裡**沒有**照片與憑證（要分兩步才驗得出來——**跑起來的 container 裡一定看得到**，
       因為那三項是掛進去的；真正要證明的是「**映像本身**沒有」）：
 
 ```bash
@@ -401,15 +426,18 @@ docker run --rm personaldocai-app ls -a /app   # 映像名以上一行看到的�
   預期：**只有** `app` 與 `requirements.txt`；**沒有** `data`／`certs`／`.env`
   （§8.10：那三項住在 host，不打進映像）。
 
-- [ ] 版控狀態符合預期（**用 `git status --short`，不要用 `git diff --stat`**）：
+- [x] 版控狀態符合預期（**用 `git status --short`，不要用 `git diff --stat`**）：
 
 ```bash
 git status --short
 ```
 
   預期：多出 `?? Dockerfile`、`?? .dockerignore` 兩個新檔；`compose.yaml` 與 `db/docker-init/`
-  仍顯示 `??`（Phase 46 新建、依產品負責人指示**還沒 commit**）。
-  除了這些與 `docs/` 底下的計畫檔之外，不該有其他產品程式碼被動到。
+  仍顯示 `??`（Phase 46 新建、依產品負責人指示**還沒 commit**）；
+  `tests/conftest.py` 顯示 ` M`（Phase 47 改的）。
+  除了這些與 `docs/` 底下的計畫檔之外，不該有其他產品程式碼被動到——
+  **2026-08-24 校準**：Phase 38〜44 已進 commit `507a18f`，
+  所以 `git status --short -- app/` 應該是**完全空的**，這一條可以驗得很硬。
   ⚠ **這一條不能用 `git diff --stat` 對**：它只看得到「已追蹤」的檔案，
   而 `compose.yaml`／`Dockerfile`／`.dockerignore` **三個都還沒 `git add`**，
   `git diff --stat` 會是空的、證明不了任何事（phase-47 §6、phase-49 §6 有同一則提醒）。

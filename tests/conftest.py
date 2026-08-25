@@ -4,7 +4,7 @@ import os
 
 # 一定要在 import app.* 之前設定：app/core/config.py 在 import 時讀環境變數，
 # 而 load_dotenv() 不會覆蓋已存在的環境變數，所以這裡先寫入的測試庫 URL 會生效。
-TEST_DATABASE_URL = "postgresql://localhost:5433/PersonalDocAI_test"
+TEST_DATABASE_URL = "postgresql://postgres@localhost:5433/PersonalDocAI_test"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 import pytest  # noqa: E402  （import 順序刻意如此，見上方註解）

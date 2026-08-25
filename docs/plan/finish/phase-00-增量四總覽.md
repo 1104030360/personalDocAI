@@ -99,7 +99,7 @@ design4 寫了三件互不相干、但要照順序做的事，最後再加上一
   │   51 規格摘標：自然語言詢問.feature 兩條 @未實作 摘掉      │
   │      ＋修掉例子裡矛盾的到期日                              │
   │      ＋假路由補一個沒問號的鍵（tests/fakes.py）            │
-  │      2 skipped → 0 skipped（387＋2 → 389＋0）              │
+  │      2 skipped → 0 skipped（402＋2 → 404＋0）              │
   │      與 Docker 無關，不需要 G1／G2                         │
   └────────────────────────────────────────────────────────────┘
 ```
@@ -108,7 +108,7 @@ design4 寫了三件互不相干、但要照順序做的事，最後再加上一
 > §8.9 的階段丙驗收要求「`pytest -q` 與遷移前**同顆數（含既有 skipped）**」。
 > 摘標會把 2 skipped 變成 0——提前做，這兩條驗收就對不上，
 > 實作者得一路解釋「數字不一樣是因為別的事」。排在最後，38〜50 的顆數鏈
-> （**387 passed ＋ 2 skipped**）完全不受影響，只有 Phase 51 自己把它變成 **389 passed ＋ 0 skipped**。
+> （**402 passed ＋ 2 skipped**）完全不受影響，只有 Phase 51 自己把它變成 **404 passed ＋ 0 skipped**。
 
 ---
 
@@ -119,21 +119,41 @@ design4 寫了三件互不相干、但要照順序做的事，最後再加上一
 
 | Phase | 檔名 | 一句話 | 依賴 | design4 章節 | 完成 |
 |---|---|---|---|---|---|
-| 38 | `phase-38-照片詳情端點.md` | 新增 `GET /photos/{photo_id}` 回一張照片的完整說明；端點 19→20 | — | §4.4、§4.5、D3／D5／D6 | [ ] |
-| 39 | `phase-39-唯讀詳情彈窗.md` | 新建 `photo_detail_modal.js`；資料夾牆的照片改成可點、開唯讀窗 | 38 | §4.1〜§4.3、D1／D2／D4 | [ ] |
-| 40 | `phase-40-待辦列改開彈窗.md` | 待辦列拿掉 `target="_blank"`，改開同一顆窗、窗頂多一行標題／到期日 | 38、39 | §4.1、§4.2 第 1 點、D1 | [ ] |
-| 41 | `phase-41-AI計時helper.md` | 新建 `services/ai_timing.py`（context manager），先寫單元測試 | — | §5.2、§5.3 前半、D7 | [ ] |
-| 42 | `phase-42-看圖與向量計時接線.md` | `photos._ingest_image`／`assign_folder` 接上 helper；舊看圖 log 改走新格式 | 41 | §5.1、§5.3、§5.4 | [ ] |
-| 43 | `phase-43-詢問與實體建議計時接線.md` | `route`／`answer`／`embed_query`／實體建議（本機＋雲端）接上 helper | 41、42 | §5.1、§5.3、§5.4 | [ ] |
-| 44 | `phase-44-甲乙錯誤收尾與G1驗收包.md` | design4 §9 錯誤表 1〜5 逐列釘死＋全量回歸＋產出 G1 檢查表 | 38〜43 | §6、§7、§9 | [ ] |
-| ★G1 | （人的動作，沒有檔案） | 產品負責人明示「甲乙沒問題，可以做 Docker」 | 44 | §0、§7 | [ ] |
-| 45 | `phase-45-丙0凍結盤點與雙備份.md` | 停 uvicorn、拍正式庫快照、做兩份 `pg_dump` 備份 | ★G1 | §8.3、§8.6 丙-0、§8.8 | [ ] |
-| 46 | `phase-46-丙1資料庫容器5434並行灌庫.md` | 建 `compose.yaml`（只有 db，暫用 5434）、灌庫、**過閘門 G2** | 45 | §8.2、§8.4 db、§8.6 丙-1 | [ ] |
-| 47 | `phase-47-丙2切埠5433與停brew.md` | 改回 5433、停 brew `@17`、`.env` 與 `conftest.py` 換帶帳號的 URL | 46（G2 過） | §8.4 帳號段、§8.6 丙-2 | [ ] |
-| 48 | `phase-48-丙3應用容器化與連線切換.md` | 建 `Dockerfile`／`.dockerignore`／compose 的 `app` 服務、起 app、跑驗收 | 47 | §8.2、§8.4 app、§8.6 丙-3 | [ ] |
-| 49 | `phase-49-開發熱重載overlay.md` | 建 `compose.dev.yaml`（`--reload`＋bind-mount），實測兩模式切換 | 48 | §8.4.1、D10 | [ ] |
-| 50 | `phase-50-丙4開機常駐與增量收尾.md` | 開機自動拉起、CLAUDE.md 指令區改寫、§8.9 全驗收、鏡頭 QR 驗證 | 49 | §8.6 丙-4、§8.7〜§8.9 | [ ] |
-| 51 | `phase-51-規格摘標與詢問三路驗收.md` | 摘掉 `自然語言詢問.feature` 兩條 `@未實作` ＋修掉例子裡矛盾的到期日＋`tests/fakes.py` 假路由補一個沒問號的鍵；**2 skipped → 0**（`app/` 一行不動） | 50 | **不在 design4 範圍**：產品負責人 2026-08-23 額外裁決（§3.4）；design4 §1.1「規格 `.feature` 本輪不改」的正式例外 | [ ] |
+| 38 | `phase-38-照片詳情端點.md` | 新增 `GET /photos/{photo_id}` 回一張照片的完整說明；端點 19→20 | — | §4.4、§4.5、D3／D5／D6 | [x] |
+| 39 | `phase-39-唯讀詳情彈窗.md` | 新建 `photo_detail_modal.js`；資料夾牆的照片改成可點、開唯讀窗 | 38 | §4.1〜§4.3、D1／D2／D4 | [x] |
+| 40 | `phase-40-待辦列改開彈窗.md` | 待辦列拿掉 `target="_blank"`，改開同一顆窗、窗頂多一行標題／到期日 | 38、39 | §4.1、§4.2 第 1 點、D1 | [x] |
+| 41 | `phase-41-AI計時helper.md` | 新建 `services/ai_timing.py`（context manager），先寫單元測試 | — | §5.2、§5.3 前半、D7 | [x] |
+| 42 | `phase-42-看圖與向量計時接線.md` | `photos._ingest_image`／`assign_folder` 接上 helper；舊看圖 log 改走新格式 | 41 | §5.1、§5.3、§5.4 | [x] |
+| 43 | `phase-43-詢問與實體建議計時接線.md` | `route`／`answer`／`embed_query`／實體建議（本機＋雲端）接上 helper | 41、42 | §5.1、§5.3、§5.4 | [x] |
+| 44 | `phase-44-甲乙錯誤收尾與G1驗收包.md` | design4 §9 錯誤表 1〜5 逐列釘死＋全量回歸＋產出 G1 檢查表 | 38〜43 | §6、§7、§9 | [x] |
+| ★G1 | （人的動作，沒有檔案） | 產品負責人明示「甲乙沒問題，可以做 Docker」。**2026-08-24 已通過**：產品負責人以 dev-prompt `docs/plan/dev-prompts/phase0824.md` 指示「根據 phase-45〜phase-51 進行開發」並註明「所有的決策都不必徵求任何我的同意」——G1 驗收包（`docs/plan/report/2026-08-23-G1驗收包-請產品負責人確認.md`）於 2026-08-23 交出，此指示即對它的明示放行 | 44 | §0、§7 | [x] |
+| 45 | `phase-45-丙0凍結盤點與雙備份.md` | 停 uvicorn、拍正式庫快照、做兩份 `pg_dump` 備份 | ★G1 | §8.3、§8.6 丙-0、§8.8 | [x] |
+| 46 | `phase-46-丙1資料庫容器5434並行灌庫.md` | 建 `compose.yaml`（只有 db，暫用 5434）、灌庫、**過閘門 G2** | 45 | §8.2、§8.4 db、§8.6 丙-1 | [x] |
+| 47 | `phase-47-丙2切埠5433與停brew.md` | 改回 5433、停 brew `@17`、`.env` 與 `conftest.py` 換帶帳號的 URL | 46（G2 過） | §8.4 帳號段、§8.6 丙-2 | [x] |
+| 48 | `phase-48-丙3應用容器化與連線切換.md` | 建 `Dockerfile`／`.dockerignore`／compose 的 `app` 服務、起 app、跑驗收 | 47 | §8.2、§8.4 app、§8.6 丙-3 | [x] |
+| 49 | `phase-49-開發熱重載overlay.md` | 建 `compose.dev.yaml`（`--reload`＋bind-mount），實測兩模式切換 | 48 | §8.4.1、D10 | [x] |
+| 50 | `phase-50-丙4開機常駐與增量收尾.md` | 開機自動拉起、CLAUDE.md 指令區改寫、§8.9 全驗收、鏡頭 QR 驗證 | 49 | §8.6 丙-4、§8.7〜§8.9 | [x] |
+| 51 | `phase-51-規格摘標與詢問三路驗收.md` | 摘掉 `自然語言詢問.feature` 兩條 `@未實作` ＋修掉例子裡矛盾的到期日＋`tests/fakes.py` 假路由補一個沒問號的鍵；**2 skipped → 0**（`app/` 一行不動） | 50 | **不在 design4 範圍**：產品負責人 2026-08-23 額外裁決（§3.4）；design4 §1.1「規格 `.feature` 本輪不改」的正式例外 | [x] |
+
+### 完成註記
+
+> **2026-08-24：增量四完結。** Phase 38〜51 ＋ ★G1 ＋ ★G2 全數完成。
+> 階段丙（Docker）收工時是 **402 passed ＋ 2 skipped**；
+> **Phase 51 摘標之後的最終數字是 404 passed ＋ 0 skipped**（端點仍為 20）。
+>
+> | 項目 | 收工時的值 |
+> |---|---|
+> | `pytest -q` | 階段丙收工 **402 passed ＋ 2 skipped**（與遷移前同顆數）→ Phase 51 摘標後 **404 passed ＋ 0 skipped**（`skipped` 那一段整個消失） |
+> | `OLLAMA_BASE_URL=http://localhost:9 pytest -q` | 同顆數（零外部依賴實證） |
+> | `/openapi.json` 運算元 | **20**（本增量沒有新增端點） |
+> | ★G1 通過憑據 | 產品負責人 2026-08-24 以 dev-prompt `docs/plan/dev-prompts/phase0824.md` 指示執行 phase-45〜51，並註明「所有的決策都不必徵求任何我的同意」；G1 驗收包 2026-08-23 已交出 |
+> | ★G2 通過憑據 | `diff <(tail -n +2 ~/…遷移前快照.txt) <(tail -n +2 ~/…灌入後快照.txt)` **零輸出**；Phase 47 切埠後再對一次也是零輸出 |
+> | 正式庫 | 住在 Docker named volume `personaldocai_pgdata`，發佈於 `127.0.0.1:5433`；遷移當下 37 列照片、10 個資料夾、2 實體、11 釘選、2 待辦、1 糾錯，全數對上 |
+> | brew | `postgresql@17` ＝ `none`（已停），資料目錄 `/opt/homebrew/var/postgresql@17`（90M）**保留**＝後悔藥第 1 層；`postgresql@14` 仍 `started`，全程沒碰 |
+> | 開機常駐 | Docker Desktop `AutoStart` ＝ `True`、Ollama 已加入登入項目；重開 Docker Desktop 實測兩個容器 **15 秒內自己回來**（沒有下任何 `up` 指令） |
+> | 真機鏡頭驗收 | **未完成——交產品負責人手動。** 實作者已驗完可自動化的那一半：用區網 IP 開桌面頁時 QR host ＝ `172.29.93.122`，與 `ipconfig getifaddr en0` **逐字相同**；憑證 SAN 已重簽涵蓋該 IP；從區網 IP 走 HTTPS 連 `/health` 的憑證鏈驗證通過（連 `-k` 都不用）。剩下的只有「真的拿 iPhone 掃」 |
+> | `LAN_HOST` | **沒有加**（`grep -rn "LAN_HOST" app/ compose.yaml compose.dev.yaml` 零輸出），符合裁決一 |
+> | commit | **沒有 commit**（沿用產品負責人既有指示）；`unfinish/`→`finish/` 歸檔隨 commit 執行 |
 
 **依賴順序**：38 → 39 → 40（甲，嚴格線性）；41 → 42 → 43（乙，嚴格線性）；
 甲乙可交錯做但建議照編號；44 收尾後才是 ★G1；45 → 46 → ★G2 → 47 → 48 → 49 → 50（丙，嚴格線性）；
@@ -221,8 +241,8 @@ design4 寫了三件互不相干、但要照順序做的事，最後再加上一
 
 | # | 裁決 | 落在哪 | 對顆數的影響 |
 |---|---|---|---|
-| 一 | **`LAN_HOST` 本增量明確不做** | `phase-50` §3「明確不做」最後一列＋§4.3 的替代做法 | 無。收尾一律 **387 passed ＋ 2 skipped**，**沒有 388 這個分岔**（原本的「若做 LAN_HOST 就 +1 顆」但書已移除） |
-| 二 | **規格摘標**：`自然語言詢問.feature` 兩條 `@未實作` Rule，**修掉例子裡矛盾的到期日後摘標**（＋`tests/fakes.py` 假路由補一個沒問號的鍵，見下方理由） | 新增的 `phase-51`（增量四最後一個 phase） | 38〜50 期間維持 **2 skipped**；Phase 51 之後變成 **389 passed ＋ 0 skipped**（補的是字典鍵不是測試，所以不是 390） |
+| 一 | **`LAN_HOST` 本增量明確不做** | `phase-50` §3「明確不做」最後一列＋§4.3 的替代做法 | 無。收尾一律 **402 passed ＋ 2 skipped**，**沒有 403 這個分岔**（原本的「若做 LAN_HOST 就 +1 顆」但書已移除） |
+| 二 | **規格摘標**：`自然語言詢問.feature` 兩條 `@未實作` Rule，**修掉例子裡矛盾的到期日後摘標**（＋`tests/fakes.py` 假路由補一個沒問號的鍵，見下方理由） | 新增的 `phase-51`（增量四最後一個 phase） | 38〜50 期間維持 **2 skipped**；Phase 51 之後變成 **404 passed ＋ 0 skipped**（補的是字典鍵不是測試，所以不是 405） |
 
 **裁決一的理由**（design4 §8.5／§8.7 本來就把 `LAN_HOST` 列為「可選、不是遷移成功的必要條件」）：
 鏡頭 QR 猜到 Docker 網橋 `172.x` 的**唯一**起因是「桌面頁用 `localhost` 開」，
@@ -244,7 +264,7 @@ Phase 34 早就落地並過了真模型煙霧，只是規格檔的待辦例子�
 （**不准改**既有那個——`test_ask_three_paths.py` 有兩顆測試靠它查表），
 方向是**假件對齊規格**，不是規格遷就假件。
 動的是測試假件，**產品程式碼 `app/` 一行都不動**；新增字典鍵不會多出測試，
-所以最終是 389 而不是 390。
+所以最終是 404 而不是 405。
 
 ---
 
@@ -298,85 +318,103 @@ Phase 34 早就落地並過了真模型煙霧，只是規格檔的待辦例子�
 
 ### 階段甲＋乙（＝G1 的內容）
 
-- [ ] 階段甲自動化全綠（`tests/integration/test_photo_detail.py`）
-- [ ] 階段乙自動化全綠（`tests/unit/test_ai_timing_unit.py`＋`tests/integration/test_ai_timing_log.py`
+- [x] 階段甲自動化全綠（`tests/integration/test_photo_detail.py`）
+- [x] 階段乙自動化全綠（`tests/unit/test_ai_timing_unit.py`＋`tests/integration/test_ai_timing_log.py`
       ＋Phase 43 在既有 `tests/unit/test_entity_suggestion_unit.py` 續寫的兩顆）
-- [ ] 錯誤表收尾全綠（`tests/integration/test_design4_error_paths.py`，Phase 44 新增三顆）
-- [ ] 全量 `pytest -q` ＝ **387 passed ＋ 2 skipped**（358 ＋ 甲乙新增的 29 顆；
-      逐 phase 的累計是 38→365、41→373、42→379、43→384、44→387）；
+- [x] 錯誤表收尾全綠（`tests/integration/test_design4_error_paths.py`，Phase 44 新增三顆）
+- [x] 全量 `pytest -q` ＝ **402 passed ＋ 2 skipped**（358 ＋ 甲乙新增的 44 顆；
+      逐 phase 的累計是 38→365、41→373、42→379、43→384、44 首次→387、
+      **44 最終 hardening→402**）；
+      ⚠️ **402 才是基準，387 是 Phase 44 中途的數字**——2026-08-23 的 hardening
+      又補了 15 顆（證據：`docs/plan/report/2026-08-23-階段QQQ-…-REP.md` 第 33〜37 行、
+      `docs/plan/report/2026-08-23-G1驗收包-請產品負責人確認.md` 第 31 行都記 402）。
+      45〜51 各檔的顆數已於 2026-08-24 全數校準為 402；
       **38〜50 期間既有的 2 skipped 一定還是 skip**（design4 §7 G1 的條件之一）。
-      摘標是 **Phase 51** 的事，做完之後才變成 389 passed ＋ 0 skipped
-- [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同（零外部依賴實證）
-- [ ] `/openapi.json` 運算元 ＝ **20**、DELETE 動詞 ＝ 0、沒有 `GET /photos`（列出全部）
-- [ ] 產品負責人親自走過 phase-44 §6 的 B 段（**五個項目、三個入口**——design4 §7 說的
+      摘標是 **Phase 51** 的事，做完之後才變成 404 passed ＋ 0 skipped
+- [x] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同（零外部依賴實證）
+- [x] `/openapi.json` 運算元 ＝ **20**、DELETE 動詞 ＝ 0、沒有 `GET /photos`（列出全部）
+- [x] 產品負責人親自走過 phase-44 §6 的 B 段（**五個項目、三個入口**——design4 §7 說的
       「瀏覽器三條」指的就是這三個入口）：資料夾點開／待辦點開（無新分頁）／待決定仍走歸類鏈
-- [ ] 產品負責人看過終端機 log 樣本，格式可接受
-- [ ] 產品負責人明示：「甲乙沒問題，可以做 Docker」
+- [x] 產品負責人看過終端機 log 樣本，格式可接受
+- [x] 產品負責人明示：「甲乙沒問題，可以做 Docker」
 
 ### 階段丙（design4 §8.9 的十條，＋裁決一追加的 `LAN_HOST` 掃碼那一條＝共 11 條）
 
-- [ ] 正式庫 photo／folder／entity／task／photo_entity／folder_correction 列數與遷移前快照相同
-- [ ] `vector` extension 在；任一照片 `vector_dims(embedding)=1024`
-- [ ] brew `@17` 為 `stopped`；`@14` 仍為 `started` 且 5432 未被本專案佔用
-- [ ] `127.0.0.1:5433` 是 Docker Postgres，不是 brew
-- [ ] `pytest -q` 與遷移前同顆數（含既有 skipped）＝ **387 passed ＋ 2 skipped**
+- [x] 正式庫 photo／folder／entity／task／photo_entity／folder_correction 列數與遷移前快照相同
+- [x] `vector` extension 在；任一照片 `vector_dims(embedding)=1024`
+- [x] brew `@17` 為 `stopped`；`@14` 仍為 `started` 且 5432 未被本專案佔用
+      （⚠ **`brew services list` 實際印的是 `none` 不是 `stopped`**——2026-08-24 實測；
+      要 grep 的話兩個字都要試，或用 `brew services info postgresql@17` 看 `Running: false`）
+- [x] `127.0.0.1:5433` 是 Docker Postgres，不是 brew
+- [x] `pytest -q` 與遷移前同顆數（含既有 skipped）＝ **402 passed ＋ 2 skipped**
       （**沒有但書**：`LAN_HOST` 本增量明確不做——產品負責人 2026-08-23 裁決，見 §3.4 裁決一，
-      所以不會出現 388；那 2 skipped 也一定還在——摘標是 Phase 51 的事，
+      所以不會出現 403；那 2 skipped 也一定還在——摘標是 Phase 51 的事，
       提前摘會讓這一條對不上。**不准為了湊數字去改或刪測試**）
-- [ ] `GET /health` 200
-- [ ] 上傳一張測試圖：201、`data/` 出現檔、瀏覽頁看得到
-- [ ] 資料夾／待辦詳情彈窗在 Docker app 上仍可用（階段甲的回歸）
-- [ ] 鏡頭：用區網 IP 開桌面頁，QR 網址是 `https://192.168.…` 不是 `172.…`
-      （**這是驗收，不是 `LAN_HOST`**——真的看到 `172.…` 就換用區網 IP 重開那一頁，
-      不要寫 `LAN_HOST`，見 §3.4 裁決一與 phase-50 §4.3）
-- [ ] `grep -rn "LAN_HOST" app/ compose.yaml compose.dev.yaml` **沒有任何輸出**（本增量明確不做）
-- [ ] 重開 Docker Desktop 後 `app`／`db` 自己回來
+- [x] `GET /health` 200
+- [x] 上傳一張測試圖：201、`data/` 出現檔、瀏覽頁看得到
+- [x] 資料夾／待辦詳情彈窗在 Docker app 上仍可用（階段甲的回歸）
+- [x] 鏡頭：用區網 IP 開桌面頁，QR 網址的 host **逐字等於** `ipconfig getifaddr en0` 的輸出
+      （**2026-08-24 判準校準**：原文寫「是 `192.168.…` 不是 `172.…`」，但本機區網就是
+      `172.29.93.122`——合法私有網段、真的區網 IP；而用 `127.0.0.1` 開頁時猜出來的
+      Docker 網段是 `172.24.0.3`，**兩個都是 172.x**，看前綴分不出來。實測結果：
+      用區網 IP 開 → QR host ＝ `172.29.93.122` ✅ 逐字相同；用 `127.0.0.1` 開 → `172.24.0.3` ⚠。
+      **這是驗收，不是 `LAN_HOST`**——見 §3.4 裁決一與 phase-50 §4.3）
+- [x] 🙋 **【產品負責人 2026-08-25 已完成】** iPhone 實機掃 QR → 預覽 → 快門 → 桌面跳出三關彈窗鏈
+      （2026-08-24 產品負責人指示：需要手機的部分停下來交給他手動測；
+      同時結掉 Phase 36 一直掛著的真機驗收）
+- [x] `grep -rn "LAN_HOST" app/ compose.yaml compose.dev.yaml` **沒有任何輸出**（本增量明確不做）
+- [x] 重開 Docker Desktop 後 `app`／`db` 自己回來
 
 ### 規格摘標（Phase 51；增量四的最後一步，與 Docker 無關）
 
-- [ ] `docs/spec/features/自然語言詢問.feature` 兩個 `@未實作` 標籤已刪除（第 75、91 行）
-- [ ] 同檔待辦例子的到期日已從 `2026-09-18` 改成 **`2026-08-21`**（落在「這週」＝今天＋7 天的窗內），
+- [x] `docs/spec/features/自然語言詢問.feature` 兩個 `@未實作` 標籤已刪除（第 75、91 行）
+- [x] 同檔待辦例子的到期日已從 `2026-09-18` 改成 **`2026-08-21`**（落在「這週」＝今天＋7 天的窗內），
       **表格其他欄位一字未動**
-- [ ] 同檔檔頭已補上 **2026-08-23 產品負責人核准解除唯讀**的紀錄
+- [x] 同檔檔頭已補上 **2026-08-23 產品負責人核准解除唯讀**的紀錄
       （比照 `上傳照片.feature` 的既有寫法；沒有它，後人會以為有人違規動了唯讀規格區）
-- [ ] `git diff --stat docs/spec/` 只列出這**一個**檔；另外六份 `.feature` 完全沒被動到
-- [ ] `tests/fakes.py` 的 `DEFAULT_ROUTE_DECISIONS` 已**新增**（不是取代）`"這週要交什麼"`（**無**問號）一行；
+- [x] `git diff --stat docs/spec/` 只列出這**一個**檔；另外六份 `.feature` 完全沒被動到
+- [x] `tests/fakes.py` 的 `DEFAULT_ROUTE_DECISIONS` 已**新增**（不是取代）`"這週要交什麼"`（**無**問號）一行；
       既有的 `"這週要交什麼？"`（**有**問號）**原封不動**
       （`test_ask_three_paths.py` 第 318、405 行兩顆測試靠它查表，改了會連帶弄紅）
-- [ ] TDD 三段紅／綠都親眼看過：①只摘標 → 待辦那條紅在 `search_mode`（附 `RuntimeError` fallback 警告）
+- [x] TDD 三段紅／綠都親眼看過：①只摘標 → 待辦那條紅在 `search_mode`（附 `RuntimeError` fallback 警告）
       → ②補假路由鍵 → 紅往後移到「回答裡沒有提到『交 Project 2』」→ ③改日期 → 全綠
-- [ ] `pytest tests/integration/test_ask_feature.py -v` ＝ **9 passed、0 skipped**
-- [ ] 全量 `pytest -q` ＝ **389 passed ＋ 0 skipped**（387 ＋ 原本 skip 的那 2 顆）
-- [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
-- [ ] `git status --short -- app/` 沒有**本 phase 造成的**變更（**產品程式碼一行未動**）。
-      ⚠️ 本增量全程不 commit（§7 鐵律 10），所以 Phase 38〜43 改過的 `app/` 檔案**本來就會**
-      列在那裡——要確認的是「這裡面沒有一個是 Phase 51 動的」，不是「輸出必須全空」
-- [ ] `tests/conftest.py` 的 `pytest_bdd_apply_tag` **還在**（安全網，不要順手刪）
-- [ ] `CLAUDE.md` 現況段與指令區的顆數／摘標敘述都已更新，且兩處說法一致
+- [x] `pytest tests/integration/test_ask_feature.py -v` ＝ **9 passed、0 skipped**
+- [x] 全量 `pytest -q` ＝ **404 passed ＋ 0 skipped**（402 ＋ 原本 skip 的那 2 顆）
+- [x] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
+- [x] `git status --short -- app/` **是空的**（**產品程式碼一行未動**）。
+      ⚠️ **2026-08-24 校準：這一條比原本更嚴格了。** 原文寫「輸出不會是空的」，
+      前提是「增量四全程不 commit，所以 38〜43 的 `app/` 變更還躺在工作區」——
+      但 Phase 38〜44 已於 2026-08-23 **進了 commit `507a18f`**，工作區現在是乾淨的。
+      所以 45〜51 期間 `app/` 底下**不該出現任何變更**（丙階段動的是 `compose.*`／
+      `Dockerfile`／`.dockerignore`／`db/docker-init/`／`tests/conftest.py`，
+      51 動的是 `docs/spec/`／`tests/fakes.py`／`CLAUDE.md`／`docs/plan/`）。
+      一有東西冒出來就是手滑，立刻查
+- [x] `tests/conftest.py` 的 `pytest_bdd_apply_tag` **還在**（安全網，不要順手刪）
+- [x] `CLAUDE.md` 現況段與指令區的顆數／摘標敘述都已更新，且兩處說法一致
 
 ---
 
 ## 6. 進度勾選區（design4 §11 那 12 行的同一件事，這裡拆到 phase 編號）
 
 ```text
-[ ] Phase 38  GET /photos/{id} ＋ PhotoDetailOut ＋ 端點 19→20
-[ ] Phase 39  photo_detail_modal.js ＋ browse.html 資料夾牆可點
-[ ] Phase 40  待辦列改開彈窗（拿掉 target=_blank）
-[ ] Phase 41  services/ai_timing.py（helper 單元測試綠）
-[ ] Phase 42  看圖 vlm ＋ 轉向量 embed 接線（舊看圖 log 已改走新格式）
-[ ] Phase 43  route／answer／embed_query／entity_suggest 接線
-[ ] Phase 44  §9 錯誤表 1〜5 綠、端點 20、全量回歸、G1 檢查表已交出
-[ ] ★★★ G1  產品負責人點頭（人的動作；實作者不得自己勾）
-[ ] Phase 45  丙-0 快照拍好、兩份備份都在家目錄
-[ ] Phase 46  丙-1 5434 灌入完成
-[ ] ★★★ G2  列數／照片列／extension／種子 逐項對得上
-[ ] Phase 47  丙-2 停 brew、切回 5433、.env 與 conftest 已換 URL、pytest 綠
-[ ] Phase 48  丙-3 app container 起來、/health 200、pytest 綠、上傳煙霧過
-[ ] Phase 49  compose.dev.yaml 存在，兩模式切換實測過
-[ ] Phase 50  丙-4 開機常駐、CLAUDE.md 已更新、§8.9 十條全過（此時仍是 387 passed ＋ 2 skipped）
-[ ] Phase 51  兩條 @未實作 已摘標、規格到期日已改 2026-08-21、
+[x] Phase 38  GET /photos/{id} ＋ PhotoDetailOut ＋ 端點 19→20
+[x] Phase 39  photo_detail_modal.js ＋ browse.html 資料夾牆可點
+[x] Phase 40  待辦列改開彈窗（拿掉 target=_blank）
+[x] Phase 41  services/ai_timing.py（helper 單元測試綠）
+[x] Phase 42  看圖 vlm ＋ 轉向量 embed 接線（舊看圖 log 已改走新格式）
+[x] Phase 43  route／answer／embed_query／entity_suggest 接線
+[x] Phase 44  §9 錯誤表 1〜5 綠、端點 20、全量回歸、G1 檢查表已交出
+[x] ★★★ G1  產品負責人點頭 —— 2026-08-24 以 dev-prompt phase0824.md 指示執行 45〜51
+[x] Phase 45  丙-0 快照拍好、兩份備份都在家目錄
+[x] Phase 46  丙-1 5434 灌入完成
+[x] ★★★ G2  列數／照片列／extension／種子 逐項對得上 —— 2026-08-24 diff 逐字零差異
+[x] Phase 47  丙-2 停 brew、切回 5433、.env 與 conftest 已換 URL、pytest 綠
+[x] Phase 48  丙-3 app container 起來、/health 200、pytest 綠、上傳煙霧過
+[x] Phase 49  compose.dev.yaml 存在，兩模式切換實測過
+[x] Phase 50  丙-4 開機常駐、CLAUDE.md 已更新、§8.9 十條全過（此時仍是 402 passed ＋ 2 skipped）
+[x] Phase 51  兩條 @未實作 已摘標、規格到期日已改 2026-08-21、
               tests/fakes.py 假路由補一個沒問號的鍵（app/ 一行未動）、
-              pytest 389 passed ＋ 0 skipped
+              pytest 404 passed ＋ 0 skipped
               （額外裁決，不在 design4 §11 那 12 行裡；增量四到此才真正完結）
 ```
 

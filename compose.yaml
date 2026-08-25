@@ -1,0 +1,90 @@
+# PersonalDocAI 的常駐服務定義（design4.md §8.4）。
+#
+# ⚠ 這一份是「開機自動拉起」用的，**永遠不要**在這裡加 uvicorn 的 --reload。
+#   日常開發用 compose.dev.yaml 疊上去（Phase 49），理由見 design4.md §8.4.1。
+#
+# ⛔ 會弄丟正式庫的四種操作（volume `pgdata` 裡是正本，不是複本）：
+#   1. `docker compose down -v`        -v ＝ 連 volume 一起刪。停服務一律用 `docker compose stop`
+#   2. `docker system prune --volumes` / `docker volume prune -a`
+#      ——這兩個會刪掉「沒有 container 指著」的具名 volume，也就是任何一次
+#      `docker compose down` 之後都危險；Docker Desktop 的 "Reset to factory defaults"
+#      與 Volumes 分頁的垃圾桶圖示同理
+#   3. `docker volume rm personaldocai_pgdata`
+#   4. **把映像 tag 從 pg17 換成 pg18**（見下面 image 那一行的註解）
+#   刪之前一定先備份：CLAUDE.md 指令區有「日常備份」兩種寫法。
+
+# ★ 專案名一定要寫死。不寫的話 Compose 會拿「當前資料夾的名字」當專案名，
+#   於是 volume 就叫 <資料夾名>_pgdata——資料夾一改名／搬家／重新 clone 成別的名字，
+#   `docker compose up -d` 會**安靜地建一個全新的空 volume**、跑一次 initdb，
+#   然後 app 對著空資料庫起來。你的照片其實還在舊 volume 裡，但畫面上跟「資料全沒了」
+#   一模一樣，很難聯想。寫死 name 之後，資料夾叫什麼都指向同一個 personaldocai_pgdata。
+name: personaldocai
+
+services:
+  db:
+    # 官方 pgvector 映像（PostgreSQL 17 ＋ vector 擴充），與本機 brew 的版本一致
+    # ⛔ 換 tag 前先確認新映像的 PGDATA 還是不是 /var/lib/postgresql/data：
+    #    pg17 的 PGDATA ＝ /var/lib/postgresql/data      （＝下面掛 volume 的位置）
+    #    pg18 的 PGDATA ＝ /var/lib/postgresql/18/docker （**不一樣了**）
+    #    直接把 pg17 改成 pg18 的話，掛載點不再是 PGDATA，initdb 會在容器層建一個全新的空叢集，
+    #    app 對著空資料庫起來，而你的資料原封不動躺在 volume 裡——看起來就像資料全沒了。
+    #    真的要升版：先備份、再照官方的 pg_upgrade 流程走，不要只改 tag。
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: PersonalDocAI          # 容器第一次啟動時自動建這個資料庫
+      POSTGRES_USER: postgres             # 官方映像強制要有帳號，用預設的 postgres
+      POSTGRES_HOST_AUTH_METHOD: trust    # 不設密碼；埠只綁 127.0.0.1，區網打不到
+    ports:
+      # 5433 ＝本專案沿用的埠（brew 的 postgresql@17 已於 Phase 47 停用）。
+      # 127.0.0.1: 前綴＝只綁本機，同一個 Wi-Fi 的其他裝置打不到資料庫。
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # named volume：正式庫的資料真正住的地方（container 砍掉重建也還在）
+      - pgdata:/var/lib/postgresql/data
+      # init 腳本：只在 pgdata 第一次誕生時跑一次；ro ＝ 唯讀掛進去
+      - ./db/docker-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # pg_isready ＝ Postgres 官方的「你準備好了嗎」小工具
+      # ★ `-h 127.0.0.1` 是 2026-08-24 code review 後加的，**與 design4 §8.4 的原文有一處差異**，
+      #   理由（實測過，不是推論）：官方映像第一次啟動時，會先起一個
+      #   `listen_addresses=''` 的暫時伺服器來跑 init 腳本——那個伺服器**只聽 Unix socket**。
+      #   不寫 `-h` 的 pg_isready 走的正是 socket，於是 init 還在跑就回報 ready、
+      #   healthcheck 提早變綠，但這時 TCP 埠根本還沒開（實測整整早了 22 秒）。
+      #   後果有兩個：① app 的 `depends_on: service_healthy` 在 volume 第一次誕生時形同虛設
+      #   ② 照 design4 §8.6 的搬家流程「等 healthcheck 綠了就 pg_restore」會打進一個關著的埠。
+      #   加上 `-h 127.0.0.1` 之後，healthcheck 問的就是「TCP 真的通了沒」。
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d PersonalDocAI"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .                       # 用同目錄的 Dockerfile 蓋映像
+    ports:
+      # 發佈到 0.0.0.0（不加 127.0.0.1 前綴）——手機要連得到才做得了無線鏡頭
+      - "8000:8000"
+    environment:
+      # ★ 容器裡的連線字串：走 Compose 內部網路，服務名 db 就是主機名，
+      #   而且用的是容器內的 5432（不是 Mac 上的 5433）。
+      #   這一行會**覆蓋** .env 裡的同名設定（python-dotenv 預設不覆寫既有環境變數），
+      #   所以 host 上的 .env 仍然可以寫 localhost:5433 給 pytest 與手動 psql 用。
+      DATABASE_URL: postgresql://postgres@db:5432/PersonalDocAI
+      # ★ Ollama 跑在 Mac 上、不進 Docker：容器用這個特殊名字連回宿主機
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    volumes:
+      # 原圖與縮圖住在 host（§8.10：不打進映像）
+      - ./data:/app/data
+      # mkcert 憑證（HTTPS，手機鏡頭需要安全來源）
+      - ./certs:/app/certs
+      # 其餘設定（模型名稱、OLLAMA_API_KEY…）；連線字串由上面 environment 覆蓋
+      - ./.env:/app/.env
+      # ★ 常駐**不掛原始碼**——程式在映像裡（bind-mount 原始碼是 Phase 49 的開發 overlay）
+    depends_on:
+      db:
+        condition: service_healthy   # 等 db 的 healthcheck 綠了才啟動 app
+    restart: unless-stopped
+    # ★ 只能一個 replica（鏡頭配對 session 存在記憶體裡，兩個行程會配對失敗）
+
+volumes:
+  pgdata:

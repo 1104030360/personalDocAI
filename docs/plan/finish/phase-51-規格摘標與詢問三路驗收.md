@@ -15,14 +15,14 @@
 > 🎯 **一句話目標：** 把 `docs/spec/features/自然語言詢問.feature` 那兩條掛著 `@未實作`
 > 的 Rule（實體別針路、待辦路）**摘掉標籤、修掉規格自己寫錯的到期日**，
 > 讓 Phase 34 早就做好的「詢問三路」正式進規格驗收——
-> 全量測試從 **387 passed ＋ 2 skipped** 變成 **389 passed ＋ 0 skipped**。
+> 全量測試從 **402 passed ＋ 2 skipped** 變成 **404 passed ＋ 0 skipped**。
 
 > **為什麼排在增量四最後一個（不是提前做）：**
 > design4 §7 的閘門 G1 明文要求「既有 **2 skipped 仍 skip**」，§8.9 的階段丙驗收也要求
 > 「`pytest -q` 與遷移前**同顆數（含既有 skipped）**」。摘標會把 2 skipped 變成 0，
 > 提前做就會讓這兩條驗收**對不上**——實作者得一路解釋「數字不一樣是因為別的事」，
-> 那正是閘門最不該有的雜訊。排在最後，38〜50 的顆數鏈（387 ＋ 2）**完全不受影響**，
-> 只有本 phase 自己把它變成 389 ＋ 0。
+> 那正是閘門最不該有的雜訊。排在最後，38〜50 的顆數鏈（402 ＋ 2）**完全不受影響**，
+> 只有本 phase 自己把它變成 404 ＋ 0。
 
 ---
 
@@ -44,13 +44,13 @@
 ## 2. 前置條件
 
 - **Phase 50 已完成**（增量四的 Docker 那條線收工、`CLAUDE.md` 指令區已改寫）。
-- 目前狀態應該是：`pytest -q` ＝ **387 passed ＋ 2 skipped**、`/openapi.json` 端點 ＝ **20**。
+- 目前狀態應該是：`pytest -q` ＝ **402 passed ＋ 2 skipped**、`/openapi.json` 端點 ＝ **20**。
 - 本檔所有指令都在專案根目錄執行，並且要先進虛擬環境：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 docker compose ps          # db 要是 Up (healthy)，測試庫在它裡面（Phase 47 之後）
-pytest -q                  # 先確認基準沒跑掉：387 passed ＋ 2 skipped
+pytest -q                  # 先確認基準沒跑掉：402 passed ＋ 2 skipped
 ```
 
 - **不需要**閘門 G1／G2 的檢查框：那兩道閘門守的是「可不可以碰 Docker／可不可以停 brew」，
@@ -101,7 +101,7 @@ pytest -q                  # 先確認基準沒跑掉：387 passed ＋ 2 skipped
 
 ### 4.0 先看懂「現在是什麼狀況」（不動手，5 分鐘）
 
-- [ ] 確認那兩條 Rule 真的被 skip（**這是純收集，不會跑到資料庫**）：
+- [x] 確認那兩條 Rule 真的被 skip（**這是純收集，不會跑到資料庫**）：
 
 ```bash
 pytest tests/integration/test_ask_feature.py --collect-only -q
@@ -113,7 +113,7 @@ pytest tests/integration/test_ask_feature.py --collect-only -q -m skip
   第二條印出 `2/9 tests collected (7 deselected)`
   ——那 2 個就是全量 `pytest -q` 尾巴看到的 **2 skipped**。
 
-- [ ] 讀一遍 skip 是怎麼發生的：`tests/conftest.py` 第 99〜105 行
+- [x] 讀一遍 skip 是怎麼發生的：`tests/conftest.py` 第 99〜105 行
 
 ```python
 def pytest_bdd_apply_tag(tag, function):
@@ -129,14 +129,23 @@ def pytest_bdd_apply_tag(tag, function):
   回傳 `True` ＝「這個標籤我處理掉了」；回傳 `None` ＝「交還給 pytest-bdd 預設處理」。
   所以 `@未實作` 這四個字**只在這裡**有意義，刪掉標籤就等於解除 skip，**不必改任何程式**。
 
-- [ ] **先拍一份「動筆前的 `app/` 長相」**（§4.5 收尾要拿它比對）。
-      本增量全程不 commit，所以階段甲乙（Phase 38〜43）改過的產品碼都還躺在工作區裡——
-      唯一能證明「本 phase 沒碰產品碼」的方式，就是前後兩份清單一模一樣：
+- [x] **先拍一份「動筆前的 `app/` 長相」**（§4.5 收尾要拿它比對）：
 
 ```bash
 git status --short -- app/ > /tmp/phase51-app-before.txt
-cat /tmp/phase51-app-before.txt      # 看一眼：這些都是前面 phase 留下的，不是你的
+cat /tmp/phase51-app-before.txt      # 看一眼現在長什麼樣
 ```
+
+> **2026-08-24 校準：這份快照現在應該是「空的」，而且那是好事。**
+> 原文的前提是「本增量全程不 commit，所以階段甲乙（Phase 38〜43）改過的產品碼
+> 都還躺在工作區裡，唯一能證明沒碰產品碼的方式是前後兩份清單一模一樣」。
+> 但 **Phase 38〜44 已於 2026-08-23 進 commit `507a18f`**，工作區乾淨了，
+> 45〜50 的階段丙也一行 `app/` 都沒動。所以：
+> - 動筆前 `git status --short -- app/` ＝ **空**
+> - 做完之後也必須 ＝ **空**
+>
+> 拍快照的做法**保留不變**（§4.5 的 `diff` 照跑）——多一道保險不吃虧，
+> 而且「兩份都空」比「兩份一樣」是更強的證據。
 
 ### 4.1 步驟一：只摘標籤，先看紅（**這一步刻意不改日期**）
 
@@ -146,7 +155,7 @@ cat /tmp/phase51-app-before.txt      # 看一眼：這些都是前面 phase 留�
 > 保險做法二選一：**由下往上刪**（先 91、再 75），或直接在編輯器裡搜尋 `@未實作` 刪兩次。
 > 後面每個步驟也一樣——看到行號對不上，先數一下前面刪了／加了幾行，不要以為規格被別人動過。
 
-- [ ] 刪掉 `docs/spec/features/自然語言詢問.feature` 的**第 75 行**與**第 91 行**
+- [x] 刪掉 `docs/spec/features/自然語言詢問.feature` 的**第 75 行**與**第 91 行**
       （兩行都只有縮排＋`@未實作`，整行刪掉，不要留空行）：
 
 ```diff
@@ -165,7 +174,7 @@ cat /tmp/phase51-app-before.txt      # 看一眼：這些都是前面 phase 留�
      Example: 問這週要交什麼
 ```
 
-- [ ] 跑 binder：
+- [x] 跑 binder：
 
 ```bash
 pytest tests/integration/test_ask_feature.py -v
@@ -205,7 +214,7 @@ RuntimeError: 無法判斷問題類型：這週要交什麼
 只能推論「有人違規動了唯讀檔」。`上傳照片.feature` 的檔頭已經有三筆同樣格式的紀錄
 （2026-08-20／08-21／08-22），照抄那個寫法即可。
 
-- [ ] 在 `自然語言詢問.feature` 現有檔頭註解的**最後一行之後**、`Feature:` 之前，**插入**：
+- [x] 在 `自然語言詢問.feature` 現有檔頭註解的**最後一行之後**、`Feature:` 之前，**插入**：
 
 ```text
 # 2026-08-23 產品負責人核准解除唯讀（design4.md §1.1「規格 .feature 本輪不改」的正式例外）：
@@ -215,7 +224,7 @@ RuntimeError: 無法判斷問題類型：這週要交什麼
 #      7 天窗之外（今天 2026-08-18 ＋ 7 ＝ 2026-08-25），例子與它自己的問句互相矛盾
 ```
 
-- [ ] **現有的第 1〜5 行一個字都不要改。** 那是**時序紀錄**（2026-08-22 當時確實套了
+- [x] **現有的第 1〜5 行一個字都不要改。** 那是**時序紀錄**（2026-08-22 當時確實套了
       `@未實作`），不是現況描述；照 `上傳照片.feature` 的慣例，新的一筆往下疊就好。
 
 > 這一段**恰好 5 行**（§4.5 與 §7 會核對這個數字）；插進去之後，
@@ -228,7 +237,7 @@ RuntimeError: 無法判斷問題類型：這週要交什麼
 
 ### 4.3 步驟二：假路由補一個鍵（測試碼，不是產品碼）
 
-- [ ] 在 `tests/fakes.py` 的 `DEFAULT_ROUTE_DECISIONS`（第 221〜248 行）裡，
+- [x] 在 `tests/fakes.py` 的 `DEFAULT_ROUTE_DECISIONS`（第 221〜248 行）裡，
       **在既有那行「這週要交什麼？」旁邊新增一行**（不是改它）：
 
 ```python
@@ -260,7 +269,7 @@ RuntimeError: 無法判斷問題類型：這週要交什麼
 > 換掉鍵會讓那兩顆連帶變紅——那是**你弄壞的**，不是規格的問題。
 > **兩個鍵並存**，代價只有一行。
 
-- [ ] 重跑：
+- [x] 重跑：
 
 ```bash
 pytest tests/integration/test_ask_feature.py -v
@@ -282,7 +291,7 @@ E   assert '交 Project 2' in '查無相關照片。'
 
 ### 4.4 步驟三：改那一格日期（只有這一格）
 
-- [ ] 把 `自然語言詢問.feature` **待辦例子那一列**的日期改掉，**其餘欄位一字不動**
+- [x] 把 `自然語言詢問.feature` **待辦例子那一列**的日期改掉，**其餘欄位一字不動**
       （原檔第 99 行；經過 §4.1 刪 2 行、§4.2 加 5 行之後，它已經漂到**第 102 行**——
       最保險的找法是搜尋 `交 Project 2`，不要盲信行號）：
 
@@ -326,7 +335,7 @@ E   assert '交 Project 2' in '查無相關照片。'
    「往後 7 天」改成「到本週日為止」，`08-21` 照樣在窗內（`08-25` 就會出窗）。
    ——挑一個**兩種合理定義都成立**的日期，例子才不會因為實作換算方式微調就壞掉。
 
-- [ ] 重跑 binder：
+- [x] 重跑 binder：
 
 ```bash
 pytest tests/integration/test_ask_feature.py -v
@@ -336,22 +345,22 @@ pytest tests/integration/test_ask_feature.py -v
 
 ### 4.5 步驟四：全量回歸
 
-- [ ] 全量：
+- [x] 全量：
 
 ```bash
 pytest -q
 ```
 
-  **預期：389 passed ＋ 0 skipped**（387 ＋ 原本 skip 的那 2 顆變成 pass）。
+  **預期：404 passed ＋ 0 skipped**（402 ＋ 原本 skip 的那 2 顆變成 pass）。
   `skipped` 那一段會**整個消失**（pytest 不會印 `0 skipped`），這是正常的。
 
-- [ ] 零外部依賴實證（顆數必須完全相同，證明沒有偷打真 Ollama）：
+- [x] 零外部依賴實證（顆數必須完全相同，證明沒有偷打真 Ollama）：
 
 ```bash
 OLLAMA_BASE_URL=http://localhost:9 pytest -q
 ```
 
-- [ ] 三份規格 binder 單獨再跑一次：
+- [x] 三份規格 binder 單獨再跑一次：
 
 ```bash
 pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py \
@@ -360,7 +369,7 @@ pytest tests/integration/test_upload_feature.py tests/integration/test_ask_featu
 
   預期：全綠，**而且 `-v` 的輸出裡一個 `SKIPPED` 都沒有**。
 
-- [ ] 確認規格區只動了該動的地方：
+- [x] 確認規格區只動了該動的地方：
 
 ```bash
 git diff --stat docs/spec/
@@ -372,12 +381,12 @@ git diff docs/spec/features/自然語言詢問.feature
   （`--stat` 那一行會長成 `6 insertions(+), 3 deletions(-)` 之類——5＋1 進、2＋1 出）。
   **其他六份 `.feature` 必須完全沒出現在 `--stat` 裡。**
 
-- [ ] 確認產品程式碼一行都沒動。
+- [x] 確認產品程式碼一行都沒動。
 
-  ⚠️ **這裡不能期待「空輸出」**：本增量**全程不 commit**（產品負責人既有指示，見 §3 明確不做最後一列），
-  所以階段甲乙（Phase 38〜43）改過的 `app/` 檔案這時**一定還掛在工作區裡**，
-  `git status --short -- app/` 印出東西是**正常的**。要驗的是「**跟你動筆前一模一樣**」，
-  所以動筆前先拍一份、做完再比對：
+  ⚠️ **2026-08-24 校準：現在就是要期待「空輸出」。**
+  原文寫「不能期待空輸出」，前提是「增量四全程不 commit，階段甲乙改過的 `app/` 還掛在工作區」
+  ——但 Phase 38〜44 已於 2026-08-23 進 commit `507a18f`，工作區乾淨了。
+  要驗的仍然是「**跟你動筆前一模一樣**」（做法不變），只是這次兩邊都該是空的：
 
 ```bash
 # 動筆前先拍（建議併進 §4.0 一起做）
@@ -393,9 +402,9 @@ git status --short -- app/ | diff /tmp/phase51-app-before.txt - \
 
 ### 4.6 步驟五：收尾（文件）
 
-- [ ] **更新 `CLAUDE.md` 現況段**（Phase 50 §4.4 剛把數字寫成 387＋2，本 phase 改成 389＋0）：
-  - `pytest -q` 的顆數：**387 passed ＋ 2 skipped** → **389 passed ＋ 0 skipped**
-    （現況段裡這個數字出現不只一次，用 `grep -n "387\|2 skipped" CLAUDE.md` 逐處確認）。
+- [x] **更新 `CLAUDE.md` 現況段**（Phase 50 §4.4 剛把數字寫成 402＋2，本 phase 改成 404＋0）：
+  - `pytest -q` 的顆數：**402 passed ＋ 2 skipped** → **404 passed ＋ 0 skipped**
+    （現況段裡這個數字出現不只一次，用 `grep -n "402\|2 skipped" CLAUDE.md` 逐處確認）。
   - 「規格檔於 2026-08-22 由產品負責人指示擴充……補兩條 P34 Rule 掛 `@未實作`
     （＝全量的 2 skipped……**摘標屬產品負責人**——摘標前注意其待辦例子 due=2026-09-18
     與問句「這週」的 7 天過濾互相矛盾，擇一修正）」這一整段，改寫成**已完成**的敘述：
@@ -404,15 +413,15 @@ git status --short -- app/ | diff /tmp/phase51-app-before.txt - \
     與 binder 的 step 全數保留，日後再標 `@未實作` 仍然有效。
   - 「只跑規格檔 binder」那條指令的說明（指令區）裡「詢問的兩條 `@未實作` Rule 會 skip，
     摘標屬產品負責人」也要一起改掉——**兩處敘述要一致**。
-- [ ] **更新 `docs/plan/unfinish/phase-00-增量四總覽.md`**：
+- [x] **更新 `docs/plan/unfinish/phase-00-增量四總覽.md`**：
       §2 進度表把 51 打勾、§5 總驗收清單「規格摘標」那一段打勾、§6 進度勾選區打勾，
-      並把 Phase 50 留下的完成註記補上本 phase 的最終數字（**389 passed ＋ 0 skipped**、端點仍為 20）。
+      並把 Phase 50 留下的完成註記補上本 phase 的最終數字（**404 passed ＋ 0 skipped**、端點仍為 20）。
       （總覽 §5「規格摘標」那一段已經有 `tests/fakes.py` 補鍵、`git status -- app/` 不會是空的
       這兩列，不必重複補；只有**一處措辭**要順手對齊：總覽寫「`test_ask_three_paths.py` 三處在用」，
       精確講是**兩顆靠對照表查表**（第 318、405 行），第 265 行只是寫著同一個字串、
       直接呼叫 retriever 不經路由——**結論不變：只准加、不准改**。）
-- [ ] `git status` 看一次完整變更清單，**逐檔自己 review 一遍**。
-- [ ] **不要 commit**（沿用產品負責人既有指示）。
+- [x] `git status` 看一次完整變更清單，**逐檔自己 review 一遍**。
+- [x] **不要 commit**（沿用產品負責人既有指示）。
       `docs/plan/unfinish/` → `finish/` 的歸檔依慣例**隨 commit 執行**，時機由產品負責人決定。
 
 ---
@@ -454,7 +463,7 @@ git status --short -- app/ | diff /tmp/phase51-app-before.txt - \
 
 ```text
   ── 摘標前（Phase 38〜50 期間；顆數不准動）────────────────────────────
-     pytest -q  →  387 passed ＋ 2 skipped
+     pytest -q  →  402 passed ＋ 2 skipped
      tests/integration/test_ask_feature.py（9 個）
        ├─ 條件過濾型問題走 metadata search          PASS  ┐
        ├─ 語意描述型問題走 vector semantic search   PASS  │
@@ -482,8 +491,8 @@ git status --short -- app/ | diff /tmp/phase51-app-before.txt - \
        └─ 問這週要交什麼                            PASS
 
   ── 摘標後 ────────────────────────────────────────────────────────────
-     pytest -q  →  389 passed ＋ 0 skipped
-                   （387 ＋ 那 2 顆；skipped 那一段會整個消失）
+     pytest -q  →  404 passed ＋ 0 skipped
+                   （402 ＋ 那 2 顆；skipped 那一段會整個消失）
 ```
 
 ---
@@ -497,7 +506,7 @@ git status --short -- app/ | diff /tmp/phase51-app-before.txt - \
 
 | 症狀 | 怎麼判別 | 最可能的原因 | 怎麼辦 |
 |---|---|---|---|
-| 刪完標籤，數字還是 387 ＋ **2 skipped** | `pytest tests/integration/test_ask_feature.py --collect-only -q -m skip` 仍印 `2/9` | `@未實作` 沒真的刪掉（可能刪成空行、或改成了註解 `# @未實作`——Gherkin 的註解仍是註解，但標籤沒了才算摘掉） | 整行刪除；再跑一次 `-m skip`，要印 `no tests collected (9 deselected)`（＝9 顆都在、但沒有任何一顆掛著 skip） |
+| 刪完標籤，數字還是 402 ＋ **2 skipped** | `pytest tests/integration/test_ask_feature.py --collect-only -q -m skip` 仍印 `2/9` | `@未實作` 沒真的刪掉（可能刪成空行、或改成了註解 `# @未實作`——Gherkin 的註解仍是註解，但標籤沒了才算摘掉） | 整行刪除；再跑一次 `-m skip`，要印 `no tests collected (9 deselected)`（＝9 顆都在、但沒有任何一顆掛著 skip） |
 | 收集階段就炸 `StepDefinitionNotFoundError` | 錯誤訊息會直接印出找不到的那一句中文 step | binder 少了那一步的定義 | **本次查證：12 個 step 全部都在**（見下方清單），正常不該發生。真的發生就先看是不是規格句子被改動了一個字 |
 | **實體**那條紅在 `search_mode`，實際值 `vector semantic search`，且有 `RuntimeError: 無法判斷問題類型：跟我 MacBook 有關的全部` | 看 `Captured log call` | 假路由第 238 行那個鍵被人改過 | **本次查證：第 238 行的鍵與規格第 82 行的問句逐字相同**，正常不該發生。真的發生就把鍵改回規格原文 |
 | **實體**那條紅在 `retrieved_photo_ids == []`（沒有 fallback 警告） | `search_mode` 已經是 `entity pin search` | `find_entity_by_name` 對不到——Given 建的實體名與 `RouteDecision.entity_name` 不一致 | 兩邊都該是「我的 MacBook」：規格第 81 行 vs `tests/fakes.py` 第 239 行 |
@@ -505,7 +514,7 @@ git status --short -- app/ | diff /tmp/phase51-app-before.txt - \
 | **待辦**那條紅在 `回答裡沒有提到「交 Project 2」：查無相關照片。`（**沒有** fallback 警告） | `search_mode` 已經是 `task search` | ★ **這是預期中的第二個紅**（§4.3）：日期落在窗外 | 照 §4.4 改日期 |
 | **待辦**那條紅在 `回答裡沒有提到「交 Project 2」：依照片內容回答：待辦：…`（answer 有東西但不是那筆） | 回答字串裡有別的待辦標題 | 規格表格的欄位被改到（`title`／`due`／`photo_id` 三個欄名分別寫死在 binder 第 117／114／116 行） | 把表格欄名改回原樣；本 phase 只准改那一格日期 |
 | **待辦**那條紅在 `KeyError: '1'` 之類 | 堆疊指向 binder 第 116 行 `context["id_map"][row["photo_id"]]` | 待辦表格的 `photo_id` 對不到上面照片表格的 `id` | 兩張表格的編號要對得上（規格第 96 行 `id=1`、第 99 行 `photo_id=1`） |
-| 兩條都綠，但**全量**不是 389 | `pytest -q` 的尾巴；再 `git status --short` | 動到了不該動的東西（最常見：改了 `tests/fakes.py` 既有那個有問號的鍵，弄紅 `test_ask_three_paths.py`） | `git diff tests/` 逐行看；照 §3「明確不做」第 4 列還原 |
+| 兩條都綠，但**全量**不是 404 | `pytest -q` 的尾巴；再 `git status --short` | 動到了不該動的東西（最常見：改了 `tests/fakes.py` 既有那個有問號的鍵，弄紅 `test_ask_three_paths.py`） | `git diff tests/` 逐行看；照 §3「明確不做」第 4 列還原 |
 | 全量出現 `error`（不是 fail），訊息提到連線 | `docker compose ps` | 測試庫的 container 沒起來（Phase 47 之後測試庫住在 Docker 裡） | `docker compose -f compose.yaml up -d`，等 `db` 變 `(healthy)` 再跑 |
 
 **binder 已預寫的 step（本次逐一查證，`tests/integration/test_ask_feature.py`）：**
@@ -532,23 +541,24 @@ git status --short -- app/ | diff /tmp/phase51-app-before.txt - \
 
 ## 7. 驗收清單
 
-- [ ] `docs/spec/features/自然語言詢問.feature` 的兩個 `@未實作` 已刪除（整行）
-- [ ] 同檔待辦例子（`交 Project 2` 那一列）的到期日已改成 **`2026-08-21`**，**表格其他欄位一字未動**
+- [x] `docs/spec/features/自然語言詢問.feature` 的兩個 `@未實作` 已刪除（整行）
+- [x] 同檔待辦例子（`交 Project 2` 那一列）的到期日已改成 **`2026-08-21`**，**表格其他欄位一字未動**
       （原檔第 99 行；三步做完後它在第 102 行）
-- [ ] 同檔檔頭已補上 **2026-08-23 產品負責人核准解除唯讀**的紀錄（5 行，比照 `上傳照片.feature`）
-- [ ] `git diff docs/spec/` 只動到這一個檔，且只有上述三處改動；另外六份 `.feature` 完全沒出現
-- [ ] `tests/fakes.py` 的 `DEFAULT_ROUTE_DECISIONS` **新增**（不是取代）`"這週要交什麼"` 一行
-- [ ] 三段紅／綠都親眼看過：①摘標後待辦那條紅在 `search_mode`（含 `RuntimeError` 警告）→
+- [x] 同檔檔頭已補上 **2026-08-23 產品負責人核准解除唯讀**的紀錄（5 行，比照 `上傳照片.feature`）
+- [x] `git diff docs/spec/` 只動到這一個檔，且只有上述三處改動；另外六份 `.feature` 完全沒出現
+- [x] `tests/fakes.py` 的 `DEFAULT_ROUTE_DECISIONS` **新增**（不是取代）`"這週要交什麼"` 一行
+- [x] 三段紅／綠都親眼看過：①摘標後待辦那條紅在 `search_mode`（含 `RuntimeError` 警告）→
       ②補鍵後紅在「回答裡沒有提到『交 Project 2』：查無相關照片。」→ ③改日期後全綠
-- [ ] `pytest tests/integration/test_ask_feature.py -v` ＝ **9 passed、0 skipped**
-- [ ] `pytest -q` ＝ **389 passed ＋ 0 skipped**
-- [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
-- [ ] `git status --short -- app/` 與 §4.0 拍的動筆前快照 `diff` **零差異**
-      （產品程式碼一行未動；本增量不 commit，所以那份清單本來就不是空的）
-- [ ] `tests/conftest.py` 的 `pytest_bdd_apply_tag` **還在**（沒被順手刪掉）
-- [ ] `CLAUDE.md` 現況段與指令區的顆數／摘標敘述都已更新，且**兩處說法一致**
-- [ ] `phase-00-增量四總覽.md` 的 §2／§5／§6 都已打勾，完成註記寫上 389 ＋ 0
-- [ ] **沒有 commit**
+- [x] `pytest tests/integration/test_ask_feature.py -v` ＝ **9 passed、0 skipped**
+- [x] `pytest -q` ＝ **404 passed ＋ 0 skipped**
+- [x] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
+- [x] `git status --short -- app/` 與 §4.0 拍的動筆前快照 `diff` **零差異**
+      （產品程式碼一行未動。**2026-08-24 校準**：Phase 38〜44 已進 commit `507a18f`，
+      所以這次前後兩份清單**都該是空的**——原文寫「本來就不是空的」已不適用）
+- [x] `tests/conftest.py` 的 `pytest_bdd_apply_tag` **還在**（沒被順手刪掉）
+- [x] `CLAUDE.md` 現況段與指令區的顆數／摘標敘述都已更新，且**兩處說法一致**
+- [x] `phase-00-增量四總覽.md` 的 §2／§5／§6 都已打勾，完成註記寫上 404 ＋ 0
+- [x] **沒有 commit**
 
 ---
 

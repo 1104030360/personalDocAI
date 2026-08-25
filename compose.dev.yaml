@@ -1,0 +1,14 @@
+# compose.dev.yaml —— 只在開發疊上去，開機常駐不要帶這份
+services:
+  app:
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0 --port 8000
+      --ssl-keyfile certs/key.pem --ssl-certfile certs/cert.pem
+      --reload
+    volumes:
+      - ./app:/app/app          # 原始碼＋static；容器才能看到你剛存的檔
+      - ./data:/app/data        # 與常駐相同
+      - ./certs:/app/certs
+      - ./.env:/app/.env
+    restart: "no"               # 開發用 -d 仍不要 unless-stopped，免得開機把 --reload 拉起來

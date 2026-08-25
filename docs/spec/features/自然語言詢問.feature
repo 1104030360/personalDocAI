@@ -3,6 +3,11 @@
 #   問到已確認的實體名稱 → 沿別針列出掛著的照片
 #   問到待辦／到期 → 查待辦表
 # 這兩條套 @未實作（Phase 34 尚未落地）；既有 Q1〜Q5 例子一字未動
+# 2026-08-23 產品負責人核准解除唯讀（design4.md §1.1「規格 .feature 本輪不改」的正式例外）：
+#   1. 最後兩條 Rule（實體別針／待辦）的 @未實作 摘除——Phase 34 已落地
+#      （檢索方式全名 entity pin search／task search）
+#   2. 待辦例子的到期日 2026-09-18 → 2026-08-21：原本的日期落在問句「這週」的
+#      7 天窗之外（今天 2026-08-18 ＋ 7 ＝ 2026-08-25），例子與它自己的問句互相矛盾
 Feature: 自然語言詢問
   使用者直接用自然語言詢問照片相關問題。
   系統使用 LangGraph 建立 retrieval workflow，根據問題類型決定走 vector semantic search、
@@ -72,7 +77,6 @@ Feature: 自然語言詢問
   Rule: 問到已確認的實體名稱時，系統沿實體別針列出掛著的照片
     # 驗收問句來自 design3.md §6；檢索方式對外全名為 entity pin search
 
-    @未實作
     Example: 問跟我 MacBook 有關的全部
       Given 系統中有底下照片
         | id | text     | category | location | items | content_time | uploaded_at      |
@@ -88,7 +92,6 @@ Feature: 自然語言詢問
   Rule: 問到待辦或到期時，系統查待辦表
     # 驗收問句來自 design3.md §6；檢索方式對外全名為 task search
 
-    @未實作
     Example: 問這週要交什麼
       Given 現在時間為 "2026-08-18 10:00"
       And 系統中有底下照片
@@ -96,7 +99,7 @@ Feature: 自然語言詢問
         | 1  | Canvas截圖 | 文件     |          |       |              | 2026-08-18 10:00 |
       And 系統中有底下待辦
         | title        | due        | photo_id |
-        | 交 Project 2 | 2026-09-18 | 1        |
+        | 交 Project 2 | 2026-08-21 | 1        |
       When 使用者詢問 "這週要交什麼"
       Then 系統選擇的檢索方式為 "task search"
       And 回答依據的待辦如下

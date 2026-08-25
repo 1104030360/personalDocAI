@@ -4,6 +4,11 @@
 
 ```text
 ┌─ ⛔ 開工前檢查（兩道閘門）───────────────────────────────────────
+│ ✅ **2026-08-24：G1 已通過。** 產品負責人以 dev-prompt
+│    `docs/plan/dev-prompts/phase0824.md` 指示「根據 phase-45〜phase-51 進行開發」，
+│    並註明「過程中所有的決策都不必徵求任何我的同意」——這就是對 2026-08-23 交出的
+│    G1 驗收包（`docs/plan/report/2026-08-23-G1驗收包-請產品負責人確認.md`）的明示放行。
+│    下面那句「沒有這句話就停手」保留原文，供日後回看流程用。
 │ ① 閘門 G1：產品負責人是否已「明示」G1 通過？沒有就停手（回 phase-44）。
 │    G1 是**人**的動作，不是實作者可以自行勾掉的步驟（design4.md §7 明文）。
 │ ② 閘門 G2：phase-46 §5.2、phase-47 §4.3 的兩次 diff 都沒有輸出？
@@ -45,7 +50,7 @@
 - **★ G1、★ G2 都已通過。**
 - **Phase 48 已完成**：`docker compose -f compose.yaml up -d` 起得來、
   `curl -k https://127.0.0.1:8000/health` 回 `{"status":"ok"}`、
-  `pytest -q` ＝ **387 passed ＋ 2 skipped**。
+  `pytest -q` ＝ **402 passed ＋ 2 skipped**。
 - **Docker Desktop 正在跑，兩個服務都活著**：
 
 ```bash
@@ -88,7 +93,7 @@ docker compose ps
 
 ### 4.1 建 `compose.dev.yaml`（design4 §8.4.1 原文）
 
-- [ ] 在專案根目錄建立 `compose.dev.yaml`：
+- [x] 在專案根目錄建立 `compose.dev.yaml`：
 
 ```yaml
 # compose.dev.yaml —— 只在開發疊上去，開機常駐不要帶這份
@@ -120,7 +125,7 @@ services:
 > **為什麼一定要 mount `./app`**：`--reload` 盯的是**容器裡的檔案**。
 > 若程式只在映像裡、沒掛進來，你在 Mac 上存檔，容器根本看不到，reload 永遠不會觸發。
 
-- [ ] 檢查合併後的結果長得對不對（這個指令只解析、不啟動）：
+- [x] 檢查合併後的結果長得對不對（這個指令只解析、不啟動）：
 
 ```bash
 docker compose -f compose.yaml -f compose.dev.yaml config
@@ -134,13 +139,13 @@ docker compose -f compose.yaml -f compose.dev.yaml config
 
 ### 4.2 切到開發模式（design4 §8.4.1 的「常駐 → 開發」）
 
-- [ ] 先停 app（**db 繼續活著，不必重灌**）：
+- [x] 先停 app（**db 繼續活著，不必重灌**）：
 
 ```bash
 docker compose -f compose.yaml stop app
 ```
 
-- [ ] 用兩份疊加起來：
+- [x] 用兩份疊加起來：
 
 ```bash
 docker compose -f compose.yaml -f compose.dev.yaml up -d
@@ -149,7 +154,7 @@ docker compose -f compose.yaml -f compose.dev.yaml logs -f app
 
   `logs -f` 是「跟著看」；`Ctrl+C` 只離開 log，**容器繼續跑**。
 
-- [ ] 確認現在跑的是哪一種（**`--no-trunc` 不能省**）：
+- [x] 確認現在跑的是哪一種（**`--no-trunc` 不能省**）：
 
 ```bash
 docker compose ps --no-trunc
@@ -171,10 +176,10 @@ docker compose ps --no-trunc
 
 ### 4.3 實測熱重載真的有效
 
-- [ ] 先用瀏覽器開 `https://127.0.0.1:8000/ui/browse.html?tab=folders`，
+- [x] 先用瀏覽器開 `https://127.0.0.1:8000/ui/browse.html?tab=folders`，
       **點進任何一個資料夾**——等一下要改的那行提示字就在縮圖牆上方
       （它是 Phase 39 加在 `showFolderPhotos()` 裡的，只有進到資料夾才畫出來）。
-- [ ] 開著 `logs -f`，在另一個視窗改一行**前端**檔案，例如
+- [x] 開著 `logs -f`，在另一個視窗改一行**前端**檔案，例如
       `app/static/browse.html` 裡的那行提示文字（改完記得改回來）：
 
 ```text
@@ -187,7 +192,7 @@ docker compose ps --no-trunc
   （靜態檔是每次請求現讀的，所以 HTML／CSS／JS **不需要**等 uvicorn 重載。
   真的沒變的話按 `Cmd`＋`Shift`＋`R` 強制重新整理，先排除瀏覽器快取。）
 
-- [ ] 再改一行 **Python**，例如 `app/main.py` 的 `health()`：
+- [x] 再改一行 **Python**，例如 `app/main.py` 的 `health()`：
 
 ```python
     return {"status": "ok"}      →      return {"status": "ok", "hot": "reload"}
@@ -209,18 +214,18 @@ curl -k https://127.0.0.1:8000/health
   預期：`{"status":"ok","hot":"reload"}`。
   **驗完把 `main.py` 改回原樣**，再確認 `curl` 回到 `{"status":"ok"}`。
 
-- [ ] `git status --short` 確認沒有把測試用的修改留下來。
+- [x] `git status --short` 確認沒有把測試用的修改留下來。
 
 ### 4.4 切回常駐模式（design4 §8.4.1 的「開發 → 常駐」）
 
-- [ ] 停開發那組（**沒有指定服務名 ＝ `db` 也會一起停**；下一步的 `up -d` 會把它帶回來，
+- [x] 停開發那組（**沒有指定服務名 ＝ `db` 也會一起停**；下一步的 `up -d` 會把它帶回來，
       資料住在 volume 裡完全不受影響）：
 
 ```bash
 docker compose -f compose.yaml -f compose.dev.yaml stop
 ```
 
-- [ ] 用常駐那份起來：
+- [x] 用常駐那份起來：
 
 ```bash
 docker compose -f compose.yaml up -d
@@ -230,7 +235,7 @@ docker compose ps --no-trunc
   預期：`COMMAND` 欄**看不到** `--reload`。
   （畫面上會看到 app 被 `Recreated`——設定變了就一定會重建 container，這是正常的。）
 
-- [ ] 確認服務仍正常：
+- [x] 確認服務仍正常：
 
 ```bash
 curl -k https://127.0.0.1:8000/health
@@ -291,31 +296,41 @@ curl -k https://127.0.0.1:8000/health
 
 ## 6. 驗收清單
 
-- [ ] `compose.dev.yaml` 存在，內容與 design4 §8.4.1 的原文一致
+- [x] `compose.dev.yaml` 存在，內容與 design4 §8.4.1 的原文一致
       （`command` 有 `--reload`、`volumes` 四項、`restart: "no"`）
-- [ ] `docker compose -f compose.yaml -f compose.dev.yaml config` 合併結果正確
-- [ ] 切到開發模式後 `docker compose ps --no-trunc` 的 COMMAND 欄**有** `--reload`
-- [ ] 改一行 Python 存檔 → `logs -f` 看得到 `Reloading...`、`curl` 反映新行為
-- [ ] 改一行 HTML 存檔 → 重新整理瀏覽器就看得到（不需要重載）
-- [ ] `Ctrl+C` 離開 `logs -f` 之後，`docker compose ps` 顯示容器**仍在跑**
-- [ ] 切回常駐模式後 `docker compose ps --no-trunc` 的 COMMAND 欄**沒有** `--reload`，
+- [x] `docker compose -f compose.yaml -f compose.dev.yaml config` 合併結果正確
+- [x] 切到開發模式後 `docker compose ps --no-trunc` 的 COMMAND 欄**有** `--reload`
+- [x] 改一行 Python 存檔 → `logs -f` 看得到 `Reloading...`、`curl` 反映新行為
+- [x] 改一行 HTML 存檔 → 重新整理瀏覽器就看得到（不需要重載）
+- [x] `Ctrl+C` 離開 `logs -f` 之後，`docker compose ps` 顯示容器**仍在跑**
+- [x] 切回常駐模式後 `docker compose ps --no-trunc` 的 COMMAND 欄**沒有** `--reload`，
       `/health` 仍 200
-- [ ] 切回常駐之後 `pytest -q` 仍是 **387 passed ＋ 2 skipped**
+- [x] 切回常駐之後 `pytest -q` 仍是 **402 passed ＋ 2 skipped**
       （本 phase 沒動程式碼、沒動資料庫，顆數不該有任何變化）
-- [ ] `compose.yaml` **一個字都沒改**——用 grep 驗，**不要**用 `git diff`：
+- [x] `compose.yaml` **一個字都沒改**——用 grep 驗，**不要**用 `git diff`：
 
 ```bash
-grep -n -- "--reload" compose.yaml   # 預期：沒有輸出
+grep -n -- "--reload" compose.yaml | grep -v "#"   # 預期：沒有輸出
 grep -n "5433" compose.yaml          # 預期：看得到 127.0.0.1:5433:5432（Phase 47 改的那一行）
 ```
 
+  （**2026-08-24 校準**：原本寫的是不接 `| grep -v "#"` 的版本，但那樣**一定會有一行輸出**
+  ——`compose.yaml` 第 3 行本來就有一句警語註解「永遠不要在這裡加 uvicorn 的 `--reload`」，
+  那是計畫自己給的檔案內容。要驗的是「有沒有真的設定」，所以要把註解行濾掉。）
   （`compose.yaml` 是 Phase 46 新建、依產品負責人指示**還沒 commit** 的檔案＝「未追蹤」，
   所以 `git diff compose.yaml` 永遠是空的、證明不了任何事——phase-47 §6 有同一則提醒。）
 
-- [ ] 測試用的臨時修改都已還原：`git status --short` 裡**沒有** `app/` 底下的檔案
-- [ ] 版控狀態符合預期（**用 `git status --short`，不要用 `git diff --stat`**——
+- [x] 測試用的臨時修改都已還原：`git status --short` 裡**沒有** `app/` 底下的檔案
+- [x] 版控狀態符合預期（**用 `git status --short`，不要用 `git diff --stat`**——
       新建的檔案是未追蹤的，`git diff --stat` 根本看不到它）：
-      `compose.dev.yaml` 顯示 `??`，除此之外只該有 `docs/` 底下的計畫檔
+      本 phase 只多出一個 `?? compose.dev.yaml`；
+      **2026-08-24 校準**——此時工作區裡「應該有」的東西是固定的這幾樣：
+      `?? compose.yaml`、`?? compose.dev.yaml`、`?? Dockerfile`、`?? .dockerignore`、
+      `?? db/docker-init/`（P46／P48／P49 新建）、` M tests/conftest.py`（P47 改）、
+      加上 `docs/` 底下的計畫檔／TODO／REP。
+      **`git status --short -- app/` 必須是空的**（Phase 38〜44 已進 commit `507a18f`；
+      §4.3 為了驗熱重載臨時改的 `app/main.py`、`app/static/browse.html` 若沒還原，
+      就會在這裡現形——這也正是這一條最有價值的地方）
 
 ---
 

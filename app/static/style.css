@@ -756,7 +756,13 @@ ul.tasks {
   border: var(--bw) solid var(--c-border);
   border-radius: var(--radius-m);
 }
-.cd-qr svg { width: 100%; height: auto; max-width: 15rem; }
+/* max-width 決定「每一格有多少 px」＝掃不掃得到的關鍵。
+   網址越長 QR 格數越多，格子就越細：
+     https://10.0.0.34:8000/…            93 字元 → 49 格
+     https://<主機名>.local:8000/…      118 字元 → 53 格
+   2026-08-25 實測：15rem（240px）時 .local 那版每格只剩 4.5px，手機掃不到。
+   放大到 20rem（320px）後每格 6.0px，兩種網址都好掃。 */
+.cd-qr svg { width: 100%; height: auto; max-width: 20rem; }
 
 /* 掃不到時照著念的網址：等寬字（與照片 id、日期同一套「收據字」規則） */
 .cd-url {

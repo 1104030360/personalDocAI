@@ -4,6 +4,11 @@
 
 ```text
 ┌─ ⛔ 開工前檢查（閘門 G1）────────────────────────────────────────
+│ ✅ **2026-08-24：G1 已通過。** 產品負責人以 dev-prompt
+│    `docs/plan/dev-prompts/phase0824.md` 指示「根據 phase-45〜phase-51 進行開發」，
+│    並註明「過程中所有的決策都不必徵求任何我的同意」——這就是對 2026-08-23 交出的
+│    G1 驗收包（`docs/plan/report/2026-08-23-G1驗收包-請產品負責人確認.md`）的明示放行。
+│    下面那句「沒有這句話就停手」保留原文，供日後回看流程用。
 │ 產品負責人是否已「明示」G1 通過？（原話例：「甲乙沒問題，可以做 Docker」）
 │ 沒有這句話 → 停手，回去做 phase-44 的 G1 驗收包。
 │ ★ G1 是**人**的動作，不是實作者可以自行勾掉的步驟（design4.md §7 明文）。
@@ -33,7 +38,13 @@
 ## 2. 前置條件
 
 - **★ G1 已由產品負責人明示通過**（見最上面的門檻框）。
-- Phase 38〜44 全部完成，`pytest -q` ＝ 387 passed ＋ 2 skipped。
+- Phase 38〜44 全部完成，`pytest -q` ＝ 402 passed ＋ 2 skipped。
+  （**2026-08-24 校準**：計畫原本寫 387，那是 Phase 44 **中途**的數字；
+  同日 hardening 又補了 15 顆，`docs/plan/report/2026-08-23-G1驗收包-…md` 第 31 行
+  與 `…階段QQQ-…-REP.md` 第 36 行記的都是 **402**。45〜51 全數已改成 402。）
+- **Phase 38〜44 已 commit（`507a18f`，2026-08-23）**，工作區在本 phase 開工前是乾淨的
+  （只有未追蹤的 `docs/plan/dev-prompts/phase0824.md`）。
+  這件事會影響 §4.4 最後那條 `git status` 檢查怎麼讀——見該處的校準說明。
 - 家目錄至少留 1 GB 空間（備份要放兩份；照片檔案不在裡面，所以其實很小，但別卡在這種事）。
 - **手上這支 `pg_dump` 必須是 17.x。** 這台 Mac 同時裝了 `postgresql@14` 與 `@17`，
   **兩套的執行檔都在 `PATH` 上**，先確認取到的是哪一支：
@@ -88,28 +99,31 @@ which pg_dump       # 預期：/opt/homebrew/opt/postgresql@17/bin/pg_dump
 
 ### 4.1 核對現況契約（design4 §8.3，逐條）
 
-- [ ] 正式庫名 `PersonalDocAI`、測試庫名 `PersonalDocAI_test`：
+- [x] 正式庫名 `PersonalDocAI`、測試庫名 `PersonalDocAI_test`：
 
 ```bash
 psql -p 5433 -l
 ```
 
-- [ ] 現在的連線字串**沒寫帳號密碼**（psycopg 用你的 macOS 帳號連）：
+- [x] 現在的連線字串**沒寫帳號密碼**（psycopg 用你的 macOS 帳號連）：
       打開 `.env` 看 `DATABASE_URL`，應該是 `postgresql://localhost:5433/PersonalDocAI`。
-- [ ] `tests/conftest.py` 第 7 行寫死測試庫 URL，而且第 26 行斷言 URL 含 `PersonalDocAI_test` 才准清表。
-- [ ] `db/schema.sql` 開頭那一段就是 `DROP TABLE IF EXISTS`（第 8〜13 行，六張表整組砍掉；
+- [x] `tests/conftest.py` 第 7 行寫死測試庫 URL，而且第 26 行斷言 URL 含 `PersonalDocAI_test` 才准清表。
+- [x] `db/schema.sql` 開頭那一段就是 `DROP TABLE IF EXISTS`（第 8〜13 行，六張表整組砍掉；
       第 2 行的 `CREATE EXTENSION IF NOT EXISTS vector` 只是先把 vector 型別備好）
       ——**只能打測試庫**。
-- [ ] 正式庫結構靠歷史遷移堆起來（`db/migrate_folders.sql`、`db/migrate_design3.sql`），
+- [x] 正式庫結構靠歷史遷移堆起來（`db/migrate_folders.sql`、`db/migrate_design3.sql`），
       **搬運必須 dump／restore**。
-- [ ] 原圖在 host 的 `data/`，資料庫只記相對路徑（所以搬資料庫**不會**搬到照片檔，那是好事）。
-- [ ] 鏡頭 token 全在記憶體，重啟 app 就失效（既有行為，遷移不會讓它變差）。
-- [ ] 相機 QR 要用 `https://192.168.x.x:8000` 開桌面頁（container 內猜 IP 會猜出 `172.x`）。
+- [x] 原圖在 host 的 `data/`，資料庫只記相對路徑（所以搬資料庫**不會**搬到照片檔，那是好事）。
+- [x] 鏡頭 token 全在記憶體，重啟 app 就失效（既有行為，遷移不會讓它變差）。
+- [x] 相機 QR 要用 `https://<區網IP>:8000` 開桌面頁（container 內猜 IP 會猜到 Docker 內部網段）。
+      **2026-08-24 校準**：原文寫死 `192.168.x.x`，但這台 Mac 的 en0 是 `172.29.93.122`
+      （合法私有網段，是真的區網 IP）。判準改為「與 `ipconfig getifaddr en0` 逐字比對」——
+      理由見 `phase-50` §4.3 的校準框。
 
 ### 4.2 凍結（停 uvicorn）
 
-- [ ] 到跑 `uvicorn` 的那個終端機視窗按 `Ctrl+C`。
-- [ ] 確認 8000 埠真的空了：
+- [x] 到跑 `uvicorn` 的那個終端機視窗按 `Ctrl+C`。
+- [x] 確認 8000 埠真的空了：
 
 ```bash
 lsof -iTCP:8000 -sTCP:LISTEN
@@ -120,7 +134,7 @@ lsof -iTCP:8000 -sTCP:LISTEN
 
 ### 4.3 拍快照（design4 §8.6 丙-0 第 2 步，指令逐字照抄）
 
-- [ ] 第一組：六張表的列數。
+- [x] 第一組：六張表的列數。
 
 ```bash
 psql -p 5433 -d PersonalDocAI -c "
@@ -134,7 +148,7 @@ SELECT
 "
 ```
 
-- [ ] 第二組：每一張照片的 id、類別、資料夾、有沒有原圖檔。
+- [x] 第二組：每一張照片的 id、類別、資料夾、有沒有原圖檔。
 
 ```bash
 psql -p 5433 -d PersonalDocAI -c "
@@ -143,7 +157,7 @@ FROM photo ORDER BY id;
 "
 ```
 
-- [ ] **把兩組輸出存下來**（G2 要拿它逐項對；存在家目錄，不進 repo）：
+- [x] **把兩組輸出存下來**（G2 要拿它逐項對；存在家目錄，不進 repo）：
 
 ```bash
 {
@@ -166,7 +180,7 @@ FROM photo ORDER BY id;
 cat ~/PersonalDocAI-docker遷移前快照.txt
 ```
 
-- [ ] 順手記三件 G2 也要對的事（可以直接追加到同一個檔案）：
+- [x] 順手記三件 G2 也要對的事（可以直接追加到同一個檔案）：
 
 ```bash
 {
@@ -179,8 +193,14 @@ cat ~/PersonalDocAI-docker遷移前快照.txt
 } >> ~/PersonalDocAI-docker遷移前快照.txt
 ```
 
-  預期：`pg_extension` 裡看得到 `vector`；`folder` 的 id 是 1〜6 且只有 id=1 的 `is_inbox` 是 `t`；
-  `vector_dims` ＝ **1024**。
+  預期：`pg_extension` 裡看得到 `vector`；`folder` 的 **id 1〜6 六筆種子還在**、
+  且**只有 id=1 的 `is_inbox` 是 `t`**；`vector_dims` ＝ **1024**。
+
+> **2026-08-24 實測補充：`folder` 現在有 10 筆，不是 6 筆。** 除了 id 1〜6 的種子，
+> 還有使用者自建的 id 14（專案X）／15（旅遊）／16（煙霧測試）／17（專案1）
+> ——那是 Phase 21 起「自建新資料夾」功能留下的真實資料，**完全正常**。
+> 這一條要驗的是「六筆種子還在、收件箱只有一個」，**不是「總共只有六筆」**。
+> （G2 的 `diff` 是逐字比對整份輸出，10 筆照樣對得起來。）
 
 > ⚠️ **要重跑就從上面那個 `>` 的區塊整個重來一次。** 這一段用的是 `>>`（＝**追加**在檔案後面），
 > 單獨再跑一遍會讓同樣的內容在檔案裡出現兩份。Phase 46 的閘門 G2 是拿這個檔去 `diff`，
@@ -195,14 +215,14 @@ cat ~/PersonalDocAI-docker遷移前快照.txt
 
 ### 4.4 兩份備份（design4 §8.6 丙-0 第 3 步，指令逐字照抄）
 
-- [ ] 純文字那份（人眼看得懂，之後查差異用）：
+- [x] 純文字那份（人眼看得懂，之後查差異用）：
 
 ```bash
 pg_dump -p 5433 -d PersonalDocAI --no-owner --no-acl \
   -f ~/PersonalDocAI-backup-docker遷移前.sql
 ```
 
-- [ ] 自訂格式那份（Phase 46 要拿它 `pg_restore` 灌進 Docker）：
+- [x] 自訂格式那份（Phase 46 要拿它 `pg_restore` 灌進 Docker）：
 
 ```bash
 pg_dump -p 5433 -d PersonalDocAI --no-owner --no-acl -Fc \
@@ -217,13 +237,13 @@ pg_dump -p 5433 -d PersonalDocAI --no-owner --no-acl -Fc \
 > 所以本增量全程**不准** `brew uninstall postgresql@17`、也不准刪 `/opt/homebrew/var/postgresql@17`
 > ——那等於把第 1 層拆掉（design4 §8.10 明文）。
 
-- [ ] 確認兩份都真的產出了、而且不是 0 位元組：
+- [x] 確認兩份都真的產出了、而且不是 0 位元組：
 
 ```bash
 ls -lh ~/PersonalDocAI-backup-docker遷移前.sql ~/PersonalDocAI-backup-docker遷移前.dump
 ```
 
-- [ ] 快速自我檢查純文字那份有東西（不是空殼）：
+- [x] 快速自我檢查純文字那份有東西（不是空殼）：
 
 ```bash
 grep -c "COPY public.photo " ~/PersonalDocAI-backup-docker遷移前.sql
@@ -232,7 +252,7 @@ grep -c "CREATE EXTENSION" ~/PersonalDocAI-backup-docker遷移前.sql
 
   預期：兩個都 **≥ 1**。
 
-- [ ] 確認**備份沒有跑進 repo**：
+- [x] 確認**備份沒有跑進 repo**：
 
 ```bash
 git status --short | grep -E '\.sql$|\.dump$|快照' || echo "乾淨：沒有備份檔跑進專案目錄"
@@ -240,18 +260,23 @@ git status --short | grep -E '\.sql$|\.dump$|快照' || echo "乾淨：沒有備
 
   預期：印出「乾淨：…」那一行。
 
-> ⚠️ **`git status --short` 本身不會是空的，那是正常的**——增量四的計畫檔（`docs/plan/`）
-> 本來就還沒 commit。本 phase 要確認的是「**沒有多出** `*.sql`／`*.dump`／快照 `.txt`」，
+> ⚠️ **`git status --short` 本身不會是空的，那是正常的**——本輪新寫的 TODO／REP
+> （`docs/plan/todo/`、`docs/plan/report/`）與被校準過的計畫檔都還沒 commit。
+> 本 phase 要確認的是「**沒有多出** `*.sql`／`*.dump`／快照 `.txt`」，
 > 不是「工作區全乾淨」。上面那條指令就是只挑這幾種副檔名來看。
+>
+> **2026-08-24 校準**：原文寫的是「增量四的計畫檔本來就還沒 commit」。
+> 現在 Phase 38〜44 已進 commit `507a18f`，所以工作區裡**不該有任何 `app/` 底下的變更**
+> ——真的看到就是手滑，本 phase 是**零程式碼變更**的。
 
 ### 4.5 收尾
 
-- [ ] 三個檔案留在 `~/`，**一個都不要刪**——Phase 46 的閘門 G2 要拿快照去 `diff`、
+- [x] 三個檔案留在 `~/`，**一個都不要刪**——Phase 46 的閘門 G2 要拿快照去 `diff`、
       拿 `.dump` 去 `pg_restore`。
-- [ ] （選作）若你另外有工作紀錄（例如 `docs/plan/report/` 的 REP），可以把快照內容貼一份存底。
+- [x] （選作）若你另外有工作紀錄（例如 `docs/plan/report/` 的 REP），可以把快照內容貼一份存底。
       那屬於**文件**變更，不影響本 phase「零程式碼變更」的結論；但請在做完上面那個
       `git status` 檢查**之後**再貼，免得自己看不懂多出來的那一列是什麼。
-- [ ] `postgresql@17` 仍然在跑（**本 phase 不停它**）：
+- [x] `postgresql@17` 仍然在跑（**本 phase 不停它**）：
 
 ```bash
 brew services list | grep postgresql
@@ -301,16 +326,16 @@ brew services list | grep postgresql
 
 ## 6. 驗收清單
 
-- [ ] G1 已由產品負責人明示通過（有那句話，日期記下來了）
-- [ ] 8000 埠沒有任何 listener（uvicorn 已停）
-- [ ] `~/PersonalDocAI-docker遷移前快照.txt` 存在，內容含：六張表列數、每張照片一列、
+- [x] G1 已由產品負責人明示通過（有那句話，日期記下來了）
+- [x] 8000 埠沒有任何 listener（uvicorn 已停）
+- [x] `~/PersonalDocAI-docker遷移前快照.txt` 存在，內容含：六張表列數、每張照片一列、
       `vector` extension、`folder` id 1〜6、`vector_dims`＝1024
-- [ ] `~/PersonalDocAI-backup-docker遷移前.sql` 存在且不是 0 位元組
-- [ ] `~/PersonalDocAI-backup-docker遷移前.dump` 存在且不是 0 位元組
-- [ ] `git status --short` 與開工前**相同**——本 phase 零程式碼變更；要確認的是
+- [x] `~/PersonalDocAI-backup-docker遷移前.sql` 存在且不是 0 位元組
+- [x] `~/PersonalDocAI-backup-docker遷移前.dump` 存在且不是 0 位元組
+- [x] `git status --short` 與開工前**相同**——本 phase 零程式碼變更；要確認的是
       **沒有多出** `*.sql`／`*.dump`／快照 `.txt`（§4.4 最後那條指令會印「乾淨：…」）
-- [ ] `brew services list`：`postgresql@17` 仍 `started`、`postgresql@14` 仍 `started`
-- [ ] 專案根目錄**仍然沒有** `compose.yaml`／`Dockerfile`／`.dockerignore`：
+- [x] `brew services list`：`postgresql@17` 仍 `started`、`postgresql@14` 仍 `started`
+- [x] 專案根目錄**仍然沒有** `compose.yaml`／`Dockerfile`／`.dockerignore`：
 
 ```bash
 ls compose.yaml Dockerfile .dockerignore 2>&1 | grep -c "No such file"

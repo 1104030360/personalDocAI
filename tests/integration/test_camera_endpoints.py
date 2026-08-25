@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
@@ -23,6 +25,8 @@ from app.repositories import photo_repository
 from app.services import camera_session_service as sessions
 from app.services.vlm_service import PhotoUnderstanding
 from tests.fakes import FakeVLM, make_jpeg_bytes, make_pdf_bytes, make_png_bytes
+
+專案根目錄 = Path(__file__).resolve().parents[2]
 
 看得懂的收據 = PhotoUnderstanding(
     understood=True,
@@ -84,6 +88,22 @@ def test_qr是可以直接塞進網頁的svg字串(client):
 
     assert qr.startswith("<svg")
     assert "<?xml" not in qr
+
+
+def test_qr的顯示尺寸夠大讓長網址也掃得到():
+    """QR 的 CSS 顯示上限決定「每一格有多少 px」＝手機掃不掃得到。
+
+    2026-08-25 真機踩過：桌面頁改用 Bonjour 主機名（`<主機名>.local`）開之後，
+    網址從 93 字元變成 118 字元 → QR 從 49 格變 53 格，
+    而當時 `max-width` 是 15rem（240px），每格只剩 240/53 ≈ 4.5px，**iPhone 掃不到**。
+    放大到 20rem（320px）後每格 6.0px，兩種網址都好掃。
+
+    釘住它的理由：這是**安靜壞掉**的那種 bug——QR 看起來正常、只是掃不進去，
+    排版時有人為了版面把它縮小，沒有人會聯想到「鏡頭功能壞了」。
+    """
+    樣式原始碼 = (專案根目錄 / "app" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert ".cd-qr svg { width: 100%; height: auto; max-width: 20rem; }" in 樣式原始碼
 
 
 def test_手機網址沿用桌面開頁的host(client):

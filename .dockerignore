@@ -1,0 +1,25 @@
+# build 映像時不要送進去的東西（design4.md §8.5）
+.venv/
+.git/
+.gitignore
+# **/ ＝連子資料夾裡的也算。沒有 **/ 的話只會比對最外層那一個，
+# app/api/__pycache__ 這種就會被送進去（Docker 的比對規則：* 不跨資料夾）
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# 照片與縮圖：住在 host，靠 bind-mount 進去（§8.10 明文不打進映像）
+data/
+# 憑證：同上，而且是機密
+certs/
+# 環境設定：同上，而且含 API key
+.env
+
+# 這些在 container 裡用不到
+docs/
+tests/
+scripts/
+.playwright-mcp/
+.superpowers/
+.claude/
+**/.DS_Store
