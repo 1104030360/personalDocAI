@@ -39,6 +39,7 @@ from app.services import camera_session_service as sessions
 from app.services import entity_suggestion_service
 from app.services.ask_workflow import AskDeps, RouteDecision, run_ask
 from app.services.vlm_service import PhotoUnderstanding
+from tests.conftest import 上傳一張並取回照片, 上傳並跑完任務
 from tests.fakes import (
     FakeAnswerLLM,
     FakeEmbeddings,
@@ -46,7 +47,6 @@ from tests.fakes import (
     FakeRouter,
     FakeVLM,
     make_jpeg_bytes,
-    make_png_bytes,
 )
 
 專案根目錄 = Path(__file__).resolve().parents[2]
@@ -72,13 +72,15 @@ def 不擲出例外的client():
 
 
 def 上傳一張(client) -> dict:
-    """上傳一張成功的照片，回傳 201 的 JSON body。"""
+    """上傳一張成功的照片，回傳**資料庫那一列**（增量五 Phase 62 改寫）。
+
+    POST /photos 現在只收下檔案回 202，照片要等 worker 跑完任務才入庫；
+    共用工具 上傳一張並取回照片() 幫測試扮演那個 worker，
+    回的是 photo_repository.fetch_photo() 的 dict。
+    本檔的呼叫端只用 ["id"]，所以一個字都不必改。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(收據理解)
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    return 上傳一張並取回照片(client)
 
 
 def data_dir底下的檔案() -> list[Path]:
@@ -106,17 +108,26 @@ def make_zero_page_pdf_bytes() -> bytes:
 def test_零頁PDF回422且什麼都不存(client):
     """錯誤表第 1 列的另一半：「壞檔」已有測試，這裡補「零頁」。
 
-    收尾行為與壞檔完全一樣——422、資料庫零列、DATA_DIR 零檔案。
+    ⚠ 增量五（Phase 62）起 HTTP 這一關已經沒有 422 了：POST 只做格式檢查
+    （application/pdf 是合法格式，所以一定拿到 202），「這份 PDF 讀不開」
+    是 worker 拆頁時才發現的，最終表現成 job status=failed。
+    測試名稱裡的「422」留著是為了對得上錯誤表第 1 列的編號，語意見上。
+
+    收尾行為與壞檔完全一樣——資料庫零列、DATA_DIR 零檔案
+    （最終失敗會把 staging 暫存檔一起清掉，design5.md D10）。
     （實作上這兩種情況都收斂成 pdf_service.PdfUnreadableError，所以訊息也共用。）
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(收據理解)
 
-    response = client.post(
-        "/photos",
-        files={"file": ("empty.pdf", make_zero_page_pdf_bytes(), "application/pdf")},
+    結果 = 上傳並跑完任務(
+        client,
+        payload=make_zero_page_pdf_bytes(),
+        filename="empty.pdf",
+        content_type="application/pdf",
     )
 
-    assert response.status_code == 422, response.text
+    assert 結果["job"]["status"] == "failed"
+    assert 結果["photo_ids"] == []
     assert photo_repository.count_photos() == 0
     assert data_dir底下的檔案() == []
 
@@ -378,10 +389,15 @@ def 拍一張(client, token: str):
 
 
 def test_過期的token也拿不到latest(client, monkeypatch):
-    """第 13 列：過期 token 打 GET /camera/{token}/latest 也是 404。"""
+    """第 13 列：過期 token 打 GET /camera/{token}/latest 也是 404。
+
+    ⚠ 增量五之後，好 token 打 latest 拿到的是 **204**（不是 200）——
+      入列不再寫 latest（design5.md §5）。這一顆守的是「過期就 404」，
+      所以中間那一行從 200 改成 204，其餘不變。
+    """
     token = client.post("/camera/session").json()["token"]
-    assert 拍一張(client, token).status_code == 201
-    assert client.get(f"/camera/{token}/latest").status_code == 200
+    assert 拍一張(client, token).status_code == 202
+    assert client.get(f"/camera/{token}/latest").status_code == 204
 
     現在 = sessions._now()
     monkeypatch.setattr(sessions, "_now", lambda: 現在 + sessions.TOKEN_TTL_SECONDS + 1)

@@ -429,10 +429,14 @@ def test_端點數不變(client):
     17 → 19 是 2026-08-22 AI 後端開關的兩支（GET／PUT `/settings/ai-backend`，
     產品負責人指示、未走 phase 計畫；見 test_ai_backend_switch.py）。
     19 → 20 是增量四 Phase 38 的 `GET /photos/{photo_id}`（design4.md D5）。
+    20 → 22 是增量五 Phase 64 的兩支（`GET /ingest-jobs` ＋
+    `POST /ingest-jobs/{job_id}/dismiss`，design5.md §5）——
+    進度面板的資料來源與「關掉失敗列」；關掉刻意用 POST 不用 DELETE
+    （design5.md §0 禁止事項第三條，openapi 仍然零 DELETE）。
     詢問這一路仍然一支都沒加——這顆測試守的是那件事，不是總數本身。
     """
     paths = client.get("/openapi.json").json()["paths"]
     運算元 = [(path, method) for path, item in paths.items() for method in item]
 
-    assert len(運算元) == 20
+    assert len(運算元) == 22
     assert [路徑 for 路徑, _ in 運算元 if 路徑.startswith("/ask")] == ["/ask"]

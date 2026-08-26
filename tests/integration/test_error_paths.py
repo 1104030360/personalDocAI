@@ -1,4 +1,11 @@
-"""design.md §10 錯誤處理總表的逐列驗證。"""
+"""design.md §10 錯誤處理總表的逐列驗證。
+
+2026-08-25（Phase 62）起上傳改回 202：HTTP 只做格式檢查、落 staging、入列，
+看圖與寫入都搬到 worker 去了。所以本檔四條上傳相關的路徑分成兩種：
+  - 415（格式不對）：HTTP 當場擋下，行為一字未變。
+  - 「看不懂」「轉向量失敗」：HTTP 一律 202，失敗改在**跑完任務之後**
+    看 job 的 status（design5.md §8 第 3／6 列）。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +19,7 @@ from app.dependencies import get_embeddings, get_router, get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
+from tests.conftest import 目前的任務清單, 跑完任務
 from tests.fakes import FakeVLM, make_large_png_bytes
 
 TARGET_RECEIPT = PhotoUnderstanding(
@@ -52,16 +60,25 @@ def test_非圖片格式回415且不寫入(client):
     assert photo_repository.count_photos() == 0
 
 
-# ---- 422：VLM 看不懂 ----
-def test_vlm看不懂回422且不寫入(client):
+# ---- VLM 看不懂：HTTP 照樣受理，最後由任務標成 failed ----
+def test_vlm看不懂最後整筆失敗且不寫入(client):
+    """原本是 HTTP 422；Phase 62 起「看不懂」是 worker 的結局，不是收檔的結局。
+
+    收檔那一刻還沒有人看過圖，所以 202 是誠實的；試滿 VLM_MAX_ATTEMPTS 次
+    仍看不懂才整筆失敗（design5.md §8 第 3 列），資料庫一列都不留。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(
         PhotoUnderstanding(understood=False)
     )
 
     response = client.post("/photos", files={"file": ("a.png", b"\x89PNG", "image/png")})
+    assert response.status_code == 202, response.text
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "VLM 無法理解照片內容，未儲存任何資料"
+    job_id = response.json()["job_id"]
+    跑完任務(job_id)
+
+    job = 目前的任務清單().get(job_id)
+    assert job is not None and job["status"] == "failed"
     assert photo_repository.count_photos() == 0
 
 
@@ -72,7 +89,7 @@ def test_大檔案照樣可以上傳(client):
 
     response = client.post("/photos", files={"file": ("big.png", 大檔案, "image/png")})
 
-    assert response.status_code == 201, "規格明訂不設檔案大小上限"
+    assert response.status_code == 202, "規格明訂不設檔案大小上限"
 
 
 def test_程式碼裡沒有任何檔案大小上限檢查():
@@ -133,8 +150,15 @@ def test_英文提問查無照片時用英文回覆(client):
     assert "No matching photos found." in body["answer"]
 
 
-# ---- 500：embedding 呼叫失敗（例如 Ollama 沒開）不吞錯 ----
-def test_embedding失敗回500(不擲出例外的client):
+# ---- embedding 呼叫失敗（例如 Ollama 沒開）：算進重試次數，用完就整筆失敗 ----
+def test_embedding一直失敗最後整筆失敗(client):
+    """原本是 HTTP 500（同步流程裡不吞錯）；Phase 62 起轉向量在 worker 裡。
+
+    design5.md §8 第 6 列：轉向量失敗與看圖失敗共用同一組重試次數，
+    所以這裡的假 embeddings 一路爆炸，一次 `跑完任務` 就把 VLM_MAX_ATTEMPTS
+    次用完 → job 標成 failed、資料庫一列都不留（不吞錯這條原則沒變，
+    只是「不吞錯」的表現從 500 換成 job["status"] == "failed"）。
+    """
     class 壞掉的Embeddings:
         def embed_query(self, text):
             raise RuntimeError("Ollama 沒有回應")
@@ -144,11 +168,16 @@ def test_embedding失敗回500(不擲出例外的client):
 
     app.dependency_overrides[get_embeddings] = lambda: 壞掉的Embeddings()
 
-    response = 不擲出例外的client.post(
+    response = client.post(
         "/photos", files={"file": ("a.png", b"\x89PNG", "image/png")}
     )
+    assert response.status_code == 202, response.text
 
-    assert response.status_code == 500
+    job_id = response.json()["job_id"]
+    跑完任務(job_id)
+
+    job = 目前的任務清單().get(job_id)
+    assert job is not None and job["status"] == "failed"
     assert photo_repository.count_photos() == 0, "失敗時不可以留下半筆資料"
 
 

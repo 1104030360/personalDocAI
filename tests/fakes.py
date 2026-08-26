@@ -104,6 +104,51 @@ class FakeVLM:
         return self.result
 
 
+class ScriptedVLM:
+    """照劇本演的看圖假件：第 1 次回什麼、第 2 次丟什麼，全部先寫好。
+
+    給「重試」相關的測試用（Phase 59 起）。與 FakeVLM 的差別只有一個：
+    FakeVLM 是**一張固定答案卡**（每次都回同一個結果），
+    ScriptedVLM 是**一疊照順序翻的卡**，而且卡片可以是「丟這個例外」。
+
+    script 裡每一項只能是兩種東西：
+      - PhotoUnderstanding → 這一次就回它（understood=False 也是一種合法答案）
+      - Exception 的實例   → 這一次就把它丟出去（模擬 Ollama 沒開、雲端 401、逾時）
+
+    劇本演完還被呼叫 → 直接 AssertionError。這是刻意的：
+    「多打了一次模型」是本 phase 最需要抓的錯（重試上限沒守住），
+    默默重複最後一張卡會讓那種 bug 溜過去。
+    """
+
+    def __init__(self, script: list) -> None:
+        self.script = list(script)
+        self.calls = 0
+        self.last_folders: list[dict] | None = None
+        self.last_entities: list[dict] | None = None
+        self.last_corrections: list[dict] | None = None
+
+    def understand(
+        self,
+        image_bytes: bytes,
+        content_type: str,
+        folders: list[dict],
+        entities: list[dict],
+        corrections: list[dict],
+    ) -> PhotoUnderstanding:
+        assert self.calls < len(self.script), (
+            f"ScriptedVLM 被呼叫第 {self.calls + 1} 次，但劇本只寫了 "
+            f"{len(self.script)} 次——重試次數超過上限了嗎？"
+        )
+        item = self.script[self.calls]
+        self.calls += 1
+        self.last_folders = folders
+        self.last_entities = entities
+        self.last_corrections = corrections
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
 class FakeEntitySuggester:
     """「再建議一個實體」的固定答案卡，不呼叫 Ollama。
 
@@ -313,6 +358,38 @@ class FakeAnswerLLM:
         if english:
             return "Based on the photos: " + "; ".join(pieces)
         return "依照片內容回答：" + "；".join(pieces)
+
+
+class EagerDispatcher:
+    """就地把任務跑完的入列器（測試用；eager ＝ 同步、當場做完）。
+
+    正式路徑刻意**不用**這個（見 app/dependencies.py 的 NoopDispatcher docstring）。
+    給「想要 POST 完照片就已經在資料庫裡」的測試情境用：
+    換上這一個，router 一呼叫入列器，任務就當場跑完。
+
+    形狀與 TaskDispatcher 一樣有 dispatch() 方法，
+    所以掛上 dependency_overrides 之後 router 那句 dispatcher.dispatch(job_id) 照常能呼叫。
+
+    四個協作者由建構子帶進來（不自己去 dependencies 拿）：
+    測試想換成「會爆炸的 embeddings」之類的壞假件時，直接換參數就好。
+    """
+
+    def __init__(self, *, store, vlm, embeddings, now) -> None:
+        self._store = store
+        self._vlm = vlm
+        self._embeddings = embeddings
+        self._now = now
+
+    def dispatch(self, job_id: str) -> None:
+        from app.services.ingest_job import run_ingest_job
+
+        run_ingest_job(
+            job_id,
+            store=self._store,
+            vlm=self._vlm,
+            embeddings=self._embeddings,
+            now=self._now,
+        )
 
 
 class FakeCloudChat:

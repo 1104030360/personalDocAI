@@ -1,7 +1,8 @@
 """待辦（task）的 API 資料格式（Pydantic 模型，design3.md D13）。
 
-和 app/schemas/photo.py 的 TaskSuggestion 刻意分成兩個模型：
-那個是 VLM 在上傳當下給的**建議**（可有可無、不落庫）；
+（增量五 Phase 63 之前，app/schemas/photo.py 另有一個「VLM 建議」專用的模型；
+上傳改 202 之後建議改成落庫（design5.md D16），那個模型已刪除。
+現在「建議」直接是 photo 表的 suggested_task_title／suggested_task_due 兩欄。）
 這裡是使用者按下「建立」之後，真的存進資料庫的那一筆待辦。
 """
 

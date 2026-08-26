@@ -811,7 +811,7 @@ def recent_corrections(limit: int = 5) -> list[dict[str, Any]]:
     只回 few-shot 要用的三個欄位，鍵名即 build_vlm_prompt() 期待的形狀。
 
     limit 的預設 5 對應 design3.md §7 的暫定 N；正式路徑上的權威值寫在呼叫端
-    （api/routers/photos.py 的 FEW_SHOT_CORRECTIONS），這裡的預設只是方便手動呼叫。
+    （app/services/ingest_job.py 的 FEW_SHOT_CORRECTIONS），這裡的預設只是方便手動呼叫。
     """
     with get_connection() as conn:
         with conn.cursor() as cur:

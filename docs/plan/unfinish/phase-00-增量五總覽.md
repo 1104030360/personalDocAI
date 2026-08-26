@@ -274,12 +274,12 @@ curl -k -s https://127.0.0.1:8000/health
 | 56 | `phase-56-建議欄資料庫遷移.md` | `db/migrate_design5.sql` 加三欄；`schema.sql` 對齊；repository 讀寫（值先都是 `None`） | —（定稿 §2 明文：無 phase 依賴、可與甲並行；總序仍照 §0 甲→乙） | D16、§11（migrate／schema 兩列） | [x] |
 | 57 | `phase-57-JobStore與測試安全網.md` | `ingest_job_store.py`＋`InMemoryJobStore`＋conftest 第四道 autouse `wire_memory_job_store` | —（定稿 §2 明文：可與 52〜56 並行） | §4.3、§9、D15、D14（`ai_backend` 欄） | [x] |
 | 58 | `phase-58-staging暫存區服務.md` | `staging_service.py`：寫／讀／刪／24 小時掃把（只寫函式與測試；啟動接線兩頭都在 65） | 57 | §4.1 | [x] |
-| 59 | `phase-59-單圖入庫任務.md` | `run_ingest_job()` 單圖路徑：3 次重試、成功 INSERT 收件箱、失敗清乾淨、`photo_ids` 冪等 | 57、58 | §4.2、§4.4、D10、D15、§8 第 3／6／7 列 | [ ] |
-| 60 | `phase-60-PDF入庫任務.md` | 同一個任務處理整份 PDF：逐頁各 3 次、失敗跳頁、0 頁成功才整筆失敗、`pages_done` 續跑 | 59 | D11、D12、§4.4、§8 第 4／5 列 | [ ] |
-| 61 | `phase-61-建議落庫接線.md` | worker INSERT 時一併寫 D16 三欄；`GET /folders/{id}` 照片摘要五鍵→八鍵 | 56、59、60 | D16、§4.2 第 2 段、§6.2 末段 | [ ] |
-| 62 | `phase-62-上傳端點改202.md` | `POST /photos` 落 staging＋建 job＋回 202；既有 201 斷言全面改寫（113 個項目，含 BDD binder）；刪 `_ingest_pdf`＋`PdfUploadResponse` | ★G1；57、58、59、60、61 | §5（第 1 列）、D7、D14、§9、§8 第 1／8 列 | [ ] |
-| 63 | `phase-63-鏡頭端點改202.md` | `POST /camera/{token}/photos` 202、不 `set_latest`；`GET latest` 行為變窄；收掉 `_ingest_image`＋`UploadResponse` | 62 | §5（第 2／3 列）、D4、§8 第 2 列、§1.1 第 8 列 | [ ] |
-| 64 | `phase-64-任務清單與關閉端點.md` | `GET /ingest-jobs`＋`POST /ingest-jobs/{job_id}/dismiss`；端點 20→22 | 57、62 | §4.3 後半、§5（第 4／5 列）、D9、§8 第 9 列、§1.1 第 7 列 | [ ] |
+| 59 | `phase-59-單圖入庫任務.md` | `run_ingest_job()` 單圖路徑：3 次重試、成功 INSERT 收件箱、失敗清乾淨、`photo_ids` 冪等 | 57、58 | §4.2、§4.4、D10、D15、§8 第 3／6／7 列 | [x] |
+| 60 | `phase-60-PDF入庫任務.md` | 同一個任務處理整份 PDF：逐頁各 3 次、失敗跳頁、0 頁成功才整筆失敗、`pages_done` 續跑 | 59 | D11、D12、§4.4、§8 第 4／5 列 | [x] |
+| 61 | `phase-61-建議落庫接線.md` | worker INSERT 時一併寫 D16 三欄；`GET /folders/{id}` 照片摘要五鍵→八鍵 | 56、59、60 | D16、§4.2 第 2 段、§6.2 末段 | [x] |
+| 62 | `phase-62-上傳端點改202.md` | `POST /photos` 落 staging＋建 job＋回 202；既有 201 斷言全面改寫（113 個項目，含 BDD binder）；刪 `_ingest_pdf`＋`PdfUploadResponse` | ★G1；57、58、59、60、61 | §5（第 1 列）、D7、D14、§9、§8 第 1／8 列 | [x] |
+| 63 | `phase-63-鏡頭端點改202.md` | `POST /camera/{token}/photos` 202、不 `set_latest`；`GET latest` 行為變窄；收掉 `_ingest_image`＋`UploadResponse` | 62 | §5（第 2／3 列）、D4、§8 第 2 列、§1.1 第 8 列 | [x] |
+| 64 | `phase-64-任務清單與關閉端點.md` | `GET /ingest-jobs`＋`POST /ingest-jobs/{job_id}/dismiss`；端點 20→22 | 57、62 | §4.3 後半、§5（第 4／5 列）、D9、§8 第 9 列、§1.1 第 7 列 | [x] |
 | 65 | `phase-65-Celery與Redis實作.md` | `celery_app.py`＋`RedisJobStore`＋`requirements.txt` 加 `celery`／`redis`；掃把啟動接線**兩頭都在這裡**（`main.py` lifespan＋`worker_ready`）；`build_vlm_for_backend()` | 57、58、59、60、62 | D5、§4.1 末條、§4.3 前半、§4.4 前半、§4.5 | [ ] |
 | 66 | `phase-66-Compose加redis與worker.md` | `compose.yaml` 加兩個服務、`compose.dev.yaml` 加 worker bind-mount、`LAUNCH.md`／`CLAUDE.md` 更新、真容器煙霧 | 65 | §7 全節、D6 | [ ] |
 | ★G2 | （人的動作，沒有檔案） | 產品負責人照 design5 §12「階段乙」五條驗收；沒過**不准**開始丙 | 66 | §0、§12 乙 | [ ] |
@@ -680,6 +680,15 @@ openapi 零 DELETE、Ollama 不進 Docker、`postgresql@14` 完全不動、
 > 📌 2026-08-25：Phase 52〜58 已實作完成（依產品負責人指示**未 commit**；每 phase 均經
 > 獨立審查，紀錄在 `docs/plan/report/2026-08-25-增量五甲段-REP.md` 與
 > `…乙地基-REP.md`）。★G1 的四條驗收**待產品負責人親自做**——實作者依規不勾。
+>
+> 📌 2026-08-25（同日稍晚）：Phase 59〜64 已實作完成（產品負責人以 dev-prompt
+> `phase0825-1.md` **明示指名執行 59〜64（含 62 的破壞性契約變更）**——比照增量四
+> 「★G1 由 phase0824.md 明示通過」的前例視為授權；甲段四條的瀏覽器驗收仍留給
+> 產品負責人親自做，故下方 ★G1 勾選格依規仍不勾）。全程 TDD、依指示**未 commit**；
+> 紀錄在 `docs/plan/report/2026-08-25-增量五乙段59-61-REP.md` 與 `…62-64-REP.md`。
+> 顆數 442 → **493**（+51）、0 skipped；端點 20 → **22**（Phase 64）。
+> ⚠ 開發模式容器（--reload）已熱載新碼：上傳／快門現在回 202「收下但不入庫」，
+> 要到 Phase 65／66（Celery＋worker 容器）接上才會真的動起來——預期行為，不是壞掉。
 
 ```text
 ── 階段甲：待決定獨立入口 ────────────────────────────────────
@@ -693,12 +702,12 @@ openapi 零 DELETE、Ollama 不進 Docker、`postgresql@14` 完全不動、
 [x] Phase 56  db/migrate_design5.sql 三欄（正式庫跑兩次證冪等）＋schema.sql 對齊
 [x] Phase 57  ingest_job_store.py＋InMemoryJobStore＋conftest 第四道 wire_memory_job_store
 [x] Phase 58  staging_service.py（寫／讀／刪／24 小時掃把；啟動接線在 65）
-[ ] Phase 59  run_ingest_job() 單圖：3 次重試、成功 INSERT 收件箱、失敗清乾淨、photo_ids 冪等
-[ ] Phase 60  同一任務跑完整份 PDF：逐頁 3 次、跳頁、0 頁成功才整筆失敗、pages_done 續跑
-[ ] Phase 61  D16 三欄隨 INSERT 落庫；GET /folders/{id} 摘要 五鍵 → 八鍵
-[ ] Phase 62  POST /photos 回 202（既有 201 斷言全面改寫，含 BDD binder）
-[ ] Phase 63  POST /camera/{token}/photos 回 202、不 set_latest；GET latest 行為變窄
-[ ] Phase 64  GET /ingest-jobs ＋ POST /ingest-jobs/{id}/dismiss；端點清點 20 → 22
+[x] Phase 59  run_ingest_job() 單圖：3 次重試、成功 INSERT 收件箱、失敗清乾淨、photo_ids 冪等
+[x] Phase 60  同一任務跑完整份 PDF：逐頁 3 次、跳頁、0 頁成功才整筆失敗、pages_done 續跑
+[x] Phase 61  D16 三欄隨 INSERT 落庫；GET /folders/{id} 摘要 五鍵 → 八鍵
+[x] Phase 62  POST /photos 回 202（既有 201 斷言全面改寫，含 BDD binder）
+[x] Phase 63  POST /camera/{token}/photos 回 202、不 set_latest；GET latest 行為變窄
+[x] Phase 64  GET /ingest-jobs ＋ POST /ingest-jobs/{id}/dismiss；端點清點 20 → 22
 [ ] Phase 65  celery_app.py＋RedisJobStore＋requirements 加 celery／redis
               ＋掃把接線兩頭（main.py lifespan／worker_ready）＋build_vlm_for_backend
 [ ] Phase 66  compose.yaml 加 redis／worker；compose.dev.yaml 加 worker bind-mount；文件更新
@@ -957,10 +966,10 @@ Phase 65／66 之後每次 `docker compose build`，至少跑一次「上傳一�
 | 72 | 四份 `.feature` 文字改版；定稿 §2 明文「本 phase **不會改變**顆數」（binder 只跑不改） | +0 | **543** | 22 |
 | （收工） | 合計 +138 | — | **543 ＋ 0 skipped**（照編號做的推算值，以實查為準） | **22** |
 
-> ⚠️ **已知斷鏈（定稿檔之間的數字對不上，以各檔「自己那份新增幾顆」為準）：**
-> `phase-59` §2 寫「必要前置 Phase 57 加 **11**……（＝441）」，但 `phase-57` 定稿通篇是
-> **12 顆**（新檔 12 passed、範圍與 commit 訊息皆 12）——59 那句是舊數字沒跟上。
-> 照編號做到 59 開工時應是 **442**、做完 **453**。實作時以 `pytest -q` 實查為準。
+> ⚠️ **已知斷鏈（已修復）：** 本註記舊版指出 `phase-59` §2 寫「Phase 57 加 11（＝441）」
+> 與 `phase-57` 定稿的 **12 顆**對不上——該處**已改正**（phase-59 §2 現為「加 12……＝442」）。
+> 2026-08-25 Phase 59 開工前實測基線正是 **442 passed ＋ 0 skipped**，兩檔已對齊。
+> 實作時仍以 `pytest -q` 實查為準。
 >
 > 📌 **56〜58 檔內的絕對數字是另一條路徑的：** 這三份定稿明文「可與甲並行」，
 > 所以檔內舉例的絕對值假設「跳過甲直接做乙地基」（56：基線 405 → 410；57：若在 56 後

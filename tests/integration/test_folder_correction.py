@@ -13,6 +13,12 @@
   ⑤ 待決定分頁讀得到同一筆建議（GET /folders/{收件箱} 的照片摘要）
 
 prompt 那一段長什麼樣是純函式的事，測試在 tests/unit/test_vlm_service_unit.py。
+
+增量五（Phase 62）起上傳拆成兩段：`POST /photos` 只把檔案收下回 202，
+看圖（連同「讀糾錯清單注入 prompt」）與入庫都搬進 worker。本檔的測試因此
+一律走 tests/conftest.py 的共用工具，由測試自己扮演 worker 把任務跑完；
+糾錯清單改由 `run_ingest_job` 讀，但 monkeypatch 打在 `photo_repository`
+模組層，worker 那一側照樣數得到。
 """
 
 from __future__ import annotations
@@ -26,7 +32,8 @@ from app.dependencies import get_embeddings, get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeVLM, make_pdf_bytes, make_png_bytes
+from tests.conftest import 上傳一張並取回照片, 上傳並跑完任務
+from tests.fakes import FakeVLM, make_pdf_bytes
 
 # VLM 的建議是「收據」（六個預設資料夾之一，所以 clamp 會命中並留下建議）。
 # text 裡刻意不出現資料夾名稱，糾錯例子的題幹才看得出是照片描述、不是類別名。
@@ -80,12 +87,16 @@ class 會炸的Embeddings:
 
 
 def 上傳一張(client, 檔名: str = "a.png") -> dict:
-    """上傳一張成功的照片，回傳 201 的 JSON body。"""
-    response = client.post(
-        "/photos", files={"file": (檔名, make_png_bytes(), "image/png")}
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    """上傳一張成功的照片，回傳**資料庫那一列**（增量五 Phase 62 起）。
+
+    上傳從「一次做完」變成兩段：HTTP 只收下檔案回 202，看圖與入庫由 worker 做，
+    所以這裡走共用工具 `上傳一張並取回照片`（POST → 斷言 202 → 測試扮演 worker
+    把任務跑完 → 把 photo 那一列撈回來）。
+
+    回的鍵從此是 photo 表的欄位、不是 201 回應；本檔用到的只有 `["id"]`
+    與建議欄位，所以呼叫端幾乎一個字都不必改。
+    """
+    return 上傳一張並取回照片(client, filename=檔名)
 
 
 def 資料夾id(name: str) -> int:
@@ -140,14 +151,17 @@ def test_一筆糾錯都沒有時回空清單():
 
 # ---------- ② 上傳把建議持久化 ----------
 def test_上傳把clamp後的建議存進照片(client, 假看圖):
-    """已釐清 B：建議寫進 photo.suggested_category，PATCH 與待決定分頁都靠它。"""
-    body = 上傳一張(client)
+    """已釐清 B：建議寫進 photo.suggested_category，PATCH 與待決定分頁都靠它。
 
-    row = photo_repository.fetch_photo(body["id"])
-    assert row["suggested_category"] == "收據"
+    增量五（Phase 62）起 202 的回應裡沒有 suggested_folder 這種東西了，
+    所以「建議有沒有留下來」一律看資料庫那一欄（樣板 B）——
+    反正原本就是同一筆資料，回應只是順手回傳而已。
+    """
+    列 = 上傳一張(client)
+
+    assert 列["suggested_category"] == "收據"
     # 建議只是建議：照片本體仍然一律先進收件箱（design1.md §2 不變）
-    assert row["category"] == "未分類"
-    assert body["suggested_folder"]["name"] == "收據"
+    assert 列["category"] == "未分類"
 
 
 def test_清單外的建議不留建議(client, wire_fake_ai):
@@ -275,7 +289,12 @@ def test_沒有糾錯時帶入空清單(client, 假看圖):
 
 
 def test_PDF整份只讀一次糾錯清單各頁共用(client, 假看圖, monkeypatch):
-    """校準 §3：PDF 各頁共用同一份——上傳一開始讀一次就好，不是每頁查一次資料庫。"""
+    """校準 §3：PDF 各頁共用同一份——整份讀一次就好，不是每頁查一次資料庫。
+
+    增量五（Phase 62）起讀清單的人從 router 換成 worker（`run_ingest_job`
+    在拆頁後、逐頁迴圈**外面**讀一次），但 monkeypatch 打在 `photo_repository`
+    模組層，所以照樣數得到；「只讀一次」這條規矩一個字都沒變。
+    """
     photo_repository.record_folder_correction(
         suggested="收據", chosen="飲食", photo_text="餐廳菜單的照片"
     )
@@ -288,12 +307,14 @@ def test_PDF整份只讀一次糾錯清單各頁共用(client, 假看圖, monkey
 
     monkeypatch.setattr(photo_repository, "recent_corrections", 計數)
 
-    response = client.post(
-        "/photos", files={"file": ("a.pdf", make_pdf_bytes(pages=2), "application/pdf")}
+    結果 = 上傳並跑完任務(
+        client,
+        payload=make_pdf_bytes(pages=2),
+        filename="a.pdf",
+        content_type="application/pdf",
     )
 
-    assert response.status_code == 201, response.text
-    assert response.json()["pages"] == 2
+    assert len(結果["photo_ids"]) == 2, "兩頁都要入庫"
     assert 假看圖.calls == 2, "兩頁都要真的看圖"
     assert 次數["n"] == 1, "糾錯清單整份 PDF 只讀一次"
     assert [c["chosen"] for c in 假看圖.last_corrections] == ["飲食"]

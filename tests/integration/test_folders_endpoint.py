@@ -23,12 +23,22 @@ NOW = datetime(2026, 8, 18, 10, 0)
 飲食_ID = 3
 
 
-def _插入照片(text: str, category: str, *, 有縮圖: bool) -> int:
+def _插入照片(
+    text: str,
+    category: str,
+    *,
+    有縮圖: bool,
+    suggested_entity: str | None = None,
+    suggested_task_title: str | None = None,
+    suggested_task_due: date | None = None,
+) -> int:
     """插一張照片並回它的 id。
 
     insert_photo 會依 category 找同名資料夾（Phase 15），所以 category="收據"
     的照片會自動掛在 2 號資料夾底下。有縮圖的才呼叫 update_photo_paths（Phase 19）
     寫入路徑——沒寫路徑的就等於「舊資料」，thumbnail_url 應該是 null。
+
+    三個建議欄（Phase 61 / design5.md D16）預設不給＝舊照片的樣子（全是 NULL）。
     """
     row = photo_repository.insert_photo(
         text=text,
@@ -38,6 +48,9 @@ def _插入照片(text: str, category: str, *, 有縮圖: bool) -> int:
         content_time=date(2026, 8, 10),
         embedding=FakeEmbeddings().embed_query(text),
         uploaded_at=NOW,
+        suggested_entity=suggested_entity,
+        suggested_task_title=suggested_task_title,
+        suggested_task_due=suggested_task_due,
     )
     photo_id = row["id"]
     if 有縮圖:
@@ -102,9 +115,12 @@ def test_資料夾內容含照片摘要(client):
 
     assert len(body["photos"]) == 1
     photo = body["photos"][0]
-    # Phase 35 起由四鍵變五鍵：多的 suggested_category 讓待決定分頁畫得出選項①
+    # Phase 35 起由四鍵變五鍵（suggested_category），
+    # Phase 61 起由五鍵變八鍵：上傳改 202 之後，建議只能從這裡讀（design5.md D16、§6.2）
     assert set(photo) == {
-        "id", "thumbnail_url", "text", "uploaded_at", "suggested_category"
+        "id", "thumbnail_url", "text", "uploaded_at",
+        "suggested_category", "suggested_entity",
+        "suggested_task_title", "suggested_task_due",
     }
     assert photo["id"] == photo_id
     assert photo["text"] == "在 Target 購買可樂的收據"
@@ -147,3 +163,36 @@ def test_資料夾不存在回404(client):
 
     assert response.status_code == 404
     assert response.json() == {"detail": "找不到資料夾"}
+
+
+def test_摘要帶著實體與待辦的建議(client):
+    """design5.md D16／§6.2：上傳改 202 之後，待決定頁只能從這裡讀到建議。
+
+    沒有這三個欄位，實體窗就少了選項①、**待辦窗會永遠不開**。
+    """
+    photo_id = _插入照片(
+        "在 Target 購買可樂的收據",
+        "收據",
+        有縮圖=True,
+        suggested_entity="我的 MacBook",
+        suggested_task_title="繳交作業三",
+        suggested_task_due=date(2026, 8, 21),
+    )
+
+    photos = client.get(f"/folders/{收據_ID}").json()["photos"]
+
+    assert photos[0]["id"] == photo_id
+    assert photos[0]["suggested_entity"] == "我的 MacBook"
+    assert photos[0]["suggested_task_title"] == "繳交作業三"
+    assert photos[0]["suggested_task_due"] == "2026-08-21"   # JSON 是 ISO 字串
+
+
+def test_沒有建議的舊照片三個欄位都是null(client):
+    """遷移進來的舊照片沒有建議，是**預期行為**（彈窗照舊只有②③④）。"""
+    _插入照片("沒有任何建議的舊資料", "收據", 有縮圖=False)
+
+    photo = client.get(f"/folders/{收據_ID}").json()["photos"][0]
+
+    assert photo["suggested_entity"] is None
+    assert photo["suggested_task_title"] is None
+    assert photo["suggested_task_due"] is None

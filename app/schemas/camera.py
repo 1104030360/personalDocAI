@@ -1,8 +1,9 @@
 """無線鏡頭的 API 資料格式（Pydantic 模型，Phase 36）。
 
 只有「建立配對」需要自己的回應模型：
-快門那張照片的回應直接沿用 app/schemas/photo.py 的 UploadResponse
-（同一套上傳流程、同一個形狀，桌面才接得上既有的三關彈窗鏈）。
+快門那張照片的回應（增量五 Phase 63 起）直接沿用
+app/schemas/ingest_job.py 的 IngestAcceptedResponse
+（與電腦上傳同一套受理流程、同一個 202 形狀）。
 """
 
 from pydantic import BaseModel

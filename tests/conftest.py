@@ -177,3 +177,127 @@ def split_items(cell: str) -> list[str]:
     """規格表格用「、」分隔多個物品，例如「可樂、洋芋片」。"""
     cell = cell.strip()
     return [part for part in cell.split("、") if part] if cell else []
+
+
+# ---------- 增量五 Phase 62：上傳改 202 之後的共用小工具 ----------
+#
+# 為什麼需要它們：上傳從「一次做完」變成「兩段」——HTTP 收下（202），
+# worker 才真的入庫。測試沒有 worker，所以測試自己扮演 worker：
+# 拿 202 給的 job_id，直接呼叫 run_ingest_job（design5.md §9、D15）。
+# 這幾個工具把那串動作包起來，讓既有測試的改寫變成機械式的一行替換。
+#（get_job_store 檔頭已 import，這裡不重覆。）
+
+from app.repositories import photo_repository as _repo  # noqa: E402
+from app.services.ingest_job import run_ingest_job  # noqa: E402
+from tests.fakes import make_png_bytes  # noqa: E402
+
+
+def 目前的任務清單():
+    """拿到「router 現在真的在用」的那一份 JobStore。
+
+    Phase 57 的 wire_memory_job_store 可能是用 dependency_overrides 換的，
+    也可能是換掉模組層的實例——兩種寫法這個函式都拿得到同一份，
+    所以測試不必知道它是怎麼接的。
+    """
+    factory = app.dependency_overrides.get(get_job_store, get_job_store)
+    return factory()
+
+
+def 目前注入的假件() -> dict:
+    """把測試現在掛在 dependency_overrides 上的假件挖出來，交給 run_ingest_job。
+
+    這是讓改寫變便宜的關鍵：既有測試那一行
+        app.dependency_overrides[get_vlm] = lambda: FakeVLM(收據理解)
+    **一個字都不必改**——它原本是給 router 用的，現在改成給任務用。
+
+    注意 get_now 的取法不一樣：它的覆寫值本身就是 callable（FixedClock 實例），
+    所以直接把那個物件交出去；get_vlm／get_embeddings 的覆寫值是「工廠」
+    （lambda: FakeVLM(...)），要呼叫一次才拿得到物件。
+    """
+    assert get_vlm in app.dependency_overrides, (
+        "conftest 的 wire_fake_ai 應該已經把 get_vlm 換成假件了——"
+        "沒有的話這裡會去打真的 Ollama（pytest 絕不打真模型）"
+    )
+    return {
+        "vlm": app.dependency_overrides[get_vlm](),
+        "embeddings": app.dependency_overrides[get_embeddings](),
+        "now": app.dependency_overrides[get_now],
+    }
+
+
+def 跑完任務(job_id: str) -> None:
+    """測試扮演 worker：把某一個 job 就地跑完（design5.md §9）。
+
+    用的假件就是測試自己掛上去的那幾份，所以「這次看圖看得懂嗎」「時鐘停在哪一天」
+    完全由測試決定，與正式路徑的 worker 用同一個函式 run_ingest_job。
+    """
+    假件 = 目前注入的假件()
+    run_ingest_job(
+        job_id,
+        store=目前的任務清單(),
+        vlm=假件["vlm"],
+        embeddings=假件["embeddings"],
+        now=假件["now"],
+    )
+
+
+def _收件箱照片ids() -> list[int]:
+    """收件箱裡現在有哪些照片 id（新的在前）。"""
+    inbox = next(f for f in _repo.list_folders() if f["is_inbox"])
+    return [row["id"] for row in _repo.list_photos_in_folder(inbox["id"])]
+
+
+def 上傳並跑完任務(
+    client,
+    *,
+    payload: bytes | None = None,
+    filename: str = "a.png",
+    content_type: str = "image/png",
+) -> dict:
+    """POST /photos → 斷言 202 → 把那個任務跑完 → 回報結果。
+
+    回傳一個字典，四個鍵：
+      job_id    ：202 給的號碼牌
+      response  ：POST 的原始回應（要驗 202 的 body 時用得到）
+      job       ：跑完之後的任務狀態；**成功時是 None**（成功＝job 被刪掉）
+      photo_ids ：這一次新進收件箱的照片 id（單圖一個、PDF 可能多個，由小到大）
+
+    photo_ids 為什麼要用「前後比對」算出來，不是從 job 讀：
+    契約備忘 §3.1 說「成功 ＝ delete(job_id)」，所以任務跑完之後那筆 job
+    連同它的 photo_ids 一起消失了。改用「跑之前收件箱有誰、跑之後多了誰」，
+    對單圖與 PDF 都成立，也不必為此新增任何 repository 函式。
+    """
+    if payload is None:
+        payload = make_png_bytes()
+
+    前 = set(_收件箱照片ids())
+    response = client.post(
+        "/photos", files={"file": (filename, payload, content_type)}
+    )
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+
+    跑完任務(job_id)
+
+    新增 = sorted(i for i in _收件箱照片ids() if i not in 前)
+    return {
+        "job_id": job_id,
+        "response": response,
+        "job": 目前的任務清單().get(job_id),
+        "photo_ids": 新增,
+    }
+
+
+def 上傳一張並取回照片(client, **kwargs) -> dict:
+    """單圖捷徑：上傳並跑完任務之後，直接把資料庫那一列回來。
+
+    回的就是 photo_repository.fetch_photo() 的那個 dict，所以既有測試裡的
+    `body["id"]` 一個字都不必改；`body["metadata"]["category"]` 這種
+    「201 回應才有的巢狀形狀」則要改成 `列["category"]`（見 phase 文件 §4.6）。
+    """
+    結果 = 上傳並跑完任務(client, **kwargs)
+    assert len(結果["photo_ids"]) == 1, (
+        f"這個捷徑只給單圖用，這次進了 {len(結果['photo_ids'])} 張——"
+        "PDF 請改用 上傳並跑完任務()"
+    )
+    return _repo.fetch_photo(結果["photo_ids"][0])

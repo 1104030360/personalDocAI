@@ -18,6 +18,7 @@ from app.dependencies import get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services import camera_session_service as sessions
+from tests.conftest import _收件箱照片ids, 跑完任務
 from tests.fakes import FakeVLM, make_jpeg_bytes, understanding_for_text
 
 # 直接掛上規格原檔——不複製、不改寫（路徑相對於本檔所在資料夾 tests/integration/）
@@ -33,7 +34,7 @@ def 乾淨的session(monkeypatch):
 @pytest.fixture
 def context() -> dict:
     """一個例子裡各步驟之間傳遞資料的小抽屜（沿用上傳規格 binder 的作法）。"""
-    return {"token": None, "response": None}
+    return {"token": None, "response": None, "photo_ids": []}
 
 
 def _配對(context, client) -> str:
@@ -54,13 +55,25 @@ def 無線鏡頭已配對(context, client):
 # ------------------------------- When ------------------------------
 @when(parsers.parse('使用者以無線鏡頭拍下一張照片，VLM 理解其內容為 "{text}"'))
 def 以無線鏡頭拍下一張照片(context, client, text):
-    """按快門＝把當下那一幀擷成 JPEG 送上來（前端做的事，這裡直接給一張真的 JPEG）。"""
+    """按快門＝把當下那一幀擷成 JPEG 送上來（前端做的事，這裡直接給一張真的 JPEG）。
+
+    增量五之後快門只「受理」（202），照片要等 worker 做完才存在。
+    規格檔唯讀（Phase 72 才准改），所以 binder 這一層自己扮演 worker
+    把任務跑完——不然每一條 Then 都會變成「照片數量為 0」。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(understanding_for_text(text))
     token = _配對(context, client)
-    context["response"] = client.post(
+    response = client.post(
         f"/camera/{token}/photos",
         files={"file": ("shot.jpg", make_jpeg_bytes(), "image/jpeg")},
     )
+    context["response"] = response
+    context["photo_ids"] = []
+    assert response.status_code == 202, response.text
+
+    前 = set(_收件箱照片ids())
+    跑完任務(response.json()["job_id"])
+    context["photo_ids"] = sorted(i for i in _收件箱照片ids() if i not in 前)
 
 
 @when("畫面穩定且使用者未按快門")
@@ -93,8 +106,10 @@ def 照片文字描述為(context, text):
 
 
 def _已存的照片(context) -> dict:
-    response = context["response"]
-    assert response is not None and response.status_code == 201, response.text
-    row = photo_repository.fetch_photo(response.json()["id"])
+    assert context["photo_ids"], (
+        "任務跑完了卻沒有任何照片進收件箱——"
+        "檢查 When 步驟有沒有呼叫 跑完任務()"
+    )
+    row = photo_repository.fetch_photo(context["photo_ids"][0])
     assert row is not None, "資料庫裡找不到剛剛拍的照片"
     return row

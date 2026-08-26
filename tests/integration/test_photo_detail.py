@@ -20,7 +20,8 @@ from app.main import app
 from app.repositories import photo_repository
 from app.services import storage_service
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeEmbeddings, FakeVLM, make_png_bytes
+from tests.conftest import 上傳一張並取回照片
+from tests.fakes import FakeEmbeddings, FakeVLM
 
 收據理解 = PhotoUnderstanding(
     understood=True,
@@ -44,16 +45,20 @@ def wire_photo_detail_fakes(wire_fake_ai):
 
 
 def 上傳一張(client) -> dict:
-    """上傳一張成功的照片，回傳 201 的 JSON body。
+    """上傳一張成功的照片，回傳**資料庫那一列**（增量五 Phase 62 改寫）。
 
-    位元組一定要是**真圖**（make_png_bytes）：手打的 b"\\x89PNG…" 會在做縮圖那一步
-    被 Pillow 擋下來。
+    上傳從「一次做完」變成兩段：POST 只收下（202），照片要等 worker 跑完任務才入庫，
+    所以這裡改走共用工具 上傳一張並取回照片()——它會 POST、斷言 202、
+    測試自己扮演 worker 把任務跑完，最後回 photo_repository.fetch_photo() 的 dict。
+
+    回的鍵從「201 回應」換成「photo 表的欄位」，但這一檔的呼叫端用到的是
+    ["id"]／["text"]／["original_path"]，兩邊同名，所以呼叫端幾乎不必改
+    （唯一例外是巢狀的 ["metadata"]，見 test_metadata恰四鍵且值正確）。
+
+    位元組一定要是**真圖**（共用工具預設就是 make_png_bytes）：
+    手打的 b"\\x89PNG…" 會在做縮圖那一步被 Pillow 擋下來。
     """
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    return 上傳一張並取回照片(client)
 
 
 # ---- ① 回應的形狀 ----
@@ -78,20 +83,29 @@ def test_取得照片詳情回200且鍵恰好六個(client):
 
 
 def test_metadata恰四鍵且值正確(client):
-    """metadata 重用既有的 PhotoMetadata，所以必須與上傳 201 回應的那一份逐鍵相同。
+    """metadata 重用既有的 PhotoMetadata，所以必須與**資料庫那一列**逐鍵相同。
 
     ⚠ 不要手寫 `category == "收據"`：上傳一律先進「未分類」，VLM 的建議不落庫
-    （只出現在 201 的 suggested_folder）。拿「同一張照片的另一支端點」當期望值，
-    才不會把「建議」誤當成「歸屬」。
-    """
-    上傳 = 上傳一張(client)
+    （Phase 35 起另存 suggested_category 那一欄）。拿「同一張照片存下來的樣子」
+    當期望值，才不會把「建議」誤當成「歸屬」。
 
-    詳情 = client.get(f"/photos/{上傳['id']}").json()
+    增量五（Phase 62）之後上傳回應是 202、裡面沒有 metadata，
+    所以期望值改從 photo 表那一列的四個欄位組出來（樣板 B）。
+    """
+    列 = 上傳一張(client)
+
+    詳情 = client.get(f"/photos/{列['id']}").json()
 
     assert set(詳情["metadata"]) == {
         "category", "location", "items", "content_time"
     }
-    assert 詳情["metadata"] == 上傳["metadata"]
+    assert 詳情["metadata"] == {
+        "category": 列["category"],
+        "location": 列["location"],
+        "items": 列["items"],
+        # 資料庫回的是 date 物件，外送前會轉成 ISO 字串
+        "content_time": 列["content_time"].isoformat(),
+    }
     assert 詳情["metadata"]["content_time"] == "2026-08-10", (
         "content_time 要外送 ISO 日期字串"
     )

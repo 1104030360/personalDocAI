@@ -1,8 +1,13 @@
 """design.md 規定、但規格 .feature 沒涵蓋的上傳行為守衛（自 Phase 5/6 煙霧測試承接）。
 
 - 415 之後不進任何後續處理（design.md §10 錯誤處理總表）
-- understood=True 但 text 全空白 → 一樣 422（design.md §8.1「失敗就不存，text 不會空」）
+- understood=True 但 text 全空白 → 一樣視為無法理解、整筆不存
+  （design.md §8.1「失敗就不存，text 不會空」）
 - Rule U4 護欄：向量必須由「文字＋四欄位合併內容」產生（clarify 已否決「只用 text」方案）
+
+2026-08-25（Phase 62）起上傳改回 202：HTTP 只收檔、入列，看圖與寫入都在 worker。
+所以「全空白＝看不懂」的結局從 HTTP 422 換成 job["status"] == "failed"，
+而「向量長什麼樣」「清單有沒有傳給看圖」一律等測試扮演 worker 把任務跑完再驗。
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from app.main import app
 from app.repositories import photo_repository
 from app.services.indexing_service import build_document, embed_document
 from app.services.vlm_service import PhotoUnderstanding
+from tests.conftest import 上傳一張並取回照片, 目前的任務清單, 跑完任務
 from tests.fakes import FakeEmbeddings, FakeVLM, make_png_bytes
 
 PNG_BYTES = make_png_bytes()
@@ -31,8 +37,12 @@ def test_非圖片格式不會呼叫看圖(client):
     assert fake.calls == 0  # 415 之後不會呼叫 understand()
 
 
-def test_理解結果text全空白也回422且不儲存(client):
-    """Rule U7 的另一半：understood=True 但 text 全空白，一樣視為無法理解。"""
+def test_理解結果text全空白最後整筆失敗(client):
+    """Rule U7 的另一半：understood=True 但 text 全空白，一樣視為無法理解。
+
+    Phase 62 起這條語意搬進 worker：HTTP 收檔那一刻還沒看過圖，所以一定回 202；
+    試滿次數都是「空白＝看不懂」，整筆失敗、資料庫一列都不留。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(
         PhotoUnderstanding(understood=True, text="   ")
     )
@@ -40,9 +50,13 @@ def test_理解結果text全空白也回422且不儲存(client):
     response = client.post(
         "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
     )
+    assert response.status_code == 202, response.text
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "VLM 無法理解照片內容，未儲存任何資料"
+    job_id = response.json()["job_id"]
+    跑完任務(job_id)
+
+    job = 目前的任務清單().get(job_id)
+    assert job is not None and job["status"] == "failed"
     assert photo_repository.count_photos() == 0
 
 
@@ -63,14 +77,13 @@ def test_向量由合併內容產生而非只有文字(client):
     )
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(理解結果)
 
-    response = client.post(
-        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
-    )
-    assert response.status_code == 201
-    assert response.json()["metadata"]["category"] == "未分類"
-    assert response.json()["suggested_folder"]["name"] == "收據"
+    列 = 上傳一張並取回照片(client, payload=PNG_BYTES)
 
-    stored = json.loads(photo_repository.fetch_embedding(response.json()["id"]))
+    assert 列["category"] == "未分類"
+    # 「收據」在預設清單裡 → 建議留著（Phase 62 起寫進照片那一列，不再進回應）
+    assert 列["suggested_category"] == "收據"
+
+    stored = json.loads(photo_repository.fetch_embedding(列["id"]))
     # 2026-08-20 起上傳一律用「未分類」合併——VLM 講的「收據」只是建議，不落庫。
     # 歸類後的重算由 PATCH /photos/{id}/folder 負責（Phase 21 另有測試）。
     document = build_document(
@@ -95,6 +108,9 @@ def test_上傳時把現有資料夾清單傳給看圖(client):
 
     conftest 的 reset_tables 每個測試都會重播 design1.md §5 的預設六資料夾，
     所以這裡可以直接斷言那六個名稱。
+
+    Phase 62 起讀清單的「呼叫端」是 run_ingest_job（worker），不再是 router；
+    但假件是**同一個實例**（overrides 掛的是 `lambda: fake`），所以照樣驗得到。
     """
     fake = FakeVLM(
         PhotoUnderstanding(
@@ -104,11 +120,8 @@ def test_上傳時把現有資料夾清單傳給看圖(client):
     )
     app.dependency_overrides[get_vlm] = lambda: fake
 
-    response = client.post(
-        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
-    )
+    上傳一張並取回照片(client, payload=PNG_BYTES)
 
-    assert response.status_code == 201
     names = [folder["name"] for folder in fake.last_folders]
     assert names == ["未分類", "收據", "飲食", "風景", "文件", "其他"]
     # description 也要一起傳（prompt 需要它才寫得出「這個資料夾是裝什麼的」）

@@ -4,7 +4,11 @@
 ① `POST /photos/{id}/entities`：釘現有／自創、四種錯誤碼（404×2、409×2、422），
    以及「釘選不動向量」——實體是別針，不進 embedding（design3.md §5）。
 ② `POST /photos/{id}/entity-suggestion`：再建議一個、exclude 生效、候選空不呼叫 LLM。
-③ 上傳回應新增的三個建議欄位（suggested_entity／entities／suggested_task）。
+③ 入庫時寫進照片那一列的三個建議欄位
+   （suggested_entity／suggested_task_title／suggested_task_due）。
+
+2026-08-25（Phase 62）起上傳改回 202，建議不再出現在 HTTP 回應裡，
+而是由 worker 入庫時一起落庫（design5.md D16）——所以 ③ 全部改驗**資料庫那一列**。
 """
 
 from __future__ import annotations
@@ -15,7 +19,8 @@ from app.dependencies import get_entity_suggester, get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeEntitySuggester, FakeVLM, make_png_bytes
+from tests.conftest import 上傳一張並取回照片
+from tests.fakes import FakeEntitySuggester, FakeVLM
 
 超市照片 = PhotoUnderstanding(
     understood=True,
@@ -28,13 +33,13 @@ from tests.fakes import FakeEntitySuggester, FakeVLM, make_png_bytes
 
 
 def 上傳(client, understanding: PhotoUnderstanding = 超市照片) -> dict:
-    """走一次真正的上傳流程，回傳 201 的完整回應內容。"""
+    """走一次真正的上傳流程（202 → 測試扮演 worker 跑完任務），回資料庫那一列。
+
+    回的鍵不一樣了（是 photo 表的欄位，不是 201 回應）；
+    但這一檔用到的只有 ["id"]，所以呼叫端一個字都不必改。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(understanding)
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    return 上傳一張並取回照片(client)
 
 
 @pytest.fixture
@@ -260,72 +265,79 @@ def test_再建議時照片不存在回404(client):
     assert response.json()["detail"] == "找不到照片"
 
 
-# ---------------- ③ 上傳回應的三個建議欄位 ----------------
+# ---------------- ③ 入庫時落庫的三個建議欄位 ----------------
 
 
 def test_上傳回應帶實體建議與完整清單(client):
-    macbook = photo_repository.create_entity("我的 MacBook", "2023 年買的筆電")
+    """建議改成入庫時寫進照片那一列；「完整清單」則直接問 repository。"""
+    photo_repository.create_entity("我的 MacBook", "2023 年買的筆電")
     vlm = FakeVLM(超市照片.model_copy(update={"entity": "我的 macbook"}))
     app.dependency_overrides[get_vlm] = lambda: vlm
 
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
+    列 = 上傳一張並取回照片(client)
 
-    assert response.status_code == 201, response.text
-    body = response.json()
-    # 大小寫不同也夾得回清單原文
-    assert body["suggested_entity"] == {
-        "id": macbook["id"], "name": "我的 MacBook", "description": "2023 年買的筆電"
-    }
-    assert [e["name"] for e in body["entities"]] == ["我的 MacBook"]
+    # 大小寫不同也夾得回清單原文（存的是名稱本身，不是整個實體）
+    assert 列["suggested_entity"] == "我的 MacBook"
+    assert [e["name"] for e in photo_repository.list_entities()] == ["我的 MacBook"]
     # 仍然只有一次看圖呼叫，而且實體清單真的被傳進去了（要注入 prompt）
     assert vlm.calls == 1
     assert [e["name"] for e in vlm.last_entities] == ["我的 MacBook"]
-    # 建議只出現在回應，沒有落庫（D3：人確認才落庫）
-    assert photo_repository.list_photo_entities(body["id"]) == []
+    # 只是建議：沒有人按確認，連結表就是空的（D3：人確認才落庫）
+    assert photo_repository.list_photo_entities(列["id"]) == []
 
 
 def test_上傳建議清單外的實體時suggested_entity為None(client):
     photo_repository.create_entity("我的 MacBook", "筆電")
 
-    body = 上傳(client, 超市照片.model_copy(update={"entity": "我的 iPad"}))
+    列 = 上傳(client, 超市照片.model_copy(update={"entity": "我的 iPad"}))
 
-    assert body["suggested_entity"] is None
+    assert 列["suggested_entity"] is None
     # 清單外的名字絕不自動變成新實體
     assert [e["name"] for e in photo_repository.list_entities()] == ["我的 MacBook"]
 
 
-def test_實體表為空時上傳回應的兩個實體欄位都是空的(client):
-    body = 上傳(client)
+def test_實體表為空時照片不留任何實體建議(client):
+    列 = 上傳(client)
 
-    assert body["suggested_entity"] is None
-    assert body["entities"] == []
+    assert 列["suggested_entity"] is None
+    assert photo_repository.list_entities() == []
 
 
-def test_上傳回應帶待辦建議(client):
-    body = 上傳(
-        client,
+def test_待辦建議隨入庫寫進照片那一列(client):
+    """建議不再出現在上傳回應（202 沒有這種東西），改成入庫時落庫（design5.md D16）。
+
+    這三欄是 Phase 56 加的、Phase 61 接線寫入的；待決定頁開窗時再讀出來，
+    所以「202 之後建議會蒸發、待辦窗從此沒有入口」這個坑不存在。
+    """
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
         超市照片.model_copy(
             update={"task_title": "  交 Project 2  ", "task_due": "2026-09-18"}
-        ),
+        )
     )
 
-    assert body["suggested_task"] == {"title": "交 Project 2", "due": "2026-09-18"}
+    列 = 上傳一張並取回照片(client)
+
+    # 前後空白在入庫時就去掉了（與原本回應的行為一字不變）
+    assert 列["suggested_task_title"] == "交 Project 2"
+    assert 列["suggested_task_due"].isoformat() == "2026-09-18"
+    # 仍然只是建議：沒有人按確認，task 表就是空的（D3 人確認才落庫）
+    assert photo_repository.get_task_by_photo(列["id"]) is None
 
 
 def test_待辦到期日看不懂時只留標題且上傳照樣成功(client):
-    """到期日推不出來不可以讓整個上傳失敗——沿用 parse_content_time 的寬容解析。"""
-    body = 上傳(
+    """到期日推不出來不可以讓整筆入庫失敗——沿用 parse_content_time 的寬容解析。"""
+    列 = 上傳(
         client,
         超市照片.model_copy(update={"task_title": "交作業", "task_due": "下週三"}),
     )
 
-    assert body["suggested_task"] == {"title": "交作業", "due": None}
+    assert 列["suggested_task_title"] == "交作業"
+    assert 列["suggested_task_due"] is None
 
 
 @pytest.mark.parametrize("title", [None, "   "])
 def test_沒有待辦時suggested_task為None(client, title):
-    body = 上傳(client, 超市照片.model_copy(update={"task_title": title}))
+    列 = 上傳(client, 超市照片.model_copy(update={"task_title": title}))
 
-    assert body["suggested_task"] is None
+    assert 列["suggested_task_title"] is None
+    assert 列["suggested_task_due"] is None

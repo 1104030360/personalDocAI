@@ -141,20 +141,22 @@ def test_手機取景頁沒有頂欄():
     assert "待決定" not in 原始碼
 
 
-def test_端點數仍為20(client):
-    """本 phase 純前端：一支端點都沒加。
+def test_端點數仍為22(client):
+    """甲段（Phase 52〜55）純前端：一支端點都沒加。
 
     /ui/pending.html 是靠 app/main.py 的 app.mount("/ui", StaticFiles(...))
     送出去的靜態檔，不會出現在 openapi.json 裡。
 
     ⚠ paths 是「路徑 → 方法」兩層字典，要把每個路徑底下的方法數加起來，
     不能直接數 paths 有幾個 key（算法與 test_ask_three_paths.py 的
-    test_端點數不變 一致；增量五要到 Phase 64 才會變成 22）。
+    test_端點數不變 一致）。20 → 22 已在增量五 Phase 64 發生
+    （GET /ingest-jobs ＋ POST /ingest-jobs/{job_id}/dismiss）——
+    本測試原名 test_端點數仍為20，Phase 53 當時的 docstring 就預告了這次更新。
     """
     paths = client.get("/openapi.json").json()["paths"]
     運算元 = [(path, method) for path, item in paths.items() for method in item]
 
-    assert len(運算元) == 20
+    assert len(運算元) == 22
 
 
 # ---------------------------------------------------------------------------

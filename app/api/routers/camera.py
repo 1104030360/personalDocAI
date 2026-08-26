@@ -6,14 +6,15 @@
 |---|---|---|---|
 | POST | `/camera/session` | 桌面 | 建配對，回 token／手機網址／QR 的 SVG |
 | WS | `/camera/{token}/signal?role=desk\\|phone` | 兩邊 | 信令（SDP／ICE）＋遙控指令，**純轉發** |
-| POST | `/camera/{token}/photos` | 手機 | 快門那一張 → 轉呼叫既有上傳流程 |
-| GET | `/camera/{token}/latest` | 桌面 | 拿最近一次上傳成功的 201 內容，接三關彈窗鏈 |
+| POST | `/camera/{token}/photos` | 手機 | 快門那一張 → 落 staging、入列、**202** |
+| GET | `/camera/{token}/latest` | （已無人打） | 增量五起永遠 204；桌面改看全站進度面板 |
 
 三件事情要先講清楚：
 
-1. **這裡沒有新的上傳邏輯。** 快門那張照片走的是 photos router 的 `_ingest_image()`
-   ——同一套看圖、同一套存檔、同一套「先進未分類」。所以 415／422 的語意
-   一字不變，桌面收到的 201 也與 `POST /photos` 完全同形狀（計畫校準 5）。
+1. **這裡沒有新的上傳邏輯。** 快門那張照片走的是 photos router 的
+   `_accept_upload()`——同一套順序鐵律、同一套失敗清理、同一份 AI 開關快照。
+   所以 415 的語意一字不變，202 的回應也與 `POST /photos` 完全同形狀。
+   看圖與入庫由 worker 做（app/services/ingest_job.py），不在這個請求裡。
 2. **WebSocket 只是水管。** 伺服器不解讀訊息內容：SDP、ICE candidate、
    `capture`／`switch`／`torch` 全部原文轉發給另一端（計畫校準 4）。
    影像本身走 WebRTC 直接在兩台裝置之間傳，**不經過這台伺服器**。
@@ -29,7 +30,6 @@ from __future__ import annotations
 
 import logging
 import socket
-from datetime import datetime
 
 import segno
 from fastapi import (
@@ -45,15 +45,18 @@ from fastapi import (
     WebSocketDisconnect,
     WebSocketException,
 )
-from langchain_core.embeddings import Embeddings
 
 from app.api.routers import photos
 from app.core import config
-from app.dependencies import get_embeddings, get_now, get_vlm
-from app.repositories import photo_repository
+from app.dependencies import (
+    get_job_store,
+    get_task_dispatcher,
+    TaskDispatcher,
+)
 from app.schemas.camera import CameraSessionOut
-from app.schemas.photo import UploadResponse
-from app.services import camera_session_service, vlm_service
+from app.schemas.ingest_job import IngestAcceptedResponse
+from app.services import camera_session_service
+from app.services.ingest_job_store import JobStore
 
 logger = logging.getLogger(__name__)
 
@@ -259,23 +262,32 @@ async def camera_signal(
 
 
 @router.post(
-    "/camera/{token}/photos", status_code=201, response_model=UploadResponse
+    "/camera/{token}/photos",
+    status_code=202,
+    response_model=IngestAcceptedResponse,
 )
 def upload_camera_photo(
     token: str,
     file: UploadFile = File(...),
-    vlm: vlm_service.VLMClient = Depends(get_vlm),
-    embeddings: Embeddings = Depends(get_embeddings),
-    now: datetime | None = Depends(get_now),
-) -> UploadResponse:
-    """手機按下快門之後送上來的那一張（計畫校準 5）。
+    store: JobStore = Depends(get_job_store),
+    dispatcher: TaskDispatcher = Depends(get_task_dispatcher),
+) -> IngestAcceptedResponse:
+    """手機按下快門之後送上來的那一張（增量五 D4／D7）。
 
-    這裡只多做兩件事：**驗 token** 與 **把 201 存進 session**；
-    中間的入庫完全轉呼叫 photos router 的 `_ingest_image()`，
-    所以「看不懂＝422 什麼都不存」「先進未分類」「原圖＋縮圖落地」
-    全部與桌面上傳一模一樣，沒有第二套規則要維護。
+    這裡只多做**一件**事：**驗 token**。其餘完全轉呼叫 photos router 的
+    `_accept_upload()`——同一套順序鐵律（先 staging 再入列）、同一套失敗清理、
+    同一份 AI 開關快照，所以電腦上傳與手機快門走的是**完全一樣**的路，
+    沒有第二套規則要維護。
 
-    注意順序：token 先驗（亂 token 一律 404，連檔案格式都不必看）。
+    ⚠ 回的是 **202**，不是 201：這一刻 VLM 還沒看圖、資料庫還沒多一列。
+      好處就是本 phase 的目標——**人可以立刻按下一次快門**（design5.md D4）。
+
+    ⚠ **不再 `set_latest`**（design5.md §5）：快門當下手上只有一個 job_id，
+      根本沒有「那張照片的歸類 payload」可以存給桌面。桌面改看全站進度面板
+      （Phase 67），歸類一律在待決定頁做（D13）。
+
+    檢查順序刻意如此：**token 先驗**（亂 token 一律 404，連檔案格式都不必看，
+    也絕不讀檔——design5.md §8 第 2 列）。
     """
     if camera_session_service.get_session(token) is None:
         raise HTTPException(status_code=404, detail="配對無效或已過期，請重新掃描 QR")
@@ -288,30 +300,19 @@ def upload_camera_photo(
 
     image_bytes = file.file.read()
     logger.info(
-        "無線鏡頭快門：收到 %d bytes（token %s…），開始入庫（AI 看圖見下一行）",
+        "無線鏡頭快門：收到 %d bytes（token %s…），準備入列",
         len(image_bytes),
         token[:8],
     )
-
-    # 與 POST /photos 一樣，在入庫前各讀一次清單（注入看圖 prompt 用）
-    response = photos._ingest_image(
+    return photos._accept_upload(
         image_bytes,
-        file.content_type,
-        vlm,
-        embeddings,
-        now,
-        photo_repository.list_folders(),
-        photo_repository.list_entities(),
-        photo_repository.recent_corrections(limit=photos.FEW_SHOT_CORRECTIONS),
+        filename=file.filename or "快門.jpg",
+        content_type=file.content_type,
+        store=store,
+        dispatcher=dispatcher,
+        # 進度面板要分得出「電腦選檔上傳的」與「手機拍的」（design5.md §4.3）
+        source="camera",
     )
-
-    # 存進 session 給桌面來拿——手機端接著會用 WebSocket 送 {"type":"uploaded"} 通知桌面。
-    # 走到這裡代表已經 201 了；422 那條路根本不會執行到，所以 latest 永遠是成功的那張。
-    camera_session_service.set_latest(token, response)
-    logger.info(
-        "無線鏡頭快門：photo_id=%d 入庫完成，等桌面來拿並開彈窗鏈", response.id
-    )
-    return response
 
 
 # ---------------- ④ 桌面來拿最近一張 ----------------
@@ -319,20 +320,26 @@ def upload_camera_photo(
 
 @router.get(
     "/camera/{token}/latest",
-    response_model=UploadResponse,
-    responses={204: {"description": "這次配對還沒有拍過任何照片"}},
+    status_code=204,
+    responses={
+        204: {"description": "這次配對沒有已經分析完成的照片"},
+        404: {"description": "配對無效或已過期"},
+    },
 )
-def get_camera_latest(token: str) -> UploadResponse | Response:
-    """桌面拿最近一次上傳成功的 201 內容，接既有三關彈窗鏈（計畫校準 5）。
+def get_camera_latest(token: str) -> Response:
+    """行為變窄（design5.md §5、§1.1）：**永遠回 204**。
 
-    還沒拍過就回 204（No Content，空的回應）——不是錯誤，只是還沒輪到桌面做事。
+    以前這一支是桌面的「歸類入口」：手機拍完把 201 內容存進 session，
+    桌面來拿、開三關彈窗鏈。增量五之後快門只回一個 job_id，
+    沒有任何東西會寫進 latest，所以這裡永遠沒有已完成的照片可以回。
+
+    端點刻意**保留**：design5 §5 只寫「行為變窄」沒說刪，而且端點總數的
+    算式（20→22）裡它仍在。桌面頁不再打它是前端的事（Phase 69）。
+
+    token 的 404 語意一字不變——陌生人問什麼都是 404。
     """
     if camera_session_service.get_session(token) is None:
         raise HTTPException(status_code=404, detail="配對無效或已過期，請重新掃描 QR")
 
-    latest = camera_session_service.get_latest(token)
-    if latest is None:
-        # 直接回一個 Response 物件＝跳過 response_model，才送得出「沒有內容」
-        return Response(status_code=204)
-    logger.info("無線鏡頭：桌面已取走 photo_id=%d，接著開彈窗鏈", latest.id)
-    return latest
+    # 直接回 Response 物件＝送出一個「沒有內容」的成功回應
+    return Response(status_code=204)

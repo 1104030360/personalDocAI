@@ -2,6 +2,13 @@
 
 已被 Phase 15〜24 的測試覆蓋的列不在這裡重寫；
 完整對照表見 docs/plan/finish/phase-25-錯誤收尾與全量回歸.md 的 ASCII 圖。
+
+2026-08-25（Phase 62）起上傳改回 202，回應裡已經沒有 suggested_folder／folder／
+metadata／folders 這些鍵了——「AI 建議了什麼」改成入庫時寫進照片那一列的
+`suggested_category` 欄（design5.md D16）。所以本檔的斷言一律改看**資料庫**：
+  - `body["suggested_folder"]["name"]` → `列["suggested_category"]`
+    ⚠ 建議夾成收件箱（＝等於沒有建議）時存的是 **None**，不是字串「未分類」。
+  - `body["folders"]`                   → `photo_repository.list_folders()`
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from app.main import app
 from app.repositories import photo_repository
 from app.services import storage_service
 from app.services.vlm_service import PhotoUnderstanding
+from tests.conftest import 上傳一張並取回照片, 目前的任務清單, 跑完任務
 from tests.fakes import FakeVLM, make_png_bytes
 
 # make_png_bytes 是 Phase 17 加在 tests/fakes.py 的小工具，產生 Pillow 打得開的真 PNG。
@@ -61,46 +69,61 @@ def data_dir底下的檔案() -> list[Path]:
     return [路徑 for 路徑 in config.DATA_DIR.rglob("*") if 路徑.is_file()]
 
 
-def 上傳一張(client) -> dict:
-    """上傳一張成功的照片，回傳 201 的 JSON body。"""
+# 本檔一律用 conftest 的 上傳一張並取回照片(client)：
+# 它會 POST（202）→ 測試自己扮演 worker 把任務跑完 → 回傳資料庫那一列。
+# 回的鍵是 photo 表的欄位（不是舊的 201 回應），但 ["id"] 一模一樣。
+
+
+# ---- ① 上傳失敗時，不寫庫、不留檔、也不建資料夾 ----
+# Phase 62 起這兩種失敗發生在**不同階段**，所以原本的 parametrize 拆成兩顆：
+#   非圖片格式 → HTTP 當場擋（415），連任務都不會建
+#   VLM 看不懂 → HTTP 照樣受理（202），試滿次數後由任務標成 failed
+def test_非圖片格式時不寫庫不留檔也不建資料夾(client):
+    """design1 §12 第一列（415 那一半）：格式檢查排在最前面，行為一字未變。
+
+    「不寫庫」「不留檔」Phase 19／20 已各有測試把關，這裡當雙保險一起斷言；
+    本測試真正新補的是最後一條——失敗時**資料夾清單必須維持六個預設值**。
+    """
+    response = client.post("/photos", files={"file": ("a.txt", b"hi", "text/plain")})
+
+    assert response.status_code == 415, f"狀態碼不對（{response.text}）"
+    assert photo_repository.count_photos() == 0, "不可以寫入資料庫"
+    assert data_dir底下的檔案() == [], "不可以在 DATA_DIR 留下任何檔案"
+    assert len(photo_repository.list_folders()) == 6, "不可以偷偷新增資料夾"
+
+
+def test_VLM看不懂時不寫庫不留檔也不建資料夾(client):
+    """design1 §12 第一列（看不懂那一半）：結局改在 worker，該守的三條不變。
+
+    ⚠ 「不留檔」現在多守一樣東西：收檔時寫進 data/staging/ 的暫存檔，
+      整筆失敗時也必須被刪掉（design5.md §4.1、D10），不然它會變成沒人會撿的垃圾。
+    """
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
+        PhotoUnderstanding(understood=False)
+    )
+
     response = client.post(
         "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
     )
-    assert response.status_code == 201, response.text
-    return response.json()
+    assert response.status_code == 202, response.text
 
+    job_id = response.json()["job_id"]
+    跑完任務(job_id)
 
-# ---- ① 上傳失敗（415／422）時，不寫庫、不留檔、也不建資料夾 ----
-@pytest.mark.parametrize(
-    "情境, files, vlm看得懂, 預期狀態",
-    [
-        ("非圖片格式", {"file": ("a.txt", b"hi", "text/plain")}, True, 415),
-        ("VLM 看不懂", {"file": ("a.png", make_png_bytes(), "image/png")}, False, 422),
-    ],
-)
-def test_上傳失敗時不寫庫不留檔也不建資料夾(client, 情境, files, vlm看得懂, 預期狀態):
-    """design1 §12 第一列：不建資料夾、不留檔。
-
-    「不寫庫」「不留檔」Phase 19／20 已各有測試把關（test_415完全不寫檔、
-    test_422完全不寫檔、test_vlm看不懂回422且不寫入），這裡當雙保險一起斷言；
-    本測試真正新補的是最後一條——失敗時**資料夾清單必須維持六個預設值**。
-    """
-    if not vlm看得懂:
-        app.dependency_overrides[get_vlm] = lambda: FakeVLM(
-            PhotoUnderstanding(understood=False)
-        )
-
-    response = client.post("/photos", files=files)
-
-    assert response.status_code == 預期狀態, f"{情境}：狀態碼不對（{response.text}）"
-    assert photo_repository.count_photos() == 0, f"{情境}：不可以寫入資料庫"
-    assert data_dir底下的檔案() == [], f"{情境}：不可以在 DATA_DIR 留下任何檔案"
-    assert len(photo_repository.list_folders()) == 6, f"{情境}：不可以偷偷新增資料夾"
+    job = 目前的任務清單().get(job_id)
+    assert job is not None and job["status"] == "failed"
+    assert photo_repository.count_photos() == 0, "不可以寫入資料庫"
+    assert data_dir底下的檔案() == [], "不可以在 DATA_DIR 留下任何檔案（含 staging 暫存檔）"
+    assert len(photo_repository.list_folders()) == 6, "不可以偷偷新增資料夾"
 
 
 # ---- ② VLM 推薦清單外的名稱 → 建議改成「未分類」 ----
 def test_VLM推薦清單外名稱時建議改成未分類(client):
-    """design1 §7.1：suggested_folder 必須是 folders 裡的一筆。"""
+    """design1 §7.1：建議必須是資料夾清單裡的一筆（清單外的名稱一律夾回「未分類」）。
+
+    Phase 62 起這件事改在入庫時做完並寫進 `suggested_category` 欄，
+    夾成收件箱＝等於沒有建議 → 存 NULL。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(
         PhotoUnderstanding(
             understood=True,
@@ -112,18 +135,27 @@ def test_VLM推薦清單外名稱時建議改成未分類(client):
         )
     )
 
-    body = 上傳一張(client)
+    列 = 上傳一張並取回照片(client)
 
-    assert body["suggested_folder"]["name"] == "未分類"
-    assert body["folder"]["name"] == "未分類"
-    assert body["metadata"]["category"] == "未分類"
-    資料夾名稱 = [資料夾["name"] for 資料夾 in body["folders"]]
+    # 清單外 → clamp 成「未分類」＝等於沒有建議 → 建議欄存 NULL（Phase 35 的規則）
+    assert 列["suggested_category"] is None
+    未分類 = photo_repository.find_folder_by_name("未分類")
+    assert 列["folder_id"] == 未分類["id"], "上傳一律先進收件箱"
+    assert 列["category"] == "未分類"
+    資料夾名稱 = [資料夾["name"] for 資料夾 in photo_repository.list_folders()]
     assert "Receipts from Costco" not in 資料夾名稱, "清單外的推薦名稱不可以被偷偷建成資料夾"
 
 
-# ---- ③ 「未分類」被當成建議 → 允許 ----
+# ---- ③ 「未分類」被當成建議 → 允許（不是錯誤，只是等於沒有建議）----
 def test_VLM直接推薦未分類時照樣回201(client):
-    """design1 §12：選項①顯示「未分類」與關掉彈窗結果相同，設計上明訂可接受。"""
+    """design1 §12：選項①顯示「未分類」與關掉彈窗結果相同，設計上明訂可接受。
+
+    ⚠ 測試名稱裡的「201」是 Phase 62 之前的狀態碼（現在收檔一律 202，
+      入庫由 worker 完成）；本 phase 依計畫只改行為斷言、不改這一顆的名字。
+      要守的事情一字未變：這種建議不是錯誤，照片照樣入得了庫。
+      Phase 35 起「建議＝收件箱」在入庫時就折成 NULL——
+      沒有建議與建議指向收件箱本來就是同一件事，所以資料庫只留一種表示法。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(
         PhotoUnderstanding(
             understood=True,
@@ -132,11 +164,12 @@ def test_VLM直接推薦未分類時照樣回201(client):
         )
     )
 
-    body = 上傳一張(client)
+    列 = 上傳一張並取回照片(client)
 
-    assert body["suggested_folder"]["name"] == "未分類"
-    assert body["suggested_folder"]["id"] == body["folder"]["id"], (
-        "建議與實際歸屬都是未分類時，應該指向同一筆資料夾"
+    assert 列["suggested_category"] is None
+    未分類 = photo_repository.find_folder_by_name("未分類")
+    assert 列["folder_id"] == 未分類["id"], (
+        "建議與實際歸屬都是未分類時，照片就該待在那一筆資料夾裡"
     )
 
 
@@ -146,7 +179,7 @@ def test_自建資料夾重名大小寫不同也回409且不覆蓋(client):
 
     Phase 21 已驗過「完全同名 → 409」；這裡補的是大小寫不同的那一半。
     """
-    第一張 = 上傳一張(client)
+    第一張 = 上傳一張並取回照片(client)
     建立 = client.patch(
         f"/photos/{第一張['id']}/folder",
         json={"name": "Project X", "description": "課程作業"},
@@ -154,7 +187,7 @@ def test_自建資料夾重名大小寫不同也回409且不覆蓋(client):
     assert 建立.status_code == 200, 建立.text
     建立後資料夾數 = len(photo_repository.list_folders())
 
-    第二張 = 上傳一張(client)
+    第二張 = 上傳一張並取回照片(client)
     衝突 = client.patch(
         f"/photos/{第二張['id']}/folder",
         json={"name": "project x", "description": "另一個描述"},
@@ -177,11 +210,11 @@ def test_原圖被刪掉時讀原圖回404(client):
     照片 id 不存在——Phase 19 的 test_photo_files.py 已逐一把關（見 ASCII 對照
     地圖），這裡只補它沒驗到的那一半：**原圖端點**對「檔案不見」的反應。
     """
-    body = 上傳一張(client)
-    列 = photo_repository.fetch_photo(body["id"])
+    # 上傳一張並取回照片() 回的就是資料庫那一列，所以不必再 fetch_photo 一次
+    列 = 上傳一張並取回照片(client)
     storage_service.absolute_path(列["original_path"]).unlink()
 
-    response = client.get(f"/photos/{body['id']}/image")
+    response = client.get(f"/photos/{列['id']}/image")
 
     assert response.status_code == 404
 
@@ -202,9 +235,8 @@ def test_PATCH時embedding失敗回500且照片完全沒被改動(不擲出例�
 
     有人把順序調換（先 UPDATE 再算向量）的話，這個測試會馬上紅。
     """
-    body = 上傳一張(不擲出例外的client)
-    photo_id = body["id"]
-    改動前 = photo_repository.fetch_photo(photo_id)
+    改動前 = 上傳一張並取回照片(不擲出例外的client)
+    photo_id = 改動前["id"]
     改動前向量 = photo_repository.fetch_embedding(photo_id)
     收據 = photo_repository.find_folder_by_name("收據")
 
@@ -226,9 +258,8 @@ def test_PATCH自建時embedding失敗回500且不留空資料夾(不擲出例�
     有人把 create_folder 提前到算向量之前，就會留下一個誰也沒用到的空資料夾，
     這個測試會馬上紅（Phase 21 就是為了這件事把建資料夾排在算向量之後）。
     """
-    body = 上傳一張(不擲出例外的client)
-    photo_id = body["id"]
-    改動前 = photo_repository.fetch_photo(photo_id)
+    改動前 = 上傳一張並取回照片(不擲出例外的client)
+    photo_id = 改動前["id"]
 
     app.dependency_overrides[get_embeddings] = lambda: 會炸的Embeddings()
     response = 不擲出例外的client.patch(

@@ -4,7 +4,7 @@
 上傳與歸類的模型在 app/schemas/photo.py，不要混在一起。
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -29,9 +29,14 @@ class PhotoSummary(BaseModel):
     換算成 /photos/{id}/thumbnail（Phase 19 的讀圖端點）；舊資料沒有路徑時
     是 None（JSON 的 null），前端顯示灰底占位（design1.md §10）。
 
-    Phase 35 從四鍵變五鍵（design1「摘要恰四鍵」由 phase-35 明文修訂）：
-    suggested_category ＝上傳當下 VLM 的建議，待決定分頁靠它畫出選項①；
-    沒有建議的照片是 None，彈窗就照舊只有②③④。
+    欄位數的沿革：
+      Phase 22 四鍵 → Phase 35 五鍵（+suggested_category）→ **Phase 61 八鍵**。
+
+    後面三個是 design5.md D16 的「建議落庫」：上傳自 Phase 62 起回 202，
+    建議不會再出現在任何回應裡，待決定頁只能從這支端點讀。
+    三個都是**建議**，不是事實——照片實際釘了哪些實體要看 photo_entity，
+    有沒有待辦要看 task 表。人在彈窗按下去，那兩張表才會有資料。
+    舊照片三個都是 None，彈窗照舊只有②③④，這是預期行為。
     """
 
     id: int
@@ -39,6 +44,9 @@ class PhotoSummary(BaseModel):
     text: str
     uploaded_at: datetime   # 轉成 JSON 時是 ISO 字串，例如 2026-08-18T10:00:00+08:00
     suggested_category: str | None
+    suggested_entity: str | None        # clamp 後的實體**名稱**，清單外＝None
+    suggested_task_title: str | None    # 沒有可辦的事＝None（待辦窗就不開）
+    suggested_task_due: date | None     # 轉成 JSON 時是 "2026-08-21" 這種字串
 
 
 class FolderDetailResponse(BaseModel):

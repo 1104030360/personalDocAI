@@ -14,8 +14,10 @@ design.md §4.2：get_vlm / get_embeddings / get_now 是三個主要注入點；
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from functools import lru_cache
+from typing import Protocol
 
 from fastapi import Depends
 from langchain_core.embeddings import Embeddings
@@ -28,6 +30,8 @@ from app.services import (
     ingest_job_store,
     vlm_service,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -170,3 +174,59 @@ def get_job_store() -> ingest_job_store.JobStore:
       （Phase 59 的簽章約定——store 是參數，不是任務本體裡的隱形全域）。
     """
     return _memory_job_store()
+
+
+# ---------------- 入庫任務的入列器（增量五 Phase 62）----------------
+#
+# 「入列」＝把一個 job_id 丟出去，讓別人去做。誰接住它，Phase 62〜64 與
+# Phase 65 之後是不一樣的：
+#   Phase 62〜64：NoopDispatcher（沒有人接住——Celery 還沒建，這是**預期**的）
+#   Phase 65 起  ：get_task_dispatcher() 本體換成「回傳 app/celery_app.py 的
+#                  CeleryDispatcher」，它的 dispatch() 把 job_id 交給
+#                  ingest_task.delay()（丟進 Redis，由 worker 容器接住）
+# 換的時候只改 get_task_dispatcher() 這一個函式，router 一個字都不動。
+
+
+class TaskDispatcher(Protocol):
+    """把一筆入庫任務丟出去的入列器。介面只有一個具名方法 dispatch()。
+
+    用法：dispatcher.dispatch(job_id)。**不是**把 dispatcher 本身當函式直接呼叫——
+    具名方法讓 router 那一行自己會說話；Phase 65 的正式實作 CeleryDispatcher
+    （住在 app/celery_app.py，全系統唯一碰 Celery 的地方）與 Phase 65 測試安全網
+    的假派工也都有同一個 dispatch() 方法，三邊同形、換裝時誰都不必動。
+
+    參數**只有 job_id**：檔案內容在 data/staging/、其餘欄位在 JobStore，
+    佇列裡只放一個字串（design5.md §4.1 明文禁止把影像位元組當任務參數）。
+    """
+
+    def dispatch(self, job_id: str) -> None: ...
+
+
+class NoopDispatcher:
+    """什麼都不做的入列器（Phase 62〜64 的正式實作）。
+
+    ⚠ 這代表**照片不會真的入庫**——Celery 要到 Phase 65 才存在。
+    刻意不在這裡「就地跑完」（eager）：那會讓 HTTP 回了 202 卻仍然卡住
+    2〜5 分鐘等 VLM，比同步的 201 更難懂，也會把真模型的推論
+    塞進 uvicorn 的請求執行緒（Phase 48 已踩過會把資料庫壓垮）。
+
+    log 留 INFO 一行：手動測試時看得到「有收下、但沒有人接手」。
+    """
+
+    def dispatch(self, job_id: str) -> None:
+        logger.info(
+            "任務已建立但尚未入列（Phase 65 接上 Celery 之前這是預期行為）：job_id=%s",
+            job_id,
+        )
+
+
+def get_task_dispatcher() -> TaskDispatcher:
+    """給 router 的入列器。
+
+    Phase 65 要接上 Celery 時，把這個函式的**本體**換成：
+    「函式內 `from app.celery_app import CeleryDispatcher`，
+    回傳 `CeleryDispatcher()`」——它的 dispatch() 把 job_id 交給
+    `ingest_task.delay()`。完整程式碼在 phase-65 §4.5「改動三」，
+    **就改這一個函式**。
+    """
+    return NoopDispatcher()

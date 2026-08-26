@@ -19,11 +19,14 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from app.api.routers import camera
+from app.core import config
 from app.dependencies import get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services import camera_session_service as sessions
+from app.services import staging_service
 from app.services.vlm_service import PhotoUnderstanding
+from tests.conftest import 目前的任務清單, 跑完任務
 from tests.fakes import FakeVLM, make_jpeg_bytes, make_pdf_bytes, make_png_bytes
 
 專案根目錄 = Path(__file__).resolve().parents[2]
@@ -57,12 +60,25 @@ def 配對(client) -> str:
 
 
 def 拍一張(client, token: str, understanding=看得懂的收據, **kwargs):
-    """模擬手機按下快門：把一張真的 JPEG 送到鏡頭上傳端點。"""
+    """模擬手機按下快門：把一張真的 JPEG 送到鏡頭上傳端點。
+
+    增量五之後這一支只「受理」（202），不入庫；要看到照片得自己扮演 worker
+    把任務跑完（用 tests/conftest.py 的 跑完任務()）。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(understanding)
     files = kwargs.pop(
         "files", {"file": ("shot.jpg", make_jpeg_bytes(), "image/jpeg")}
     )
     return client.post(f"/camera/{token}/photos", files=files)
+
+
+def 拍一張並跑完任務(client, token: str, understanding=看得懂的收據, **kwargs) -> dict:
+    """拍一張 → 斷言 202 → 把那個任務跑完 → 回 {"job_id", "response", "job"}。"""
+    response = 拍一張(client, token, understanding, **kwargs)
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    跑完任務(job_id)
+    return {"job_id": job_id, "response": response, "job": 目前的任務清單().get(job_id)}
 
 
 # ---------------- ① POST /camera/session ----------------
@@ -282,29 +298,74 @@ def test_連上之後才過期就停止轉發並關閉兩端(client, 配對, mon
 # ---------------- ③ POST /camera/{token}/photos ----------------
 
 
-def test_手機拍的照片走的是既有上傳流程(client, 配對):
-    """轉呼叫 photos 的 _ingest_image（計畫校準 5）：回應形狀與 POST /photos 一模一樣。"""
+def test_手機拍的照片走的是既有受理流程(client, 配對):
+    """轉呼叫 photos 的 _accept_upload（design5.md §5）：202 的形狀與 POST /photos 一模一樣。"""
     response = 拍一張(client, 配對)
 
-    assert response.status_code == 201, response.text
+    assert response.status_code == 202, response.text
     body = response.json()
-    assert body["text"] == 看得懂的收據.text
-    # 三個彈窗要用的東西一次帶齊——桌面才接得上既有的鏈
-    assert set(body) >= {
-        "id", "text", "metadata", "folder", "suggested_folder", "folders",
-        "thumbnail_url", "suggested_entity", "entities", "suggested_task",
-    }
-    assert body["folder"]["name"] == "未分類"
-    assert body["suggested_folder"]["name"] == "收據"
+    # 與電腦上傳同一個模型：三個鍵，不多不少
+    assert set(body) == {"job_id", "filename", "content_type"}
+    assert body["filename"] == "shot.jpg"
+    assert body["content_type"] == "image/jpeg"
+    assert len(body["job_id"]) == 32               # uuid4().hex
 
 
-def test_手機拍的照片真的進了資料庫(client, 配對):
-    photo_id = 拍一張(client, 配對).json()["id"]
+def test_快門當下資料庫還沒有那一列而staging檔在(client, 配對):
+    """★ 連拍的前提：這一刻什麼慢動作都還沒發生（design5.md §4.2）。"""
+    job_id = 拍一張(client, 配對).json()["job_id"]
 
-    row = photo_repository.fetch_photo(photo_id)
-    assert row is not None
+    assert photo_repository.count_photos() == 0
+    assert staging_service.staging_path(job_id, "image/jpeg").is_file()
+    job = 目前的任務清單().get(job_id)
+    assert job["status"] == "queued"
+    # 來源要標成 camera：進度面板之後要分得出「電腦上傳的」與「手機拍的」
+    assert job["source"] == "camera"
+    assert job["ai_backend"] == "local"            # 入列當下的快照（D14）
+
+
+def test_好token可以立刻再拍第二張(client, 配對):
+    """★ design5.md §9 明列的一條：連拍的後端前提。
+
+    第一張還沒被任何人分析（我們刻意**不跑任務**），第二張就要收得下來——
+    這正是「拍完就能再拍」在後端這一側的意思。兩張各自一筆 job、各自一個 staging 檔。
+    """
+    第一張 = 拍一張(client, 配對)
+    第二張 = 拍一張(client, 配對)
+
+    assert 第一張.status_code == 202, 第一張.text
+    assert 第二張.status_code == 202, 第二張.text
+    第一個job = 第一張.json()["job_id"]
+    第二個job = 第二張.json()["job_id"]
+    assert 第一個job != 第二個job, "兩張照片不可以共用同一個 job_id"
+    assert staging_service.staging_path(第一個job, "image/jpeg").is_file()
+    assert staging_service.staging_path(第二個job, "image/jpeg").is_file()
+    assert len(目前的任務清單().list_open()) == 2
+
+
+def test_連拍兩張各自跑完任務都會入庫(client, 配對):
+    """兩筆任務互不干擾：各跑各的，最後收件箱有兩張。"""
+    job1 = 拍一張(client, 配對).json()["job_id"]
+    job2 = 拍一張(client, 配對).json()["job_id"]
+
+    跑完任務(job1)
+    跑完任務(job2)
+
+    assert photo_repository.count_photos() == 2
+    assert 目前的任務清單().list_open() == [], "兩筆都成功＝兩筆都被刪掉"
+
+
+def test_手機拍的照片跑完任務之後真的進了資料庫(client, 配對):
+    結果 = 拍一張並跑完任務(client, 配對)
+
+    assert photo_repository.count_photos() == 1
+    assert 結果["job"] is None, "成功＝job 被刪掉（契約備忘 §3.1）"
+    列 = photo_repository.list_photos_in_folder(
+        next(f["id"] for f in photo_repository.list_folders() if f["is_inbox"])
+    )[0]
+    row = photo_repository.fetch_photo(列["id"])
     assert row["text"] == 看得懂的收據.text
-    # 一律先進未分類，等桌面的彈窗鏈定案（design2.md D3 的定案流程沒有被繞過）
+    # 一律先進未分類，等人在待決定頁定案（design2.md D3 的定案流程沒有被繞過）
     assert photo_repository.get_folder(row["folder_id"])["is_inbox"] is True
 
 
@@ -321,6 +382,14 @@ def test_亂token加上非法格式回404不是415(client):
     assert response.status_code == 404
 
 
+def test_亂token連staging都不會寫(client):
+    """design5.md §8 第 2 列：token 無效 → 404，**不讀檔**、不建任務、不落 staging。"""
+    拍一張(client, "亂打的token")
+
+    assert 目前的任務清單().list_open() == []
+    assert not config.DATA_DIR.exists()
+
+
 def test_過期token不能上傳照片(client, 配對, monkeypatch):
     現在 = sessions._now()
     monkeypatch.setattr(sessions, "_now", lambda: 現在 + sessions.TOKEN_TTL_SECONDS + 1)
@@ -330,30 +399,41 @@ def test_過期token不能上傳照片(client, 配對, monkeypatch):
 
 
 def test_非圖片格式回415什麼都不存(client, 配對):
-    """415 的語意與 POST /photos 一字不變（計畫校準 5）。"""
+    """415 的語意與 POST /photos 一字不變（design5.md §8 第 1 列）。"""
     response = 拍一張(
         client, 配對, files={"file": ("note.txt", b"x", "text/plain")}
     )
 
     assert response.status_code == 415
     assert photo_repository.count_photos() == 0
+    assert 目前的任務清單().list_open() == []
+    assert not config.DATA_DIR.exists()
 
 
 def test_鏡頭不收pdf(client, 配對):
-    """鏡頭只拍 JPEG（計畫校準 5）：PDF 走一般上傳頁，不走這條。"""
+    """鏡頭只拍 JPEG：PDF 走一般上傳頁，不走這條（415，不是 202）。"""
     response = 拍一張(
         client, 配對, files={"file": ("scan.pdf", make_pdf_bytes(), "application/pdf")}
     )
 
     assert response.status_code == 415
+    assert 目前的任務清單().list_open() == []
+
+
+def test_看不懂的照片是任務失敗不是HTTP失敗(client, 配對):
+    """★ 語意搬家了：「看不懂」現在是 **worker** 的結局，不是 HTTP 的。
+
+    對外的最終結果一字不變（design5.md D10）：什麼都不存。
+    變的只是「使用者什麼時候知道」——從當場 422 變成進度面板上出現一列失敗。
+    """
+    結果 = 拍一張並跑完任務(
+        client, 配對, understanding=PhotoUnderstanding(understood=False)
+    )
+
+    assert 結果["response"].status_code == 202, "HTTP 這一層不判斷看不看得懂"
+    assert 結果["job"]["status"] == "failed"
     assert photo_repository.count_photos() == 0
-
-
-def test_看不懂的照片回422什麼都不存(client, 配對):
-    response = 拍一張(client, 配對, understanding=PhotoUnderstanding(understood=False))
-
-    assert response.status_code == 422
-    assert photo_repository.count_photos() == 0
+    assert not staging_service.staging_path(結果["job_id"], "image/jpeg").exists()
 
 
 def test_png也收(client, 配對):
@@ -362,10 +442,10 @@ def test_png也收(client, 配對):
         client, 配對, files={"file": ("shot.png", make_png_bytes(), "image/png")}
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 202
 
 
-# ---------------- ④ GET /camera/{token}/latest ----------------
+# ---------------- ④ GET /camera/{token}/latest（行為變窄）----------------
 
 
 def test_還沒拍過回204(client, 配對):
@@ -375,23 +455,34 @@ def test_還沒拍過回204(client, 配對):
     assert response.content == b""
 
 
-def test_拍過之後拿得到剛剛那張(client, 配對):
-    """桌面收到手機的 uploaded 通知後就是打這支，拿到 201 的內容接彈窗鏈。"""
-    上傳結果 = 拍一張(client, 配對).json()
+def test_拍過之後latest仍然是204(client, 配對):
+    """★ 行為變窄（design5.md §5、§1.1）：入列**不再**寫 latest。
+
+    以前：手機拍完 → 伺服器把 201 內容存進 session → 桌面來拿 → 開三關彈窗鏈。
+    現在：快門當下只有一個 job_id，根本沒有「那張照片的歸類 payload」可以存
+          （VLM 都還沒看圖）。桌面改看全站進度面板（Phase 67），
+          歸類一律在待決定頁做（design5.md D13）。
+
+    端點刻意保留（§5 沒說刪、端點數算式要它），只是永遠回 204。
+    """
+    拍一張並跑完任務(client, 配對)
 
     response = client.get(f"/camera/{配對}/latest")
 
-    assert response.status_code == 200
-    assert response.json() == 上傳結果
+    assert response.status_code == 204
+    assert response.content == b""
 
 
-def test_失敗的那張不會蓋掉latest(client, 配對):
-    """422 什麼都沒存，latest 自然也不該被動到——桌面不會被拉去歸類一張不存在的照片。"""
-    第一張 = 拍一張(client, 配對).json()
+def test_latest不再宣告UploadResponse這種回應形狀(client):
+    """openapi 那一面：不可以宣告一個永遠不會出現的 200 形狀。
 
-    拍一張(client, 配對, understanding=PhotoUnderstanding(understood=False))
+    留著 response_model=UploadResponse 的話，/docs 上會寫「這支會回整份照片內容」，
+    而它其實永遠只回 204——文件說謊比沒有文件更糟。
+    """
+    spec = client.get("/openapi.json").json()["paths"]["/camera/{token}/latest"]["get"]
 
-    assert client.get(f"/camera/{配對}/latest").json()["id"] == 第一張["id"]
+    assert "200" not in spec["responses"], spec["responses"]
+    assert "204" in spec["responses"]
 
 
 def test_亂token拿不到latest(client):

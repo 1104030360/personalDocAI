@@ -35,8 +35,12 @@ def get_folder(folder_id: int) -> FolderDetailResponse:
             ),
             text=row["text"],
             uploaded_at=row["uploaded_at"],
-            # 上傳當下的建議（Phase 35）：待決定分頁用它畫選項①；沒建議就是 null
+            # 上傳當下的三個建議（Phase 35 的資料夾 ＋ Phase 61 的實體與待辦）：
+            # 待決定頁靠它們畫選項①與決定要不要開待辦窗；沒建議就是 null。
             suggested_category=row["suggested_category"],
+            suggested_entity=row["suggested_entity"],
+            suggested_task_title=row["suggested_task_title"],
+            suggested_task_due=row["suggested_task_due"],
         )
         for row in photo_repository.list_photos_in_folder(folder_id)
     ]

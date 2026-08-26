@@ -1,46 +1,46 @@
-"""照片 router：POST /photos（上傳）＋ GET /photos/{id}/thumbnail、/image（讀圖）
-＋ GET /photos/{id}（詳情，Phase 38）＋ PATCH /photos/{id}/folder（歸類）。"""
+"""照片 router：POST /photos（受理入庫任務，202）
+＋ GET /photos/{id}/thumbnail、/image（讀圖）＋ GET /photos/{id}（詳情）
+＋ PATCH /photos/{id}/folder（歸類）。
+
+增量五之後這個檔案**不看圖、不寫照片**：看圖與入庫全部在
+app/services/ingest_job.py 的 run_ingest_job()（由 worker 執行）。
+這裡只剩「收下檔案排隊」「把已經存好的東西讀出來」「歸類」三件事。
+"""
 
 import logging
-from datetime import datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from langchain_core.embeddings import Embeddings
 
 from app.core import config
-from app.dependencies import get_embeddings, get_now, get_vlm
+from app.dependencies import (
+    get_embeddings,
+    get_job_store,
+    get_task_dispatcher,
+    TaskDispatcher,
+)
 from app.repositories import photo_repository
-from app.schemas.entity import EntityOut
+from app.schemas.ingest_job import IngestAcceptedResponse
 from app.schemas.photo import (
     AssignFolderRequest,
     AssignFolderResponse,
     FolderOut,
-    PdfUploadResponse,
     PhotoDetailOut,
     PhotoMetadata,
-    TaskSuggestion,
-    UploadResponse,
 )
 from app.services import (
     ai_timing,
     indexing_service,
-    pdf_service,
+    staging_service,
     storage_service,
-    vlm_service,
 )
+from app.services.ingest_job_store import JobStore
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["photos"])
-
-# PDF 的每一頁渲染出來都是 PNG，之後就完全是一次普通的單圖上傳
-#（原圖存成 .png、讀圖端點照舊，不必為 PDF 另開一條路）
-PDF_PAGE_CONTENT_TYPE = "image/png"
-
-# 看圖 prompt 要注入幾筆「建議被你改掉」的糾錯例子（design3.md D11／§7 的暫定 N＝5）。
-# 刻意寫在這裡而不是 config：它是產品的暫定值，不是部署時要調的環境設定。
-FEW_SHOT_CORRECTIONS = 5
 
 
 def _folder_out(folder: dict) -> FolderOut:
@@ -54,277 +54,102 @@ def _folder_out(folder: dict) -> FolderOut:
     )
 
 
-def _entity_out(entity: dict) -> EntityOut:
-    """repository 回來的實體 dict 剛好就是三個欄位，直接展開。"""
-    return EntityOut(**entity)
-
-
-def _task_suggestion(
-    understanding: vlm_service.PhotoUnderstanding,
-) -> TaskSuggestion | None:
-    """把 VLM 的待辦欄位整理成建議；沒有可辦的事就回 None（design3.md D13）。
-
-    標題是空的（沒填或只有空白）＝這張照片沒有待辦，前端的待辦彈窗就不開。
-    到期日沿用 parse_content_time 的寬容解析：模型回「下週三」之類推不出來的東西
-    只是少了一個日期，**絕不可以讓整個上傳失敗**（與 content_time 同一個原則）。
-    """
-    if not understanding.task_title or not understanding.task_title.strip():
-        return None
-    due = vlm_service.parse_content_time(understanding.task_due)
-    return TaskSuggestion(
-        title=understanding.task_title.strip(),
-        due=due.isoformat() if due else None,
-    )
-
-
-@router.post(
-    "/photos", status_code=201, response_model=UploadResponse | PdfUploadResponse
-)
+@router.post("/photos", status_code=202, response_model=IngestAcceptedResponse)
 def upload_photo(
     file: UploadFile = File(...),
-    vlm: vlm_service.VLMClient = Depends(get_vlm),
-    embeddings: Embeddings = Depends(get_embeddings),
-    now: datetime | None = Depends(get_now),
-) -> UploadResponse | PdfUploadResponse:
-    """上傳一張照片，或一份 PDF（一頁當成一張照片，design3.md D7）。
+    store: JobStore = Depends(get_job_store),
+    dispatcher: TaskDispatcher = Depends(get_task_dispatcher),
+) -> IngestAcceptedResponse:
+    """收下一個檔案並排進佇列（增量五 D7）。**這裡不看圖、不寫資料庫。**
 
-    只有這一層知道「使用者傳的是圖還是 PDF」：PDF 先被拆成一頁一張 PNG，
-    之後每一頁走的都是與單圖完全相同的入庫流程（_ingest_image），
-    所以單圖的行為與回應一字不變。
+    這一支端點必須**很快**：只做「格式對不對」「把檔案放好」「記一筆任務」三件事。
+    真正花時間的看圖與寫入在 worker（app/services/ingest_job.py 的 run_ingest_job）。
 
-    回應有兩種長相：單圖回 UploadResponse，PDF 回 PdfUploadResponse。
+    ⚠ 202 不是 201：回應裡沒有照片 id、沒有 text、沒有建議資料夾。
+      這一刻 photo 表**一列都沒有多**（design5.md §4.2）。
+
+    圖與 PDF 走同一條路：分流是 worker 依 job 的 content_type 做的，
+    這裡不必知道差別（PDF 的頁數要拆開才知道，而拆頁是慢動作）。
     """
-    # ① 格式檢查
+    # ① 格式檢查——唯一會讓這支端點失敗的「使用者錯誤」。
+    #    排在最前面：不建 job、不寫 staging、連 data/ 都不會被建出來
+    #    （design5.md §8 第 1 列）。
     if file.content_type not in config.ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=415,
             detail="上傳檔案必須為常見圖片格式（如 JPEG、PNG）",
         )
 
-    # 讀出整個上傳檔的位元組：圖就直接拿去看圖與存檔，PDF 則先拿去拆頁
-    #（「不儲存原始照片檔」是 v4 的舊決策，design1.md §1.1 已明示推翻）
     upload_bytes = file.file.read()
-
-    # 資料夾、實體與糾錯例子在這裡各讀一次就好：PDF 每一頁都要用同一份注入 prompt，
-    # 而上傳過程中不會有人新增資料夾或實體（自創都是彈窗的事，發生在這之後），
-    # 也不會多出糾錯（糾錯是 PATCH 定案時才記的）。
-    folders = photo_repository.list_folders()
-    entities = photo_repository.list_entities()
-    corrections = photo_repository.recent_corrections(limit=FEW_SHOT_CORRECTIONS)
-
-    if file.content_type == config.PDF_CONTENT_TYPE:
-        return _ingest_pdf(
-            upload_bytes, vlm, embeddings, now, folders, entities, corrections
-        )
-
-    return _ingest_image(
+    return _accept_upload(
         upload_bytes,
-        file.content_type,
-        vlm,
-        embeddings,
-        now,
-        folders,
-        entities,
-        corrections,
+        filename=file.filename or "未命名",
+        content_type=file.content_type,
+        store=store,
+        dispatcher=dispatcher,
+        source="upload",
     )
 
 
-def _ingest_image(
-    image_bytes: bytes,
+def _accept_upload(
+    upload_bytes: bytes,
+    *,
+    filename: str,
     content_type: str,
-    vlm: vlm_service.VLMClient,
-    embeddings: Embeddings,
-    now: datetime | None,
-    folders: list[dict],
-    entities: list[dict],
-    corrections: list[dict],
-) -> UploadResponse:
-    """一張圖的完整入庫：看圖 → 轉向量 → 寫入「未分類」→ 存檔 → 回應。
+    store: JobStore,
+    dispatcher: TaskDispatcher,
+    source: str,
+) -> IngestAcceptedResponse:
+    """把「收下的檔」變成一筆排隊中的任務，回 202 的內容。
 
-    照片一律先掛在「未分類」；VLM 給的類別只是建議（回應的 suggested_folder），
-    真正的歸類由使用者在彈窗確認後呼叫 PATCH /photos/{id}/folder（Phase 21）。
-    實體與待辦同理：只出現在回應（suggested_entity／suggested_task），
-    要等使用者在彈窗 2／3 按下去才落庫（design3.md D3「人確認才落庫」）。
-    全程在同一個請求內完成；任何一步失敗＝整筆不存在、也不留檔。
+    ★★ 順序鐵律（把 ①〜④ 的順序調換 = 製造 bug）★★
+      ① 先產 job_id      ── staging 的檔名要用它，所以它得最先決定
+      ② 再寫 staging     ── 檔案先落地
+      ③ 再建 job         ── 任務清單上才看得到這一筆
+      ④ 最後才入列       ── 有人來做的那一刻，前面兩樣一定都準備好了
 
-    PDF 的每一頁也是呼叫這裡（Phase 28），所以「看不懂＝422」的語意兩邊共用：
-    單圖的 422 直接回給使用者，PDF 則由 _ingest_pdf 接住、記成跳過的頁。
+    反過來做（先入列再寫 staging）會出現「worker 已經開始做、但檔案還沒寫完」
+    的競爭——worker 讀到半個檔或根本讀不到檔，看起來像隨機失敗。
+
+    ②③④ 任何一步失敗 → **把 staging 與 job 都清掉**再把原始錯誤往外丟
+    （框架會回 500，log 留 traceback）。design5.md §8 第 8 列講的就是這件事：
+    Redis 掛掉的時候，不要在磁碟上留一個沒有人會來撿的暫存檔。
     """
-    # ② 看圖（把現有資料夾、實體清單與最近的糾錯例子注入 prompt——
-    #    design1.md §8、design3.md D12、D11）
-    #    仍然只有這一次看圖呼叫，沒有第二個分類模型：實體與待辦是同一次輸出多出來的欄位。
-    #    計時 log 走全站共用的 ai_timing（design4.md §5）：真模型一張圖要看數分鐘，
-    #    終端機沒有動靜時分不出「還在算」與「卡死」，這兩行就是給人盯進度用的。
-    #    「看不懂 → 422」刻意寫在 with 區塊**裡面**：那一頁對這次呼叫來說就是失敗，
-    #    結束行要標 ok=false（design4.md §5.2 的 PDF 規則）。例外原封不動往外丟，
-    #    422 的語意一個字都沒變。
-    with ai_timing.log_ai(
-        "vlm", target=vlm_service.vlm_timing_target(vlm)
-    ) as 計時:
-        understanding = vlm.understand(
-            image_bytes, content_type, folders, entities, corrections
-        )
-        if not understanding.understood or not understanding.text.strip():
-            計時.note = (
-                f"understood=false text_chars={len(understanding.text)}"
-            )
-            raise HTTPException(
-                status_code=422,
-                detail="VLM 無法理解照片內容，未儲存任何資料",
-            )
-        計時.note = (
-            f"understood=true text_chars={len(understanding.text)} "
-            f"item_count={len(understanding.items)} "
-            f"category_present={'true' if understanding.category else 'false'} "
-            f"entity_present={'true' if understanding.entity else 'false'} "
-            f"task_present={'true' if understanding.task_title else 'false'}"
-        )
+    # uuid4().hex ＝ 32 個十六進位字元。為什麼不用資料庫序號（見 §7 陷阱 3）：
+    # 這一刻我們**刻意不碰資料庫**，而序號要先 INSERT 才拿得到；
+    # 而且 job 住在 Redis／記憶體，本來就沒有序號這種東西。
+    job_id = uuid4().hex
 
-    # ★③ VLM 給的類別只當「建議」：夾回清單內，清單外一律變「未分類」
-    #    next(...)＝從清單裡挑出第一個符合條件的元素。
-    #    收件箱用 is_inbox 這個欄位找，不用字串比對——資料庫欄位比字串常數可靠。
-    #    兩個 next() 都保證找得到（schema 有六筆種子，clamp 只會回清單內的名稱）。
-    suggested_name = vlm_service.clamp_category(understanding.category, folders)
-    inbox = next(folder for folder in folders if folder["is_inbox"])
-    suggested = next(folder for folder in folders if folder["name"] == suggested_name)
-
-    #    建議要**存進照片**（Phase 35 已釐清 B）：定案時才有東西可以比對「猜的 vs 選的」，
-    #    待決定分頁也才畫得出選項①。建議指向收件箱＝clamp 失敗＝根本沒有建議 → 存 NULL，
-    #    這種照片之後一律不算糾錯（沒建議不是猜錯）。
-    suggested_category = None if suggested["is_inbox"] else suggested_name
-
-    #    實體的建議同樣要夾，但沒有「未分類」這種保底：清單外或都不像 → None，
-    #    實體彈窗那時就只剩②改選現有／③自創／④不釘（design3.md §2、D12）。
-    suggested_entity = vlm_service.clamp_entity(understanding.entity, entities)
-
-    # ★④ 合併與寫入一律用「未分類」——上傳當下的向量就是未分類版本（design1.md §2）
-    content_time = vlm_service.parse_content_time(understanding.content_time)
-    content_time_text = content_time.isoformat() if content_time else None
-    document = indexing_service.build_document(
-        text=understanding.text,
-        category=inbox["name"],
-        location=understanding.location,
-        items=understanding.items,
-        content_time=content_time_text,
-    )
-    with ai_timing.log_ai(
-        "embed", target=indexing_service.embedding_timing_target(embeddings)
-    ):
-        embedding = indexing_service.embed_document(embeddings, document)
-
-    row = photo_repository.insert_photo(
-        text=understanding.text,
-        category=inbox["name"],
-        location=understanding.location,
-        items=understanding.items,
-        content_time=content_time,
-        embedding=embedding,
-        uploaded_at=now,
-        suggested_category=suggested_category,
-    )
-    photo_id = row["id"]
-
-    # ⑤ 存原圖與縮圖，再把路徑補回那一列（design1.md §6）
-    #    這三步不是一條 SQL，所以沒有資料庫交易可以幫忙 rollback：
-    #    任何一步失敗就自己把檔案與資料列清乾淨，再把原始錯誤往外丟（不吞錯 → 500）。
-    original_path: str | None = None
-    thumbnail_path: str | None = None
     try:
-        original_path = storage_service.save_original(
-            photo_id, image_bytes, content_type
-        )
-        thumbnail_path = storage_service.make_thumbnail(
-            photo_id, image_bytes, content_type
-        )
-        photo_repository.update_photo_paths(
-            photo_id,
-            original_path=original_path,
-            thumbnail_path=thumbnail_path,
+        staging_service.save_staging(job_id, content_type, upload_bytes)
+        store.create(
+            job_id=job_id,
+            filename=filename,
             content_type=content_type,
+            # D14：把「現在開關撥在哪」拍成快照存進任務。worker 是另一個行程，
+            # 讀不到這個行程記憶體裡的 config.AI_BACKEND；而且使用者中途把開關
+            # 撥回本機時，已經排隊的任務不該跟著改道。
+            ai_backend=config.AI_BACKEND,
+            source=source,
         )
+        dispatcher.dispatch(job_id)
     except Exception:
-        # remove_if_exists 吃得下 None（那一步還沒跑到就失敗了）與「檔案本來就不在」
-        storage_service.remove_if_exists(original_path)
-        storage_service.remove_if_exists(thumbnail_path)
-        photo_repository.delete_photo(photo_id)
-        # 原始錯誤原封不動往外丟（re-raise），讓框架回 500 並在 log 留下 traceback
+        # 兩個清理動作都必須「本來就不在也不炸」：
+        #   remove_staging 比照 storage_service.remove_if_exists
+        #     （save_staging 若寫到一半就炸，磁碟上可能有半個檔，也一起清）
+        #   store.delete  對不存在的 job_id 要安靜（Phase 57 的 pop(…, None) 語意）
+        # 清掉 job 的理由：入列失敗卻留著一筆 queued，進度面板會出現一列
+        # 永遠不會動的幽靈任務，而且它連 dismiss 都按不掉（只准 dismiss failed）。
+        staging_service.remove_staging(job_id, content_type)
+        store.delete(job_id)
         raise
 
-    logger.info("照片已入庫：photo_id=%d（先進「未分類」，等使用者歸類）", photo_id)
-
-    # ★⑥ 回 201：把三個彈窗要用的東西一次帶齊（抽屜、實體、待辦）
-    return UploadResponse(
-        id=photo_id,
-        text=row["text"],
-        metadata=PhotoMetadata(
-            category=row["category"],
-            location=row["location"],
-            items=row["items"],
-            content_time=row["content_time"].isoformat() if row["content_time"] else None,
-        ),
-        folder=_folder_out(inbox),
-        suggested_folder=_folder_out(suggested),
-        folders=[_folder_out(folder) for folder in folders],
-        thumbnail_url=f"/photos/{photo_id}/thumbnail",
-        suggested_entity=(
-            _entity_out(suggested_entity) if suggested_entity else None
-        ),
-        entities=[_entity_out(entity) for entity in entities],
-        suggested_task=_task_suggestion(understanding),
+    logger.info(
+        "已受理入庫任務：job_id=%s filename=%s content_type=%s source=%s backend=%s",
+        job_id, filename, content_type, source, config.AI_BACKEND,
     )
-
-
-def _ingest_pdf(
-    pdf_bytes: bytes,
-    vlm: vlm_service.VLMClient,
-    embeddings: Embeddings,
-    now: datetime | None,
-    folders: list[dict],
-    entities: list[dict],
-    corrections: list[dict],
-) -> PdfUploadResponse:
-    """一份 PDF 的入庫：逐頁渲染成 PNG，每一頁當成一張照片（design3.md D7）。
-
-    PDF 原始檔不留——照片的「原圖」就是該頁渲染出來的 PNG。
-    整份讀不開＝使用者給了壞檔（422，什麼都沒存）；
-    個別頁看不懂則只跳過那一頁，其餘頁照樣入庫，跳過的頁碼回報給使用者。
-    """
-    try:
-        page_images = pdf_service.render_pages(pdf_bytes)
-    except pdf_service.PdfUnreadableError:
-        raise HTTPException(status_code=422, detail="無法讀取 PDF 檔案")
-
-    created: list[UploadResponse] = []
-    skipped_pages: list[int] = []
-    for page_number, page_bytes in enumerate(page_images, start=1):
-        try:
-            created.append(
-                _ingest_image(
-                    page_bytes,
-                    PDF_PAGE_CONTENT_TYPE,
-                    vlm,
-                    embeddings,
-                    now,
-                    folders,
-                    entities,
-                    corrections,
-                )
-            )
-        except HTTPException as error:
-            # 只吞「這一頁看不懂」（422）。存檔失敗、資料庫掛掉之類的一律往外丟，
-            # 維持單圖既有的語意：伺服器出事就是 500，不可以偽裝成「跳過一頁」。
-            if error.status_code != 422:
-                raise
-            skipped_pages.append(page_number)
-
-    if not created:
-        # 一頁都沒成功＝這次上傳什麼都沒存，跟單圖看不懂一樣回 422
-        raise HTTPException(
-            status_code=422, detail="PDF 每一頁都無法理解，未儲存任何資料"
-        )
-
-    return PdfUploadResponse(
-        pages=len(page_images), created=created, skipped_pages=skipped_pages
+    return IngestAcceptedResponse(
+        job_id=job_id, filename=filename, content_type=content_type
     )
 
 

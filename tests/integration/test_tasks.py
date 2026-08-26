@@ -23,7 +23,8 @@ from app.dependencies import get_vlm
 from app.main import app
 from app.repositories import photo_repository
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeVLM, make_png_bytes
+from tests.conftest import 上傳一張並取回照片
+from tests.fakes import FakeVLM
 
 課本照片 = PhotoUnderstanding(
     understood=True,
@@ -36,13 +37,17 @@ from tests.fakes import FakeVLM, make_png_bytes
 
 
 def 上傳(client) -> dict:
-    """走一次真正的上傳流程（會存檔＝有縮圖），回傳 201 的完整回應內容。"""
+    """走一次真正的上傳流程（會存檔＝有縮圖），回傳**資料庫那一列**。
+
+    增量五（Phase 62）起 POST /photos 只收下檔案回 202，照片要等 worker
+    跑完任務才入庫；共用工具 上傳一張並取回照片() 幫測試扮演那個 worker，
+    最後回 photo_repository.fetch_photo() 的 dict。
+
+    回的鍵從「201 回應」換成「photo 表的欄位」，但本檔的呼叫端只用 ["id"]，
+    所以一個字都不必改。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(課本照片)
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    return 上傳一張並取回照片(client)
 
 
 @pytest.fixture

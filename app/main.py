@@ -1,4 +1,4 @@
-"""FastAPI app 組裝：掛上七個 router ＋ 極簡網頁介面（靜態檔案）。"""
+"""FastAPI app 組裝：掛上八個 router ＋ 極簡網頁介面（靜態檔案）。"""
 
 import logging
 from pathlib import Path
@@ -7,7 +7,16 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import ask, camera, entities, folders, photos, settings, tasks
+from app.api.routers import (
+    ask,
+    camera,
+    entities,
+    folders,
+    ingest_jobs,
+    photos,
+    settings,
+    tasks,
+)
 
 # 讓 app.* 的 INFO log 顯示在 uvicorn 終端機。
 # uvicorn 只配置它自家的 logger（uvicorn / uvicorn.access），應用程式的 logger
@@ -33,6 +42,10 @@ app.include_router(camera.router)
 # AI 後端開關（2026-08-22 產品負責人指示；管看圖＋詢問路由／回答＋實體建議）：
 # GET／PUT /settings/ai-backend 兩支（端點一律數 20；清點測試在 test_photo_detail.py）
 app.include_router(settings.router)
+
+# 入庫任務清單（增量五 Phase 64）：全站進度面板與頂欄「待決定（N）」的唯一資料來源
+# GET /ingest-jobs ＋ POST /ingest-jobs/{job_id}/dismiss（端點 20 → 22）
+app.include_router(ingest_jobs.router)
 
 
 @app.get("/health")

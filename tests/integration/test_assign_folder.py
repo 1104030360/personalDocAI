@@ -14,7 +14,8 @@ from app.main import app
 from app.repositories import photo_repository
 from app.services.indexing_service import build_document, embed_document
 from app.services.vlm_service import PhotoUnderstanding
-from tests.fakes import FakeEmbeddings, FakeVLM, make_png_bytes
+from tests.conftest import 上傳一張並取回照片
+from tests.fakes import FakeEmbeddings, FakeVLM
 
 # text 裡刻意不出現任何資料夾名稱：
 # 假向量只認得詞表裡的詞，text 若已經含「收據」兩個字，
@@ -22,7 +23,7 @@ from tests.fakes import FakeEmbeddings, FakeVLM, make_png_bytes
 超市照片 = PhotoUnderstanding(
     understood=True,
     text="超市購物的照片",
-    category="收據",          # VLM 的建議（上傳時不會落庫，只出現在 suggested_folder）
+    category="收據",          # VLM 的建議（不當成歸屬，只存進 suggested_category 那一欄）
     location="Costco",
     items=["咖啡", "牛奶"],
     content_time=None,
@@ -33,21 +34,18 @@ from tests.fakes import FakeEmbeddings, FakeVLM, make_png_bytes
 def 已上傳的照片(client):
     """先走一次真正的上傳流程，拿到一張躺在「未分類」的照片。
 
-    回傳的是 201 的完整回應內容（含 folders 清單，後面挑 id 要用）。
+    增量五（Phase 62）起 POST /photos 只收下檔案回 202，照片要等 worker 跑完任務
+    才入庫，所以這裡改走共用工具 上傳一張並取回照片()——它會 POST、斷言 202、
+    測試自己扮演 worker 把任務跑完。
+
+    回傳的是**資料庫那一列**（photo_repository.fetch_photo() 的 dict）；
+    要哪個資料夾的 id 就直接問 repository（find_folder_by_name），
+    不必再從上傳回應裡撈 folders 清單——202 已經沒有那個東西了。
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(超市照片)
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
-    assert response.status_code == 201, response.text
-    body = response.json()
-    assert body["metadata"]["category"] == "未分類", "前置條件：上傳後應該在未分類"
-    return body
-
-
-def _folder_id(上傳回應: dict, name: str) -> int:
-    """從上傳回應的資料夾清單裡挑出某個資料夾的 id。"""
-    return next(f["id"] for f in 上傳回應["folders"] if f["name"] == name)
+    列 = 上傳一張並取回照片(client)
+    assert 列["category"] == "未分類", "前置條件：上傳後應該在未分類"
+    return 列
 
 
 def _stored_embedding(photo_id: int) -> list[float]:
@@ -73,7 +71,7 @@ def _max_diff(a: list[float], b: list[float]) -> float:
 
 def test_採用現有資料夾後分類與向量都更新(client, 已上傳的照片):
     photo_id = 已上傳的照片["id"]
-    收據id = _folder_id(已上傳的照片, "收據")
+    收據id = photo_repository.find_folder_by_name("收據")["id"]
     上傳當下的向量 = _stored_embedding(photo_id)
 
     response = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 收據id})
@@ -116,21 +114,17 @@ def test_自建資料夾後照片歸它新資料夾也進入清單(client, 已�
     assert body["metadata"]["category"] == "專案X"
     assert photo_repository.fetch_photo(photo_id)["folder_id"] == body["folder"]["id"]
 
-    # 自建的資料夾和預設六個進同一張表（design1.md §5）
+    # 自建的資料夾和預設六個進同一張表（design1.md §5）——
+    # 也就是說下一次看圖時，run_ingest_job 讀到的資料夾清單就會帶著它，
+    # VLM 的 prompt 自然看得到。
+    # （增量五之後上傳回應是 202、不再帶 folders 清單，所以直接驗清單本身；
+    #   原本「再上傳一次看回應」的那段就不必了。）
     assert "專案X" in [f["name"] for f in photo_repository.list_folders()]
-
-    # 下次上傳的回應也看得到它——也就是說下一次 VLM 的 prompt 也會看到
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(超市照片)
-    第二次上傳 = client.post(
-        "/photos", files={"file": ("b.png", make_png_bytes(), "image/png")}
-    )
-    assert 第二次上傳.status_code == 201
-    assert "專案X" in [f["name"] for f in 第二次上傳.json()["folders"]]
 
 
 def test_照片不存在回404(client, 已上傳的照片):
     """先檢查照片、再檢查資料夾——所以就算 folder_id 是對的也回「找不到照片」。"""
-    收據id = _folder_id(已上傳的照片, "收據")
+    收據id = photo_repository.find_folder_by_name("收據")["id"]
 
     response = client.patch("/photos/999/folder", json={"folder_id": 收據id})
 
@@ -188,13 +182,13 @@ def test_請求必須恰好給一個folder_id或name(client, 已上傳的照片,
 def test_已定案的照片再歸類回409且完全沒被改動(client, 已上傳的照片):
     """design2.md D3：照片一旦定案就鎖死——第二次 PATCH 一律 409，什麼都不改。"""
     photo_id = 已上傳的照片["id"]
-    收據id = _folder_id(已上傳的照片, "收據")
+    收據id = photo_repository.find_folder_by_name("收據")["id"]
     定案 = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 收據id})
     assert 定案.status_code == 200, 定案.text
     定案後 = photo_repository.fetch_photo(photo_id)
     定案後向量 = photo_repository.fetch_embedding(photo_id)
 
-    飲食id = _folder_id(已上傳的照片, "飲食")
+    飲食id = photo_repository.find_folder_by_name("飲食")["id"]
     response = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 飲食id})
 
     assert response.status_code == 409
@@ -208,7 +202,7 @@ def test_已定案的照片再歸類回409且完全沒被改動(client, 已上�
 def test_已定案後自建路徑也回409且不建資料夾(client, 已上傳的照片):
     """定案檢查排在重名檢查與 create_folder 之前——自建那條路也進不去。"""
     photo_id = 已上傳的照片["id"]
-    收據id = _folder_id(已上傳的照片, "收據")
+    收據id = photo_repository.find_folder_by_name("收據")["id"]
     assert client.patch(
         f"/photos/{photo_id}/folder", json={"folder_id": 收據id}
     ).status_code == 200
@@ -227,7 +221,7 @@ def test_已定案後自建路徑也回409且不建資料夾(client, 已上傳�
 def test_歸檔目標是收件箱回422(client, 已上傳的照片):
     """design2.md D3/D7：定案目標必須是真資料夾——把照片「歸」回收件箱不合法。"""
     photo_id = 已上傳的照片["id"]
-    未分類id = _folder_id(已上傳的照片, "未分類")
+    未分類id = photo_repository.find_folder_by_name("未分類")["id"]
 
     response = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 未分類id})
 

@@ -4,6 +4,9 @@
 VLM 給的類別只出現在回應的 suggested_folder，不落庫。
 2026-08-21 追加 PDF Rule（design3.md D7）：PDF 一頁存成一張照片。
 2026-08-22 追加實體／待辦建議 Rule（design3.md D8／D12／D13）：只出現在回應，不落庫。
+2026-08-25 增量五（Phase 62）：上傳改 202、建議改落庫（design5.md D7／D16）。
+規格檔唯讀（Phase 72 才准改），所以 binder 的 When 步驟自己把任務跑完，
+「回應的…」系列步驟改成對資料庫驗證——規格描述的是使用者看得到的最終結果。
 """
 
 from __future__ import annotations
@@ -18,7 +21,13 @@ from app.main import app
 from app.repositories import photo_repository
 from app.services import storage_service
 from app.services.vlm_service import PhotoUnderstanding
-from tests.conftest import first_row, split_items
+from tests.conftest import (
+    first_row,
+    split_items,
+    _收件箱照片ids,
+    目前的任務清單,
+    跑完任務,
+)
 from tests.fakes import (
     FakeVLM,
     make_pdf_bytes,
@@ -44,6 +53,8 @@ def context() -> dict:
         "now": DEFAULT_NOW,
         "understanding": PhotoUnderstanding(understood=False),
         "response": None,
+        "photo_ids": [],     # 這次任務跑完之後新進收件箱的照片
+        "job": None,         # 跑完之後的任務狀態（成功時是 None＝已被刪掉）
     }
 
 
@@ -60,21 +71,50 @@ def wire_feature_clock(wire_fake_ai, context):
 
 def _upload(context, client, filename="photo.png", content_type="image/png",
             payload=PNG_BYTES):
+    """When 步驟：收下檔案（202）**並且把那個任務跑完**。
+
+    增量五把上傳拆成兩段：HTTP 只收下（202），worker 才真的入庫。
+    規格檔（唯讀，Phase 72 才准改）寫的是「上傳照片後，系統儲存……」——
+    描述的是使用者看得到的最終結果，所以 binder 這一層要把兩段接起來，
+    Then 才看得到照片。少了「跑完任務」那一步，每一條 Then 都會變成
+    「系統儲存的照片數量為 0」（design5.md §9 最後一段）。
+
+    415 那一條 Rule 走另一條路：連 202 都拿不到，自然也沒有任務可跑。
+    """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(context["understanding"])
-    context["response"] = client.post(
+
+    context["photo_ids"] = []
+    context["job"] = None
+    照片數_收檔前 = photo_repository.count_photos()
+    response = client.post(
         "/photos", files={"file": (filename, payload, content_type)}
     )
+    context["response"] = response
+    if response.status_code != 202:
+        return                      # 格式不對（415）：Then「操作失敗」會驗它
+
+    # design5.md §9 的第 2 步：202 只是「收下了」，這一刻 photo 表一列都沒有多
+    assert photo_repository.count_photos() == 照片數_收檔前
+
+    job_id = response.json()["job_id"]
+    前 = set(_收件箱照片ids())
+    跑完任務(job_id)
+    context["job"] = 目前的任務清單().get(job_id)
+    context["photo_ids"] = sorted(i for i in _收件箱照片ids() if i not in 前)
 
 
-def _body(context) -> dict:
-    response = context["response"]
-    assert response.status_code == 201, response.text
-    return response.json()
+def _photo_id(context) -> int:
+    """這個例子剛剛存進去的那一張照片 id（規格的例子都是單圖或 PDF 的第一頁）。"""
+    assert context["response"].status_code == 202, context["response"].text
+    assert context["photo_ids"], (
+        "任務跑完了卻沒有任何照片進收件箱——"
+        f"job 狀態：{context['job']}"
+    )
+    return context["photo_ids"][0]
 
 
 def _stored_photo(context) -> dict:
-    photo_id = _body(context)["id"]
-    row = photo_repository.fetch_photo(photo_id)
+    row = photo_repository.fetch_photo(_photo_id(context))
     assert row is not None, "資料庫裡找不到剛剛上傳的照片"
     return row
 
@@ -174,7 +214,25 @@ def 上傳PDF並指定每頁理解內容(context, client, pages, text):
 # ------------------------------- Then ------------------------------
 @then("操作失敗")
 def 操作失敗(context):
-    assert context["response"].status_code >= 400, context["response"].text
+    """規格的「操作失敗」在增量五有兩種長相（規格檔 Phase 72 才准改）：
+
+    - 非圖片格式：HTTP 當場 415——維持原本的斷言。
+    - VLM 看不懂：HTTP 是 202（受理成功），失敗發生在 worker——
+      改驗「任務最後是 failed、而且沒有任何照片進收件箱」。
+
+    Phase 72 會把「VLM 無法理解」那條 Example 的 `Then 操作失敗` 從規格裡刪掉
+    （202 不是失敗，失敗的是背景分析），到時 202 這個分支自然沒人再走；
+    415 那條 Example 仍然用本 step，所以 Phase 72 也**不會**刪這個函式
+    （phase-72 §4.3 已對齊這裡的寫法）。
+    """
+    response = context["response"]
+    if response.status_code == 202:
+        assert context["job"] is not None and context["job"]["status"] == "failed", (
+            f"202 之後規格說的「操作失敗」＝任務失敗，實際 job：{context['job']}"
+        )
+        assert context["photo_ids"] == [], "失敗的上傳不可以有照片進收件箱"
+    else:
+        assert response.status_code >= 400, response.text
 
 
 @then(parsers.parse("系統儲存的照片數量為 {count:d}"))
@@ -213,7 +271,7 @@ def 照片所屬資料夾為(context, name):
 
 @then("照片的 embedding 不為空")
 def 照片embedding不為空(context):
-    embedding = photo_repository.fetch_embedding(_body(context)["id"])
+    embedding = photo_repository.fetch_embedding(_photo_id(context))
     assert embedding is not None
     assert embedding.startswith("[") and len(embedding) > 2
 
@@ -237,99 +295,106 @@ def 照片上傳時間為(context, moment):
 
 @then("回應包含照片識別碼")
 def 回應包含識別碼(context):
-    body = _body(context)
-    assert isinstance(body.get("id"), int) and body["id"] > 0
+    """規格說「回應包含識別碼」；增量五之後識別碼要等分析完才存在。
+
+    Phase 72 會把這句規格改掉，在那之前 binder 用「存進去的那一張的 id」對應它。
+    """
+    assert _photo_id(context) > 0
 
 
 @then(parsers.parse('回應的文字描述為 "{text}"'))
 def 回應文字描述為(context, text):
-    assert _body(context)["text"] == text
+    assert _stored_photo(context)["text"] == text
 
 
 @then("回應的 metadata 欄位如下")
 def 回應metadata為(context, datatable):
     expected = first_row(datatable)
-    metadata = _body(context)["metadata"]
-    assert metadata["category"] == expected["category"]
-    assert metadata["location"] == expected["location"]
-    assert metadata["items"] == split_items(expected["items"])
-    assert (metadata["content_time"] or "") == expected["content_time"].strip()
+    row = _stored_photo(context)
+    assert row["category"] == expected["category"]
+    assert row["location"] == expected["location"]
+    assert row["items"] == split_items(expected["items"])
+    stored_time = row["content_time"].isoformat() if row["content_time"] else ""
+    assert stored_time == expected["content_time"].strip()
 
 
 @then(parsers.parse('回應的所屬資料夾為 "{name}"'))
 def 回應所屬資料夾為(context, name):
-    assert _body(context)["folder"]["name"] == name
+    folder = photo_repository.get_folder(_stored_photo(context)["folder_id"])
+    assert folder is not None, "photo.folder_id 指向一個不存在的資料夾"
+    assert folder["name"] == name
 
 
 @then("回應的建議資料夾如下")
 def 回應建議資料夾為(context, datatable):
     expected = first_row(datatable)
-    suggested = _body(context)["suggested_folder"]
-    assert suggested["name"] == expected["name"]
-    # 規則：建議一定是清單裡的其中一筆（design1.md §7.1）
-    assert suggested["name"] in [f["name"] for f in _body(context)["folders"]]
+    # 建議是收件箱時存 NULL（Phase 35 的規則），規格的例子則寫「未分類」
+    assert (_stored_photo(context)["suggested_category"] or "未分類") == expected["name"]
 
 
 @then("回應的資料夾清單包含以下名稱")
 def 回應資料夾清單包含(context, datatable):
-    回應清單 = [f["name"] for f in _body(context)["folders"]]
+    清單 = [f["name"] for f in photo_repository.list_folders()]
     for name in column(datatable, "name"):
-        assert name in 回應清單, f"回應的資料夾清單少了「{name}」：{回應清單}"
+        assert name in 清單, f"資料夾清單少了「{name}」：{清單}"
 
 
 @then("回應包含這張照片的縮圖網址")
 def 回應包含縮圖網址(context):
-    body = _body(context)
-    assert body["thumbnail_url"] == f"/photos/{body['id']}/thumbnail"
+    """縮圖真的存了；網址是 GET /folders/{id} 換算出來的，不再由上傳回應提供。"""
+    assert _stored_photo(context)["thumbnail_path"]
 
 
 @then(parsers.parse("回應包含 {count:d} 筆已儲存的照片"))
 def 回應包含幾筆照片(context, count):
-    """PDF 的回應是一串單圖回應（created），一頁一筆。"""
-    assert len(_body(context)["created"]) == count
+    """PDF 一頁一張照片：跑完任務之後新進收件箱的張數就是成功頁數。"""
+    assert len(context["photo_ids"]) == count
 
 
 @then("回應的建議實體如下")
 def 回應建議實體為(context, datatable):
     expected = first_row(datatable)
-    suggested = _body(context)["suggested_entity"]
-    assert suggested is not None, "回應沒有建議實體"
-    assert suggested["name"] == expected["name"]
-    assert suggested["name"] in [e["name"] for e in _body(context)["entities"]]
+    suggested = _stored_photo(context)["suggested_entity"]
+    assert suggested is not None, "照片沒有落庫任何實體建議"
+    assert suggested == expected["name"]
+    assert suggested in [e["name"] for e in photo_repository.list_entities()]
 
 
 @then("回應的實體清單包含以下名稱")
 def 回應實體清單包含(context, datatable):
-    回應清單 = [e["name"] for e in _body(context)["entities"]]
+    清單 = [e["name"] for e in photo_repository.list_entities()]
     for name in column(datatable, "name"):
-        assert name in 回應清單, f"回應的實體清單少了「{name}」：{回應清單}"
+        assert name in 清單, f"實體清單少了「{name}」：{清單}"
 
 
 @then("回應沒有建議實體")
 def 回應沒有建議實體(context):
-    assert _body(context)["suggested_entity"] is None
+    assert _stored_photo(context)["suggested_entity"] is None
 
 
 @then(parsers.parse("該照片釘上的實體數量為 {count:d}"))
 def 照片釘上的實體數量為(context, count):
-    pinned = photo_repository.list_photo_entities(_body(context)["id"])
+    pinned = photo_repository.list_photo_entities(_photo_id(context))
     assert len(pinned) == count
 
 
 @then("回應的建議待辦如下")
 def 回應建議待辦為(context, datatable):
     expected = first_row(datatable)
-    suggested = _body(context)["suggested_task"]
-    assert suggested is not None, "回應沒有建議待辦"
-    assert suggested["title"] == expected["title"]
-    assert (suggested["due"] or "") == expected["due"].strip()
+    row = _stored_photo(context)
+    assert row["suggested_task_title"] is not None, "照片沒有落庫任何待辦建議"
+    assert row["suggested_task_title"] == expected["title"]
+    stored_due = (
+        row["suggested_task_due"].isoformat() if row["suggested_task_due"] else ""
+    )
+    assert stored_due == expected["due"].strip()
 
 
 @then("回應沒有建議待辦")
 def 回應沒有建議待辦(context):
-    assert _body(context)["suggested_task"] is None
+    assert _stored_photo(context)["suggested_task_title"] is None
 
 
 @then("該照片沒有待辦")
 def 該照片沒有待辦(context):
-    assert photo_repository.get_task_by_photo(_body(context)["id"]) is None
+    assert photo_repository.get_task_by_photo(_photo_id(context)) is None
