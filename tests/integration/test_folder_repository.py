@@ -118,11 +118,41 @@ def test_列出資料夾內的照片新的在前():
     assert [p["id"] for p in photos] == [第二張["id"], 第一張["id"]]  # id 大的（新的）在前
     assert photos[0]["text"] == "第二張收據"
     assert photos[0]["thumbnail_path"] is None  # 還沒有人寫檔（Phase 17〜19 才做）
-    # Phase 35 起由四鍵變五鍵：多的 suggested_category 讓待決定分頁畫得出選項①
+    # Phase 35 起由四鍵變五鍵（suggested_category 讓待決定分頁畫得出選項①）；
+    # Phase 56 起再變八鍵：D16 的三個建議欄，讓待決定分頁不必再看一次圖
+    # 就畫得出實體彈窗的選項①與待辦彈窗的預填值（design5.md §6.2）。
+    # ★ 這是 repository 這一層的鍵；GET /folders/{id} 的回應仍是五鍵，
+    #   PhotoSummary 只挑它要的那幾個——router 改成八鍵是 Phase 61 的事。
     assert set(photos[0]) == {
-        "id", "text", "uploaded_at", "thumbnail_path", "suggested_category"
+        "id", "text", "uploaded_at", "thumbnail_path", "suggested_category",
+        "suggested_entity", "suggested_task_title", "suggested_task_due",
     }
 
 
 def test_空資料夾回傳空清單():
     assert repo.list_photos_in_folder(飲食) == []
+
+
+def test_資料夾內照片摘要帶得出三個建議欄():
+    """Phase 61 的 GET /folders/{inbox} 會靠這三個鍵畫實體／待辦彈窗（design5 §6.2）。
+
+    本 phase 只驗「repository 這一層讀得出來」；router 還沒開始外送它們。
+    """
+    照片 = repo.insert_photo(
+        text="MacBook 上打開的 Project 2 報告",
+        category="收據",
+        location=None,
+        items=[],
+        content_time=None,
+        embedding=_vec(),          # 檔案上方既有的小工具，回一條 1024 維的假向量
+        suggested_entity="我的 MacBook",
+        suggested_task_title="繳交 Project 2 報告",
+        suggested_task_due=date(2026, 8, 21),
+    )
+
+    摘要 = repo.list_photos_in_folder(收據)[0]
+
+    assert 摘要["id"] == 照片["id"]
+    assert 摘要["suggested_entity"] == "我的 MacBook"
+    assert 摘要["suggested_task_title"] == "繳交 Project 2 報告"
+    assert 摘要["suggested_task_due"] == date(2026, 8, 21)

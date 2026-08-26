@@ -27,6 +27,10 @@
 const FOLDER_MODAL_HTML = `
 <div class="fm-backdrop" id="fm-backdrop" hidden>
   <div class="fm-box" role="dialog" aria-modal="true" aria-labelledby="fm-title">
+    <!-- 窗頂原圖（增量五 Phase 54／design5.md D2）：讓人看得到現在在歸類哪一張。
+         內容由 fm畫圖() 每次開窗時重畫；沒有原圖就換成灰底占位。 -->
+    <div class="fm-image" id="fm-image"></div>
+
     <h3 id="fm-title">要把這張照片放到<span class="fm-nowrap">哪個資料夾？</span></h3>
 
     <div class="fm-option" id="fm-primary-option">
@@ -49,7 +53,7 @@ const FOLDER_MODAL_HTML = `
 
     <div class="fm-option">
       <button type="button" id="fm-later">稍後再說</button>
-      <p class="fm-desc">照片會留在「待決定」，之後到瀏覽頁的待決定分頁完成歸類。</p>
+      <p class="fm-desc">照片會留在「待決定」，之後在頂欄的「待決定」頁完成歸類。</p>
     </div>
 
     <p class="fm-error" id="fm-error"></p>
@@ -121,6 +125,49 @@ function fmDetailText(payload) {
   return JSON.stringify(payload);
 }
 
+// ---------- 窗頂原圖（增量五 Phase 54；design5.md D2／§6.2）----------
+
+// 沒有原圖時畫的東西：灰底方塊寫「無原圖」。
+// 不假裝有圖、也不讓瀏覽器顯示破圖 icon（design1.md §10 的一貫態度）。
+// .placeholder 是 style.css 既有的 class（縮圖牆也是用它）；本函式不注入任何樣式，
+// 顯示比例的微調在 style.css 新增的 .fm-image .placeholder 那一條（見 §4.4）。
+function fm畫占位() {
+  const box = fmEl("fm-image");
+  box.textContent = "";
+  const 占位 = document.createElement("div");
+  占位.className = "placeholder";
+  占位.textContent = "無原圖";
+  box.appendChild(占位);
+}
+
+// 每次開窗都重畫一次（先清空，免得看到上一張的殘影）。
+//
+// 為什麼直接掛 <img> 再用 onerror 降級，而不是先打一支 API 問「有沒有原圖」：
+//   ① 呼叫端零改動——openFolderModal() 的參數不必多一個欄位，
+//      三個呼叫端（pending.html／browse.html／classify_chain.js）都不用改；
+//   ② 這是強制決定窗，開窗要快。多打一支 API 就多一次等待；
+//   ③ 與瀏覽牆同一套做法（照片卡 也是掛了 <img> 再 addEventListener("error", …)）。
+//
+// 什麼時候會走到占位那條路：
+//   ‧ 遷移進來的舊照片（original_path 是 NULL）→ 端點回 404
+//   ‧ 有路徑但磁碟檔被刪了 → 端點也回 404
+// 兩種都會在開發者工具的 Network 分頁留下一筆 404，那是預期的，不是壞掉。
+function fm畫圖(photoId) {
+  const box = fmEl("fm-image");
+  box.textContent = "";
+
+  const image = document.createElement("img");
+  image.src = "/photos/" + photoId + "/image";
+  image.alt = "要歸類的這張照片";
+  image.addEventListener("error", function () {
+    // 開下一張時 box 會先被清空——這張圖若已被移出畫面，遲到的 error 不要再蓋台
+    // （比照 photo_detail_modal.js 的 generation 守衛，用 isConnected 一行搞定）
+    if (!image.isConnected) return;
+    fm畫占位();
+  });
+  box.appendChild(image);
+}
+
 async function fmAssign(body) {
   if (!fmConfig) return;
   const photoId = fmConfig.photoId;
@@ -175,6 +222,9 @@ function fmInstall() {
 function openFolderModal(config) {
   fmInstall();
   fmConfig = config;
+
+  // 窗頂原圖（Phase 54）：每次開窗都重畫，才不會看到上一張的殘影
+  fm畫圖(config.photoId);
 
   // ① 那顆按鈕：只有「有可用建議」時才顯示（design2.md D5/D6——
   //    待決定分頁沒有持久化的建議、AI 建議是未分類時也不顯示，交給「稍後再說」）

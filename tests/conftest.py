@@ -1,4 +1,11 @@
-"""pytest 共用設定：把資料庫指到測試庫，每個測試前清空兩張表並重播預設資料夾。"""
+"""pytest 共用設定：把資料庫指到測試庫，並套上四道 autouse 安全網。
+
+  reset_tables          每測清空四張表＋重播六筆資料夾種子（絕不動正式庫）
+  wire_fake_ai          六個 AI 注入點全換假件＋固定時鐘（絕不打真 Ollama）
+  isolated_data_dir     DATA_DIR 指到 tmp_path（絕不寫專案的 data/）
+  wire_memory_job_store JobStore 指到每測獨立的記憶體實作（Depends 與直接
+                        呼叫兩條路都攔；絕不連真 Redis）
+"""
 
 import os
 
@@ -36,15 +43,18 @@ from datetime import datetime  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import dependencies  # noqa: E402
 from app.dependencies import (  # noqa: E402
     get_answerer,
     get_embeddings,
     get_entity_suggester,
+    get_job_store,
     get_now,
     get_router,
     get_vlm,
 )
 from app.main import app  # noqa: E402
+from app.services.ingest_job_store import InMemoryJobStore  # noqa: E402
 from tests.fakes import (  # noqa: E402
     FakeAnswerLLM,
     FakeEmbeddings,
@@ -94,6 +104,48 @@ def isolated_data_dir(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setattr(config, "DATA_DIR", data_dir)
     yield data_dir
+
+
+@pytest.fixture(autouse=True)
+def wire_memory_job_store(monkeypatch):
+    """安全網四：pytest 永遠用記憶體 JobStore，絕不連真 Redis，而且每測清空。
+
+    這條安全網的精神與前三條完全一樣（wire_fake_ai 絕不打真 Ollama、
+    reset_tables 絕不動正式庫、isolated_data_dir 絕不寫專案的 data/）：
+    **危險的預設值由 conftest 統一擋掉，不靠個別測試自律。**
+
+    ★ 為什麼一定要 autouse（不能「需要的測試自己寫」）：
+      job 的狀態是**跨請求活著**的（app/dependencies.py 的 _memory_job_store
+      是整個行程共用的單例）。少了這條，A 測試建的 job 會被 B 測試的
+      GET /ingest-jobs 看到，症狀是「pending_count 多了一筆」「進度清單長度不對」
+      這種**看似隨機的紅**——而且單獨跑那顆測試永遠是綠的，只有整包跑才會紅，
+      跟 2026-08-24 那次「兩份 pytest 互相 TRUNCATE」一樣難查。
+
+    ★ 為什麼要「dependency_overrides ＋ monkeypatch」兩管齊下，缺一不可：
+      ① app.dependency_overrides[get_job_store] 只攔得住 router 參數列上的
+        Depends(get_job_store)——只有 FastAPI 解析 Depends 時才會查這張表，
+        查表的 key 是「原本那個函式物件」。
+      ② 但 Phase 65 起有兩處是把 get_job_store 當**普通函式直接呼叫**的：
+        app/main.py 的 lifespan 掃把、app/celery_app.py 的 ingest_task
+        （它們不是 HTTP 請求，Depends 根本不存在）。直接呼叫 dependency_overrides
+        看不到；只做 ① 的話，那兩處會拿到行程共用的單例（Phase 65 之後更會拿到
+        真的往 redis://redis:6379 撥號的 RedisJobStore），與每測的 store 各記各的
+        ——這就是跨測試污染的第二條漏水路。monkeypatch.setattr 換掉的是模組屬性，
+        直接呼叫端寫 dependencies.get_job_store()（呼叫當下才解析名字）就攔得到；
+        測試結束時 pytest 會自動還原，不必自己收。
+
+    回傳這個測試專屬的 store，需要直接檢查／預先塞 job 的測試可以把它寫進參數列。
+    """
+    store = InMemoryJobStore()
+    app.dependency_overrides[get_job_store] = lambda: store              # ① Depends() 這條路
+    monkeypatch.setattr(dependencies, "get_job_store", lambda: store)    # ② 直接呼叫這條路
+    # 第三道保險：萬一日後有人在自己檔案的最上面 from app.dependencies import
+    # get_job_store（早綁定，② 換不到他手上那份舊參照）再呼叫，摸到的會是行程共用的
+    # 單例——先把單例清空，至少保證上一個測試留下的 job 不會漏到下一個測試。
+    # （正確寫法是模組屬性存取 dependencies.get_job_store()，見常見陷阱 7。）
+    dependencies._memory_job_store().clear()
+    yield store
+    app.dependency_overrides.pop(get_job_store, None)
 
 
 def pytest_bdd_apply_tag(tag, function):

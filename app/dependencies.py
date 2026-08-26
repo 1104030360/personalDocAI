@@ -25,6 +25,7 @@ from app.services import (
     ask_workflow,
     entity_suggestion_service,
     indexing_service,
+    ingest_job_store,
     vlm_service,
 )
 
@@ -132,3 +133,40 @@ def get_today(now: datetime | None = Depends(get_now)) -> date:
     測試把 get_now 換成固定時間時，這裡也會跟著變成固定日期。
     """
     return now.date() if now is not None else date.today()
+
+
+# ---------- 入庫任務的狀態存放處（Phase 57；design5.md §4.3）----------
+
+
+@lru_cache(maxsize=1)
+def _memory_job_store() -> ingest_job_store.InMemoryJobStore:
+    """整個行程共用同一個記憶體 store。
+
+    @lru_cache(maxsize=1) 就是本專案的「只建立一次」寫法（與 _ollama_vlm 同一招）。
+    不共用的話，每個 HTTP 請求都會拿到一個全新的空 store，
+    上一個請求建的 job 下一個請求就查不到了。
+    """
+    return ingest_job_store.InMemoryJobStore()
+
+
+def get_job_store() -> ingest_job_store.JobStore:
+    """任務狀態存放處的唯一取用入口。
+
+    現在一律回記憶體實作。**Phase 65** 會改成「有設定 CELERY_BROKER_URL 就回
+    RedisJobStore」——正式環境的 app 與 worker 是兩個行程，記憶體版彼此看不到。
+
+    ⚠ 它有兩種呼叫端，pytest 攔截的方法**不一樣**（Phase 65 起兩種都會出現）：
+      1. router 參數列上的 Depends(get_job_store)——測試用
+         app.dependency_overrides[get_job_store] 換（只有 FastAPI 解析 Depends 時才查表）。
+      2. 把它當**普通函式直接呼叫**——Phase 65 的 app 啟動掃把（main.py 的 lifespan）
+         與 Celery 的 ingest_task（它們不是 HTTP 請求，沒有 Depends 可攔）。
+         這種呼叫 dependency_overrides 根本看不到，測試靠 conftest 的
+         monkeypatch.setattr 換掉本函式（wire_memory_job_store 安全網的第二管）。
+         ★ 因此直接呼叫端一律要寫「from app import dependencies」＋
+           「dependencies.get_job_store()」——呼叫當下才解析模組屬性，monkeypatch
+           換得掉；寫成「from app.dependencies import get_job_store」再呼叫是早綁定，
+           換不掉（見 tests/conftest.py 的說明與本 phase 常見陷阱 7）。
+      拿到 store 之後怎麼用：run_ingest_job() 仍是**明寫參數**收它
+      （Phase 59 的簽章約定——store 是參數，不是任務本體裡的隱形全域）。
+    """
+    return _memory_job_store()

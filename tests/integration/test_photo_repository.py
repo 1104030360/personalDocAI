@@ -148,3 +148,59 @@ def test_fetch_photo_會回傳資料夾與檔案路徑欄位():
     assert row["original_path"] is None
     assert row["thumbnail_path"] is None
     assert row["content_type"] is None
+
+
+# ---------- Phase 56 追加：D16 的三個建議欄（實體／待辦標題／待辦到期日）----------
+# 本 phase 只挖欄位，值一律由呼叫端決定；真的把 VLM 建議餵進來是 Phase 61 的事。
+
+
+def test_不傳建議參數時三個建議欄都是空的():
+    """舊呼叫端相容性：既有的每一處 insert_photo 都沒有傳新參數，不可以壞掉。
+
+    順便也證明「reset_tables 重播六筆種子之後，新寫進去的照片三個建議欄仍是 NULL」——
+    autouse 的 reset_tables 每個測試都會 TRUNCATE 再重播資料夾種子，
+    種子只重播 folder 表，photo 是空的，所以這裡插進去的是全新的一列。
+    NULL（Python 這邊看到的是 None）＝「沒有建議」，正是舊照片與本 phase 該有的語意。
+    """
+    row = _insert_sample()
+
+    assert row["suggested_entity"] is None
+    assert row["suggested_task_title"] is None
+    assert row["suggested_task_due"] is None
+
+
+def test_insert_photo_寫得進三個建議欄():
+    """Phase 61 的 worker 會這樣呼叫；本 phase 先把管線接通、確認寫得進去。"""
+    row = _insert_sample(
+        suggested_entity="我的 MacBook",
+        suggested_task_title="繳交 Project 2 報告",
+        suggested_task_due=date(2026, 8, 21),
+    )
+
+    assert row["suggested_entity"] == "我的 MacBook"
+    assert row["suggested_task_title"] == "繳交 Project 2 報告"
+    assert row["suggested_task_due"] == date(2026, 8, 21)
+
+
+def test_fetch_photo_讀得回三個建議欄():
+    """insert 的 RETURNING 與 fetch 的 SELECT 共用 PHOTO_COLUMNS，兩邊鍵名保證一致。"""
+    inserted = _insert_sample(
+        suggested_entity="我的 MacBook",
+        suggested_task_title="繳交 Project 2 報告",
+        suggested_task_due=date(2026, 8, 21),
+    )
+
+    assert repo.fetch_photo(inserted["id"]) == inserted
+
+
+def test_到期日存的是日期不是時間戳():
+    """欄位型別必須是 DATE（只有年月日），不是 TIMESTAMP。
+
+    理由：這個建議之後會被 Phase 70 帶去 POST /photos/{id}/task，
+    而 task.due_date 本來就是 DATE。兩邊型別一致，才不會出現
+    「建議是 2026-08-21，建成待辦卻變成 2026-08-21 00:00:00+08」這種漂移。
+    date 是 datetime 的父類別，所以要用 type() 精確比對，不能用 isinstance。
+    """
+    row = _insert_sample(suggested_task_due=date(2026, 8, 21))
+
+    assert type(row["suggested_task_due"]) is date

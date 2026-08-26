@@ -21,7 +21,8 @@ from app.db.session import get_connection
 # insert_photo 的 RETURNING 與 fetch_photo 的 SELECT 共用這一份，兩邊鍵名保證一致。
 PHOTO_COLUMNS = (
     "id, text, category, folder_id, location, items, content_time, uploaded_at, "
-    "original_path, thumbnail_path, content_type, suggested_category"
+    "original_path, thumbnail_path, content_type, suggested_category, "
+    "suggested_entity, suggested_task_title, suggested_task_due"
 )
 
 # 六筆預設資料夾（design1.md §5 原文）。
@@ -69,6 +70,9 @@ def insert_photo(
     embedding: list[float],
     uploaded_at: datetime | None = None,
     suggested_category: str | None = None,
+    suggested_entity: str | None = None,
+    suggested_task_title: str | None = None,
+    suggested_task_due: date | None = None,
 ) -> dict[str, Any]:
     """寫入一張照片。一條 INSERT 寫完全部欄位，天然原子——不會存到一半。
 
@@ -79,6 +83,15 @@ def insert_photo(
     suggested_category＝上傳當下 VLM 建議的資料夾名稱（Phase 35，已釐清 B）。
     它與照片實際歸屬無關（歸屬看 folder_id，上傳一律是收件箱），
     只是「當時猜了什麼」的存根；沒有建議就留 None，定案時一律不算糾錯。
+
+    suggested_entity／suggested_task_title／suggested_task_due＝增量五 D16 的三個建議。
+    與 suggested_category 同一個性質：只是「VLM 當時猜了什麼」的存根，
+    不代表照片真的釘了實體、也不代表真的有一筆待辦——那兩件事要人在彈窗按下確認，
+    分別寫進 photo_entity 與 task 兩張表（design3.md D12／D13 不變）。
+    為什麼要存：上傳改成非同步（202）之後，看圖是背景 worker 做的，
+    那時已經沒有人在等 HTTP 回應，建議不落庫就會蒸發（design5.md D16）。
+    ★ Phase 56 的每一個呼叫端都不傳這三個，所以值一律是 None；
+      真的把 VLM 的建議餵進來是 Phase 61 的事。
     """
     # 欄位「名稱」清單用 f-string 帶入（固定常數）；欄位「值」一律用 %(名稱)s
     # 參數帶入，交給 psycopg 安全處理——避免 SQL injection（輸入內容被誤當 SQL 執行）
@@ -90,7 +103,8 @@ def insert_photo(
     sql = f"""
         INSERT INTO photo (
             text, category, folder_id, location, items, content_time, uploaded_at,
-            embedding, suggested_category
+            embedding, suggested_category,
+            suggested_entity, suggested_task_title, suggested_task_due
         )
         VALUES (
             %(text)s, %(category)s,
@@ -100,7 +114,8 @@ def insert_photo(
             ),
             %(location)s, %(items)s, %(content_time)s,
             COALESCE(%(uploaded_at)s::timestamptz, now()),
-            %(embedding)s::vector, %(suggested_category)s
+            %(embedding)s::vector, %(suggested_category)s,
+            %(suggested_entity)s, %(suggested_task_title)s, %(suggested_task_due)s
         )
         RETURNING {PHOTO_COLUMNS};
     """
@@ -113,6 +128,9 @@ def insert_photo(
         "uploaded_at": uploaded_at,
         "embedding": to_vector_literal(embedding),
         "suggested_category": suggested_category,
+        "suggested_entity": suggested_entity,
+        "suggested_task_title": suggested_task_title,
+        "suggested_task_due": suggested_task_due,
     }
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -343,18 +361,26 @@ def create_folder(name: str, description: str) -> dict[str, Any]:
 def list_photos_in_folder(folder_id: int) -> list[dict[str, Any]]:
     """某個資料夾裡的照片摘要，新的在前（Phase 22 的縮圖牆要用）。
 
-    只取瀏覽需要的五個欄位——不回傳 embedding（1024 個數字，前端用不到）。
+    只取瀏覽需要的欄位——不回傳 embedding（1024 個數字，前端用不到）。
     ORDER BY id DESC＝id 由大到小；id 自動遞增，所以「大的」就是「晚上傳的」。
 
     ★ Phase 35 從四欄變五欄：多的 suggested_category 是給「待決定」分頁畫選項①用的
       （design1「摘要恰四鍵」由 phase-35 明文修訂）。有了它，待決定分頁就能拿出
       上傳當下那一筆建議，不必為了畫①再看一次圖。
+    ★ Phase 56 再從五欄變八欄：D16 的三個建議欄。理由完全相同，只是對象換成
+      實體彈窗的選項①與待辦彈窗的預填值——上傳改 202 之後建議不再回給前端，
+      待決定頁只能從這裡讀（design5.md D16、§6.2）。
+      本 phase 三個值一律是 NULL；真的餵值進去是 Phase 61。
+    ★ 注意分層：這是 repository 回的鍵。GET /folders/{id} 的回應現在仍是五鍵，
+      因為 schemas/folder.py 的 PhotoSummary 只挑它要的那幾個。
+      把回應也加成八鍵是 Phase 61 的事，本 phase 的 API 回應逐位元不變。
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, text, uploaded_at, thumbnail_path, suggested_category
+                SELECT id, text, uploaded_at, thumbnail_path, suggested_category,
+                       suggested_entity, suggested_task_title, suggested_task_due
                 FROM photo
                 WHERE folder_id = %(folder_id)s
                 ORDER BY id DESC;

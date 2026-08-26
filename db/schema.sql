@@ -53,7 +53,14 @@ CREATE TABLE photo (
   -- 上傳當下 VLM 建議的資料夾名稱（clamp 過，一定是 folder.name 之一）。Phase 35 加。
   -- NULL ＝「沒有建議」：clamp 成「未分類」的、以及遷移進來的舊照片都是 NULL，
   -- 定案時一律不算糾錯（沒建議不是猜錯）。這欄不影響照片實際歸屬（那是 folder_id）。
-  suggested_category text
+  suggested_category text,
+  -- ---------- 增量五 D16：建議隨入庫落庫（Phase 56）----------
+  -- 三欄與 db/migrate_design5.sql 必須完全一致，改一邊就要改另一邊。
+  -- 上傳改成非同步（202）之後建議不再回給前端，只能存在照片上，
+  -- 待決定頁開窗時才讀得到（design5.md D16、§6.2）。
+  suggested_entity     text,   -- VLM 建議的實體名稱（clamp 過；都不像 → NULL）
+  suggested_task_title text,   -- VLM 建議的待辦標題（NULL ＝沒有待辦，待辦窗不跳）
+  suggested_task_due   date    -- VLM 建議的到期日（型別對齊 task.due_date，只有年月日）
 );
 
 -- 向量索引：HNSW ＋ cosine 距離（pgvector 官方語法）。

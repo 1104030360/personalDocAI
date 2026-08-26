@@ -588,6 +588,37 @@ input[type="file"].field { padding: var(--sp-2); }
 body.fm-open { overflow: hidden; }
 
 
+/* ══ 歸類彈窗窗頂的原圖（增量五 Phase 54；design5.md D2）═══════════════
+   為什麼不直接共用下面的 .pd-image：詳情窗裡「只有一張圖要看」，
+   所以那裡吃到 60vh 沒問題；歸類窗底下還有**四個一定要按得到的出口**，
+   圖太高會把它們推到捲軸外——強制決定的窗（沒有 ×、不吃 Esc）最忌諱
+   「看不到出口」。所以這裡另訂一個矮一點的上限。 */
+.fm-image { margin-bottom: var(--sp-4); }
+
+/* contain＝整張圖塞得下、不裁切。與縮圖牆的 cover 刻意不同：
+   那裡是要排整齊，這裡是要看清楚這到底是哪一張。 */
+.fm-image img {
+  display: block;
+  width: 100%;
+  max-height: 32vh;
+  object-fit: contain;
+}
+
+/* 既有的 .placeholder 是為縮圖牆的正方形格子寫的（aspect-ratio: 1 / 1）；
+   這裡的圖是橫躺的，換成扁一點的比例才不會空出一大塊 */
+.fm-image .placeholder { aspect-ratio: 16 / 9; }
+
+/* .fm-option:first-of-type（style.css 既有的「①列免上框線」規則）的 first-of-type
+   比的是「同層第一個 div」——fm-image 插進來之後，同層第一個 div 變成它，
+   那條既有規則從此零匹配，①列會多出一條分隔線＋上內距（2026-08-25 核對時抓到的副作用）。
+   用「標題的下一個兄弟」把同一件事接回來——注意**不能**寫 .fm-image + .fm-option：
+   fm-image 與 ①列中間隔著 <h3 id="fm-title">，相鄰選擇器會被它擋住、永不匹配
+   （2026-08-25 審查時抓到的第二層錯，以此版為準）。
+   實體／待辦窗沒有 fm-image、也沒有 #fm-title，這條選不到它們，
+   它們的①列仍由原本的 :first-of-type 規則處理。 */
+#fm-title + .fm-option { padding-top: 0; border-top: none; }
+
+
 /* ══ 詳情彈窗（photo_detail_modal.js；唯讀，沿用 fm-* 外框，內容用 pd-*）════
    跟另外三顆窗的差別只有兩處：多一顆右上角的 ×（這顆關得掉），
    以及裡面是「一張圖＋一段說明＋四個欄位」的閱讀版面，不是一排選項。 */
