@@ -1,0 +1,30 @@
+# git commit 時自動整理 Python（Phase 73）。
+#
+# 這個檔案只是「設定」，不會自己生效——每台機器、每次重新 clone 都要跑一次：
+#     pre-commit install
+# 它會去寫 .git/hooks/pre-commit（那個檔不進版控）。沒跑的人照樣 commit 得了，
+# 規則靠之後的 CI 當第二道關卡。
+#
+# ⚠ pre-commit 會自己下載 rev 那一版的 ruff 跑，**不是**用 .venv 裡那顆。
+#   所以 rev 必須等於本機 `ruff --version`，也要 >= requirements.txt 的 ruff 下限，
+#   否則會出現「這台過、那台紅」而且訊息完全看不出原因。
+#   升級 ruff 的正確做法是兩個檔一起改，然後重跑一次
+#   `ruff format app tests scripts` 看有沒有新的格式差異。
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      # 順序有意義：先 lint（會 --fix）再 format。
+      # 官方文件明寫「用 --fix 時 lint hook 要排在 formatter 前面」，
+      # 因為自動修完的程式碼可能需要重新排版。
+      - id: ruff-check # 舊名 `ruff` 在 v0.16 已是 legacy alias，不要再用
+        args: [--fix]
+        types_or: [python, pyi]
+
+      - id: ruff-format
+        # types_or 一定要自己寫死。上游預設是 [python, pyi, jupyter, markdown]，
+        # 其中 markdown 會讓 ruff 連 .md 裡的 ```python 區塊一起重排——
+        # 本 repo 實測有 39 份 .md 會被改到，包含 docs/design/design.md
+        # 與整批已歸檔的 docs/plan/finish/phase-*.md（那些是歷史紀錄，不該被動）。
+        types_or: [python, pyi]

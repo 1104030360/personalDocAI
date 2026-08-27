@@ -191,6 +191,30 @@ mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
 #   一邊在 TRUNCATE、一邊在 INSERT）。等另一份跑完再跑。
 pytest -q
 
+# ── 格式與 lint：pre-commit（Phase 73，2026-08-27）──────────────────
+# **重新 clone 之後要跑一次**，hook 不會自己出現（它寫在 .git/hooks/，不進版控）：
+pre-commit install
+# 之後每次 git commit，會對「staged 的 .py」自動跑：
+#   ruff check --fix  → 能修的直接修（import 排序等）；修不掉的（例如 E402）擋下 commit
+#   ruff format       → 重排空白、換行、引號
+# hook 改過檔之後那次 commit 會失敗，這是正常的：`git add` 再 commit 一次就過。
+# 沒跑 pre-commit install 的人照樣 commit 得了——目前沒有第二道關卡（CI 尚未建置）。
+#
+# 手動跑（不經 git，等同 hook 的「只檢查、不改檔」版本）：
+ruff format --check app tests scripts && ruff check app tests scripts
+# 真的要改檔：把 --check 拿掉、check 加 --fix
+#
+# ⚠ 升級 ruff 要「兩個檔一起改」：requirements.txt 的 `ruff>=` 與
+#   .pre-commit-config.yaml 的 `rev:`。pre-commit 自己下載 rev 那版的 ruff 跑，
+#   **不是**用 .venv 裡那顆；兩邊不一致就會「這台過、那台紅」而且訊息看不出原因。
+#   改完重跑一次 `ruff format app tests scripts` 確認沒有新的格式差異。
+#   目前釘的是 0.16.5（整庫格式基線就是它跑出來的）。
+#
+# ⚠ .pre-commit-config.yaml 的兩個 hook 都寫死 `types_or: [python, pyi]`，不要拿掉：
+#   上游 ruff-format 的預設含 markdown，會連 .md 裡的 ```python 區塊一起重排
+#   （實測本 repo 有 39 份會被改到，包含 docs/design/design.md 與整批已歸檔的
+#   docs/plan/finish/phase-*.md——那些是歷史紀錄，不該被工具動到）。
+
 # 只跑規格檔 binder（上傳＋詢問＋無線鏡頭三份；2026-08-24 摘標後**全綠、零 skip**，共 27 顆）
 pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py tests/integration/test_camera_feature.py -v
 
