@@ -199,3 +199,133 @@ class InMemoryJobStore:
         刻意不放進 JobStore 契約：正式程式碼沒有任何地方該有「一次清光」的能力。
         """
         self._jobs.clear()
+
+
+# ---------- Phase 65 追加：正式用的 Redis 實作 ----------
+
+import json  # 搬去檔頭 import 區也行；寫在這裡是讓整段可以一刀貼上
+
+# key 的長相：
+#   ingest:{job_id}  一筆 job 的 JSON
+#   ingest:open      還沒結束的 job_id 集合（成功＝delete，所以平常是空的）
+# 前綴讓我們的 key 跟 Celery 塞在同一個 database 的 key（celery、_kombu.*、unacked*）
+# 完全分得開，不必為了乾淨另外開一個 database。
+JOB_KEY_PREFIX = "ingest:"
+OPEN_SET_KEY = "ingest:open"
+
+
+def job_key(job_id: str) -> str:
+    """一筆 job 在 Redis 裡的 key。"""
+    return f"{JOB_KEY_PREFIX}{job_id}"
+
+
+class RedisJobStore:
+    """把 job 狀態存進 Redis 的實作（正式路徑，design5.md §4.3）。
+
+    為什麼不能放行程記憶體：**worker 是另一個行程**。web 建的 job，worker 要看得到、
+    改得動，人再從 web 的 GET /ingest-jobs 讀回來——三方碰同一份資料，只能放共用的地方。
+
+    介面與 InMemoryJobStore 逐字相同（契約 §3.1 的 JobStore Protocol），
+    所以 run_ingest_job 不知道自己拿到哪一種，測試才換得掉。
+
+    client 從外面注入（dependencies.get_job_store 建好給它），本類別不決定連哪台
+    ——單元測試才塞得進假的客戶端。
+
+    ★ 前提：client 必須用 decode_responses=True 建，回來的才是 str。
+      沒有那個參數的話 smembers() 回 bytes，組出的 key 變成 "ingest:b'abc'"，
+      而且是安靜地錯——list_open() 只是永遠回空清單。
+    """
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    def create(
+        self,
+        *,
+        job_id: str,
+        filename: str,
+        content_type: str,
+        ai_backend: str,
+        source: str,
+    ) -> IngestJob:
+        """建一筆新的 job。初始值逐字照契約 §3.1。"""
+        job: IngestJob = {
+            "job_id": job_id,
+            "filename": filename,
+            "content_type": content_type,
+            "status": "queued",
+            "attempt": 0,
+            "page_count": None,
+            "pages_done": 0,
+            "photo_ids": [],
+            "error": None,
+            "ai_backend": ai_backend,
+            "source": source,
+        }
+        # pipeline ＝ 兩個命令一次送出。不是交易，但至少不會「寫了 JSON、
+        # 網路斷在中間、集合沒登記到」——那樣這筆 job 會從進度面板憑空消失。
+        pipe = self._client.pipeline()
+        pipe.set(job_key(job_id), json.dumps(job))
+        pipe.sadd(OPEN_SET_KEY, job_id)
+        pipe.execute()
+        return job
+
+    def get(self, job_id: str) -> IngestJob | None:
+        raw = self._client.get(job_key(job_id))
+        if raw is None:
+            return None
+        return json.loads(raw)
+
+    def update(self, job_id: str, **fields) -> IngestJob | None:
+        """改幾個欄位。找不到就回 None（不會建出一筆半殘的 job）。
+
+        這是「讀出來、改一改、寫回去」，中間沒有鎖。實務上安全，因為同一筆 job
+        幾乎不可能被兩個行程同時改：web 只在 create（入列）與 delete（dismiss）時碰它，
+        worker 負責 status／attempt／pages_done／photo_ids；唯一想得到的競態是
+        「worker 正在寫 status、人同時按 dismiss」，但 dismiss 只准對 failed，
+        而 failed 是 worker 寫完就不再動的終態。side project 不上樂觀鎖（WATCH／MULTI）。
+        """
+        job = self.get(job_id)
+        if job is None:
+            return None
+        job.update(fields)
+        self._client.set(job_key(job_id), json.dumps(job))
+        return job
+
+    def delete(self, job_id: str) -> None:
+        """把這筆 job 從系統拿掉。**成功入庫走的就是這一條**（design5 §4.3）。"""
+        pipe = self._client.pipeline()
+        pipe.delete(job_key(job_id))
+        pipe.srem(OPEN_SET_KEY, job_id)
+        pipe.execute()
+
+    def list_open(self) -> list[IngestJob]:
+        """列出還沒結束的 job（queued／analyzing／retrying／failed）。
+
+        成功的已經被 delete 掉，所以這裡天生不含成功；再對 JOB_STATUSES 濾一次
+        是防禦性的——與 InMemoryJobStore.list_open 同一道（Phase 57）：兩種實作
+        對外行為必須一致，測試才換得掉。
+        用 job_id 排序只是要「同一份資料每次回來順序一樣」（測試好寫、面板不會每 2 秒
+        跳來跳去）；真正要怎麼排是 Phase 67 前端的事。
+        """
+        job_ids = sorted(self._client.smembers(OPEN_SET_KEY))
+        if not job_ids:
+            return []
+        raws = self._client.mget([job_key(job_id) for job_id in job_ids])
+
+        jobs: list[IngestJob] = []
+        孤兒: list[str] = []
+        for job_id, raw in zip(job_ids, raws):
+            if raw is None:
+                # 集合有這個 id，但 JSON 不見了（AOF 半截、有人手動 DEL…）。
+                # 這種殘骸不該讓整個進度面板炸掉，順手清掉即可。
+                孤兒.append(job_id)
+                continue
+            job = json.loads(raw)
+            if job.get("status") not in JOB_STATUSES:
+                # 沒定義過的狀態不准出現在使用者的進度面板上（防禦性，同記憶體版）
+                continue
+            jobs.append(job)
+        if 孤兒:
+            self._client.srem(OPEN_SET_KEY, *孤兒)
+        return jobs

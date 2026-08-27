@@ -16,6 +16,10 @@
   <video id="cp-video" autoplay playsinline muted></video>
 </div>
 
+<!-- 送出進度的窄條（design5 §6.5）：一行高，夾在取景區與狀態列之間。
+     刻意**不是**蓋在畫面上的浮層——下緣那三顆按鈕永遠不會被壓到（「不擋快門」）。 -->
+<p class="cp-bar" id="cp-bar" hidden></p>
+
 <p class="cp-status" id="cp-status" aria-live="polite">正在開啟鏡頭…</p>
 
 <div class="cp-controls">
@@ -24,7 +28,8 @@
   <button type="button" id="cp-torch" class="btn" disabled>開閃光</button>
 </div>
 
-<p class="cp-hint" id="cp-hint">快門電腦那邊也能按。拍完照片會自動送進系統，接著到電腦上完成歸類。</p>
+<p class="cp-hint" id="cp-hint">快門電腦那邊也能按。拍完會<strong>立刻送出</strong>，不必等——可以連續拍。
+分析在背景進行，完成的照片稍後在電腦上歸類。</p>
 
 </main>
 
@@ -41,6 +46,7 @@
 
 const cpVideo = document.getElementById("cp-video");
 const cpStatus = document.getElementById("cp-status");
+const cpBar = document.getElementById("cp-bar");        // ← 新增：送出進度的窄條
 const cpHint = document.getElementById("cp-hint");
 const cp按鈕 = {
   capture: document.getElementById("cp-capture"),
@@ -56,6 +62,7 @@ let cp待處理ice = [];
 let cp鏡頭 = "environment";     // environment＝後鏡頭（拍收據用的那一面）
 let cp閃光開著 = false;
 let cp上傳中 = false;
+let cp已送出 = 0;          // ← 新增：這次配對總共送出幾張（純本地計數，不打任何 API）
 let cp桌面就緒 = false;         // 電腦那一頁在線了嗎（協商要兩個條件都到齊）
 // 這支裝置支不支援閃光：null＝還沒檢查過。檢查完要「回報」給電腦，
 // 而且 WS 還在連線中時送出去會直接掉——所以連上與 desk-ready 時都要補報一次。
@@ -64,6 +71,24 @@ let cp閃光能力 = null;
 function 狀態(文字, 種類) {
   cpStatus.textContent = 文字;                     // 動態內容一律 textContent
   cpStatus.className = "cp-status" + (種類 ? " cp-" + 種類 : "");
+}
+
+// 窄條：只講「我送出去幾張」這件純本地的事。
+// 分析到第幾次、失敗了沒，全部在電腦那邊的進度面板上看（Phase 67）——
+// 手機不打 GET /ingest-jobs，一個多餘的請求都不發。
+function 窄條(文字) {
+  cpBar.textContent = 文字 || "";       // 動態內容一律 textContent
+  cpBar.hidden = !文字;
+}
+
+function 更新窄條(送出中) {
+  if (送出中) {
+    窄條("送出中…（第 " + (cp已送出 + 1) + " 張）");
+  } else if (cp已送出 > 0) {
+    窄條("已送出 " + cp已送出 + " 張，分析在電腦上進行");
+  } else {
+    窄條("");
+  }
 }
 
 function 送(訊息) {
@@ -164,11 +189,11 @@ function 處理訊息(訊息) {
   } else if (訊息.type === "torch") {
     設定閃光(訊息.on);
   } else if (訊息.type === "retake") {
-    // 上傳中就不要動狀態列——那會把「拍好了，上傳中…」蓋成「取景中」，
+    // 上傳中就不要動狀態列——那會把「拍好了，送出中…」蓋成「取景中」，
     // 看起來像什麼事都沒發生，但那張其實正在路上。
     if (cp上傳中) { return; }
     狀態("取景中。對準要拍的東西，兩邊都能按快門。");
-    cpHint.textContent = "快門電腦那邊也能按。拍完照片會自動送進系統，接著到電腦上完成歸類。";
+    cpHint.textContent = "快門電腦那邊也能按。拍完會立刻送出，不必等——可以連續拍。";
   }
 }
 
@@ -276,12 +301,17 @@ function 閃光不支援() {
 // ---------- ④ 快門 ----------
 
 async function 快門() {
+  // ⚠ 這個 guard 才是防連按的真本事（競態）：
+  //   按鈕 disabled 只擋得住「手指按手機上那顆」，
+  //   電腦透過 WebSocket 送過來的 { type: "capture" } **根本不經過按鈕**，
+  //   直接就叫到這個函式。沒有 cp上傳中 的話，狂按電腦快門會送出好幾份。
   if (!cpStream || cp上傳中) { return; }
   if (!cpVideo.videoWidth) { 狀態("畫面還沒準備好，請等一下再按。", "error"); return; }
 
   cp上傳中 = true;
   拍照按鈕可用(false);
-  狀態("拍好了，上傳中…");
+  狀態("拍好了，送出中…");
+  更新窄條(true);
   送({ type: "uploading" });
 
   // 把當下這一幀原尺寸畫進 canvas（不是預覽縮圖——給 VLM 看的要清楚）
@@ -302,25 +332,36 @@ async function 快門() {
     const response = await fetch("/camera/" + cpToken + "/photos", {
       method: "POST", body: formData
     });
-    if (response.status === 201) {
-      送({ type: "uploaded" });          // 電腦收到就會去拿這張、開彈窗鏈
-      狀態("已送出——到電腦上繼續。", "ok");
-      cpHint.textContent = "電腦上會跳出視窗請你決定資料夾。這裡可以繼續拍下一張。";
+    // design5 D4／§5：受理成功是 **202**（已收下，還沒分析）。
+    // 一拿到就放行下一拍——不必等 VLM，那在電腦背景排隊跑。
+    if (response.status === 202) {
+      cp已送出 += 1;
+      送({ type: "uploaded" });          // 電腦收到只會更新計數與進度面板，不開彈窗（D13）
+      狀態("已送出——可以直接拍下一張。", "ok");
+      cpHint.textContent =
+        "分析在背景進行，電腦右下角看得到進度；完成的照片稍後在電腦上歸類。";
       cp上傳中 = false;
       拍照按鈕可用(true);
+      更新窄條(false);
       return;
     }
-    const body = await response.json();
-    送({ type: "upload-failed", detail: String(body.detail) });
-    上傳結束("沒有存成功（HTTP " + response.status + "）：" + body.detail);
+    // 走到這裡是同步就被擋下來的：404（token 過期／亂 token）、415（格式不對）。
+    // 這種檔**根本沒有進佇列**，所以電腦的進度面板也不會有它。
+    let payload = null;
+    try { payload = await response.json(); } catch (error) { payload = null; }
+    const 說明 = (payload && typeof payload.detail === "string")
+      ? payload.detail : "伺服器沒有給說明";
+    送({ type: "upload-failed", detail: 說明 });
+    上傳結束("沒有送成功（HTTP " + response.status + "）：" + 說明);
   } catch (error) {
-    上傳結束("送不出去：" + error + "。請確認手機與電腦還在同一個 Wi-Fi。");
+    上傳結束("送不出去。請確認手機與電腦還在同一個 Wi-Fi。");
   }
 }
 
 function 上傳結束(訊息) {
   cp上傳中 = false;
   拍照按鈕可用(true);
+  更新窄條(false);                       // 失敗就把「送出中…」收回去（計數不加）
   狀態(訊息, "error");
 }
 

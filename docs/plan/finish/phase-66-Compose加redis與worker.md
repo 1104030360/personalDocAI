@@ -4,6 +4,10 @@
 
 > 🎯 **一句話目標：** 在**既有的** `compose.yaml` 加上 `redis` 與 `worker` 兩個服務（不新開一份 compose）、在 `compose.dev.yaml` 幫 worker 掛上原始碼、把 `LAUNCH.md` 與 `CLAUDE.md` 的指令區改成新的現實，最後跑一次**真容器煙霧**——切到雲端上傳一張照片，在 worker 的 log 裡看到 `backend=cloud`，照片最後出現在待決定。做完就交給產品負責人跑 **★ 閘門 G2**。
 
+> ⚠ **2026-08-26 校準：本檔引用的「契約備忘」是規劃階段的工作文件、未入庫**（與 phase-57／58
+> 定稿的註記同一件事）。本 phase 需要的內容已全部逐字內嵌在 §4 各步驟，
+> 驗收一律以本檔內嵌內容為準，不依賴那份文件。
+
 **為什麼要做這個：**
 
 Phase 65 已經把程式碼全部寫好了：`POST /photos` 會把 job 丟進 Redis、`ingest_task` 會把它撿起來做。**但現在既沒有 Redis、也沒有 worker。** 用瀏覽器上傳一張照片，`app` 會在入列那一步撞上「連不到 redis:6379」，直接 500。
@@ -53,7 +57,9 @@ grep -n "CELERY_BROKER_URL" app/core/config.py
 grep -n "^celery\|^redis" requirements.txt
 
 # ② 測試全綠、而且死埠實證通過（不通過就代表 pytest 會連真 Redis，別往下走）
-pytest -q
+pytest -q                                              # 2026-08-26 校準：Phase 65 做完應為
+                                                       # 507 passed ＋ 0 skipped
+                                                       #（Phase 64 收工實測 493 ＋ 65 的 14 顆）
 CELERY_BROKER_URL=redis://127.0.0.1:9/0 pytest -q      # 顆數要跟上一條一模一樣
 
 # ③ Docker Desktop 開著、現有兩個服務活著
@@ -505,6 +511,11 @@ curl -k -X PUT https://127.0.0.1:8000/settings/ai-backend \
 
 以下四段是**可以直接貼上去的原文**（其餘章節不動）。
 
+> 📌 **2026-08-26 校準（順手一起改，不另立步驟）：** `LAUNCH.md` §6「跑測試」那行註解
+> 現在寫的是 `pytest -q  # 預期 405 passed`——**那個數字早就過期**（Phase 64 收工實測 493，
+> Phase 65 做完是 507）。既然本 phase 本來就要動 `LAUNCH.md`，把它一併改成當下實查值；
+> 這一處不列進下面的 ①〜⑤ 編號，§6 驗收清單仍寫「五處」。
+
 - [ ] **①「§3 啟動與停止」整段換成**（外層是四個反引號，這樣裡面的三反引號才不會提早收尾；
       貼進 `LAUNCH.md` 時只貼**中間的內容**，不要把最外面那兩行四反引號也貼進去）：
 
@@ -690,7 +701,8 @@ docker compose -f compose.yaml up -d                          # 開發 → 常�
 
 - [ ] **④ 現況段**（檔案最前面那一大段）補上一句增量五階段乙的成果：
       Docker 從兩個服務變成**四個**（db／redis／app／worker）、worker 是 `--concurrency=2`、
-      `POST /photos` 已是 202、端點 20→22、`pytest -q` 的顆數更新成當下實查值。
+      `POST /photos` 已是 202、端點 20→22、`pytest -q` 的顆數更新成當下實查值
+      （2026-08-26 校準：現況段目前寫的是「405 passed＋0 skipped」，Phase 65 做完應為 **507**）。
 
 ### 4.10 ★ 閘門 G2
 
@@ -875,6 +887,14 @@ grep -n "restart worker\|redisdata\|--concurrency=2" CLAUDE.md
 - [ ] **零程式碼變更**：`git status --short -- app/ tests/` → **沒有任何輸出**
       （Phase 65 的改動已經在上一個 phase 就存在了；本 phase 不該再動它們。
       若 §4.7 ④ 真的抓到 `target=` 沒帶，那是回頭補 Phase 65 的漏，要在交付說明裡註明）
+
+      （2026-08-26 校準：原文假設 Phase 65 的改動**已經 commit**，這條才會是空輸出。
+      實況是本專案的慣例為「一個階段做完才 commit」——`unfinish/` → `finish/` 的歸檔隨 commit 執行，
+      而本 phase §4.10 自己也寫「**不要 commit**」。所以 Phase 65 收工時 `app/`／`tests/`
+      多半仍是未 commit 的狀態，這條 grep 會印出 65 的那 7〜9 個檔，**不代表本 phase 動了程式碼**。
+      實務判準改成：開工前先 `git status --short -- app/ tests/ > /tmp/p66-before.txt`，
+      收工再跑一次 `diff` 比對，**沒有新增或變動的行**才算過。
+      若 Phase 65 已經先 commit 了，原文那條空輸出的寫法照舊成立。）
 - [ ] `git status --short` 只多出／改到：`compose.yaml`、`compose.dev.yaml`、`LAUNCH.md`、`CLAUDE.md`，
       以及 `docs/` 底下的計畫檔與 G2 驗收包
 - [ ] G2 驗收包已寫進 `docs/plan/report/`，**沒有 commit**

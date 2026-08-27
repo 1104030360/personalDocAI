@@ -12,3 +12,12 @@ services:
       - ./certs:/app/certs
       - ./.env:/app/.env
     restart: "no"               # 開發用 -d 仍不要 unless-stopped，免得開機把 --reload 拉起來
+
+  worker:
+    volumes:
+      - ./app:/app/app          # 原始碼；沒掛的話 restart 也只會重跑映像裡的舊碼
+      - ./data:/app/data        # 與常駐相同
+      - ./.env:/app/.env
+    restart: "no"               # 開發用 -d 仍不要 unless-stopped，免得開機把開發版拉起來
+    # ★ 刻意**不覆寫** command：worker 的啟動指令兩種模式完全一樣
+    #   （Celery 沒有 --reload 可加）。改了 Python 要自己 restart worker。

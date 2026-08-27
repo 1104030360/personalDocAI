@@ -97,7 +97,7 @@ pytest -q                        # 先確認基準沒跑掉，把顆數記下來
 | 重複測已經有人測的東西 | 每一列先找「誰已經測了」，只補真正的缺口。重複的測試是負債：改一次程式要改兩個地方 |
 | 動 `docs/spec/` 任何一個字 | ★G3 還沒過。design5 §10 明文要產品負責人核准才准改 `.feature` |
 | 在測試裡連真的 Redis、或啟動 Celery 容器 | design5 §9／D15 明文。任務本體是 `run_ingest_job(...)`，測試**直接呼叫它** |
-| 自己 commit、自己把 `unfinish/` 搬進 `finish/` | 歸檔隨 commit 執行，時機由產品負責人決定（Phase 72 §4.8 才處理） |
+| 自己 commit、自己把 `unfinish/` 搬進 `finish/` | 歸檔隨 commit 執行，時機由產品負責人決定（Phase 72 §4.9 才處理） |
 | 為了「補齊」而幫沒有 Example 的 `#TODO` Rule 寫測試 | 那些 Rule 沒有例子＝規格沒說怎麼驗。硬補是自己發明規格 |
 | 改 QR 尺寸那顆測試 | design5 §9 最後一列明文：`.cd-qr svg` 的 `max-width` **不准改小**（增量四唯一一次改產品 CSS，改小 iPhone 就掃不到） |
 
@@ -112,6 +112,12 @@ pytest -q                        # 先確認基準沒跑掉，把顆數記下來
 的實際輸出為準：表上寫 ✓ 的那顆若真的不在（前面的 phase 執行時被裁掉了），
 **回那個 phase 所屬的測試檔補**（行為測試住在它功能的家；本檔只收「跨 phase 收尾」性質的東西）。
 
+> ✅（2026-08-26 校準）本表點名的**每一顆既有測試都已用 `pytest --collect-only -q`
+> 對過實際輸出**（`test_ingest_job.py`／`test_ingest_job_pdf.py`／
+> `test_ingest_jobs_endpoint.py`／`test_photos_upload.py`／`test_camera_endpoints.py`／
+> `test_assign_folder.py`／`test_photo_files.py`），名字**全部逐字對得上、沒有一顆被裁掉**。
+> 執行本 phase 時仍要再對一次（52〜70 交錯做，中途可能有人改名）。
+
 | # | 情況（§8 原文） | 預期 | 誰把關（✓＝已有；★＝本檔補） |
 |---|---|---|---|
 | 1 | 非 JPEG／PNG／PDF | 415；無 job、無 staging | ✓ Phase 62 `test_415不建任務也不寫staging`（三顆既有 415 測試也原樣保留） |
@@ -120,7 +126,7 @@ pytest -q                        # 先確認基準沒跑掉，把顆數記下來
 | 4 | PDF 某一頁 ×3 | 跳過該頁；其他頁繼續 | ✓ Phase 60 `test_兩頁PDF第二頁三次失敗_只入庫一列_job成功_skipped語意保留`（`每頁呼叫次數 == {1: 1, 2: 3}` ＝「1＋3、不是整份重跑」那個斷言）＋`test_每頁的重試次數各自獨立` |
 | 5 | PDF 0 頁成功，或檔無法拆頁 | 同 3 | ✓ Phase 60 `test_每一頁都看不懂_列數0_job標failed`＋`test_壞檔拆不開_job標failed且不留列`（後者連「拆不開＝**0 次**模型呼叫——確定性錯誤不重試、雲端不多收三次費」都釘了） |
 | 6 | embedding 失敗 | 算進 3 次；3 次後同 3 | ✓ Phase 59 `test_轉向量三次都失敗_不留照片_job標failed`（`vlm.calls == 3`） |
-| 7 | 入庫寫檔失敗 | 清半成品再標失敗，不留孤兒列 | 大半 ✓ Phase 59 `test_寫檔失敗_不留照片也不留孤兒檔_job標failed`＋Phase 62 改寫的 `test_寫檔失敗時檔案與資料列都不留`——**兩顆炸的都是縮圖（`make_thumbnail`）**；★ 本檔補「炸**原圖**（`save_original`）」那一半 →【補7】 |
+| 7 | 入庫寫檔失敗 | 清半成品再標失敗，不留孤兒列 | 大半 ✓ Phase 59 `test_ingest_job.py::test_寫檔失敗_不留照片也不留孤兒檔_job標failed`＋Phase 62 改寫的 `test_photo_files.py::test_寫檔失敗時檔案與資料列都不留`——**兩顆炸的都是縮圖（`make_thumbnail`）**；★ 本檔補「炸**原圖**（`save_original`）」那一半 →【補7】 |
 | 8 | Redis 當下掛了 | 500；不留 staging | 一半 ✓ Phase 62 `test_入列失敗時回500而且staging與任務都不留`（＝**丟不進佇列**那一半，覆寫 `get_task_dispatcher`）；★ 本檔補 **JobStore 寫不進去**那一半 →【補8】 |
 | 9 | dismiss 一筆還在跑的 job | 409 | 大半 ✓ Phase 64 的 204／409／404 四顆（409 那顆用 `queued`）；★ 本檔補「`analyzing`／`retrying` 也不准」→【補9】 |
 | 10 | 已定案再 PATCH | 409（本增量不改） | ✓ 既有 `test_assign_folder.py::test_已定案的照片再歸類回409且完全沒被改動`（Phase 27）。它的 fixture `已上傳的照片` 走**真上傳流程**——Phase 62 把 fixture 改成 202＋跑完任務之後，每次全量都等於把「先進收件箱 → 歸類定案 → 再改被 409」整條重走一遍，**全量回歸自動再驗，不必抄一顆** |
@@ -310,7 +316,7 @@ pytest --collect-only -q \
 **③【補7】第 7 列的另一半：寫「原圖」失敗 → 清半成品、不留孤兒列**
 
 Phase 59／62 的寫檔失敗測試炸的都是**縮圖**（`make_thumbnail`，
-今天的 `tests/integration/test_photo_files.py:140` 也是同一顆函式）；
+今天的 `tests/integration/test_photo_files.py:153` 也是同一顆函式）；
 「存**原圖**（`save_original`）就爆」這條路沒有人走過——它失敗的時間點更早，
 清理範圍不一樣（原圖半個都還沒落地），值得單獨一顆。
 
@@ -492,7 +498,7 @@ pytest tests/integration/test_design5_error_paths.py -v
 | §3-9 | 詢問流程改版 | **人工**：`git diff --stat` 四個檔（見下方「人工檢查 A」） |
 | §0-1 | 乙沒好就把上傳頁改 `multiple` | **人工**：這是**時序**，不是程式狀態（見「人工檢查 B」） |
 | §0-2 | 把影像位元組塞進 Redis | 【掃D】`inspect.signature` ＋ 掃 `celery_app.py` |
-| §0-3 | 為進度面板新增 `DELETE` | ✓ 既有（Phase 67 `test_關掉失敗列用POST不用DELETE`） |
+| §0-3 | 為進度面板新增 `DELETE` | ✓ 既有（Phase 64 `test_ingest_jobs_endpoint.py::test_兩支新端點都在openapi裡而且沒有DELETE`＋Phase 67 `test_關掉失敗列用POST不用DELETE`） |
 | §0-4 | 處理中的檔以空白卡出現在待決定 | 【掃E】行為測試：入列後收件箱仍是空的 |
 | §1.2-1 | FastAPI BackgroundTasks | 【掃C】掃 `app/` 沒有 `BackgroundTasks` |
 | §1.2-2 | 只用 Redis list、自寫 worker 迴圈 | 【掃C】`celery_app.py` 存在且 compose 有 worker |
@@ -511,6 +517,17 @@ pytest tests/integration/test_design5_error_paths.py -v
 | （增量四遺產） | 把 QR 顯示尺寸改小 | ✓ 既有字串版（`test_camera_endpoints.py`）＋【掃A】本檔數值版（≥ 20rem） |
 
 把下面五段接在 `test_design5_error_paths.py` 後面。
+
+> ⚠️（2026-08-26 校準：**掃碼的時序**）掃 A〜E 要掃的東西**現在有五樣還不存在**——
+> `app/celery_app.py`（Phase 65 才建）、`app/static/progress_panel.js`（Phase 67 才建）、
+> `compose.yaml` 的 `redis`／`worker` 兩個服務與 `--concurrency=2`（Phase 66 才加）、
+> `requirements.txt` 的 `celery`（Phase 65／66 才加）。2026-08-26 實查：
+> `app/` 底下 `BackgroundTasks`／`background_tasks` **零命中**（那一條今天就成立）、
+> `pending.html` 有 `openFolderModal(` 且無 `type="checkbox"`／「全選」、
+> `.cd-qr svg` 的 `max-width` 是 `20rem`、`photo` 表四個建議欄都在、
+> `test_design3_error_paths.py` 的 `可以碰資料庫的檔案` 恰兩個檔——這幾條也今天就成立。
+> 所以**這一整節要等 §2 的前置條件（52〜70 全部完成）成立才跑得起來**；
+> 提前跑會紅在「檔案不存在」，那不是缺陷，是順序沒到。
 
 **【掃A】前端掃碼**
 
@@ -809,6 +826,9 @@ def test_SQL掃碼真的有看到增量五的新檔():
 # ----【掃E-1】§5：端點恰 22、零 DELETE，而且是**這 22 支** ----
 
 # 逐支列名，不只是數總數。總數對但少一支多一支的情況，只數總數是抓不到的。
+# （2026-08-26 校準：下面這 22 支已與 Phase 64 之後的實際 /openapi.json 逐支比對過，
+#   一支不多、一支不少；總數的把關另有 test_ask_three_paths.py::test_端點數不變
+#   與 test_nav_header.py::test_端點數仍為22 兩顆既有測試。）
 增量五之後的端點 = {
     ("/", "get"),
     ("/health", "get"),
@@ -1180,7 +1200,7 @@ git status --short -- app/ compose.yaml db/ requirements.txt
   `app/` 底下若多出新的 `M`，代表你改了不該改的——除非那是「揪到真缺陷、回原 phase 修」的結果，
   那就要在紀錄裡寫清楚修了什麼、並重跑全量。
 
-- [ ] **沒有 commit**；`unfinish/` → `finish/` 的歸檔留給 Phase 72 §4.8
+- [ ] **沒有 commit**；`unfinish/` → `finish/` 的歸檔留給 Phase 72 §4.9
 
 ---
 

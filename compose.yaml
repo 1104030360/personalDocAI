@@ -59,8 +59,46 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redis:
+    # 官方 Redis 7 映像。alpine ＝ 用 Alpine Linux 當底，映像小很多（幾十 MB）。
+    # 它同時扮演兩個角色：① Celery 的 broker（任務排隊的地方）
+    #                      ② 我們自己的 JobStore（進度列的資料）
+    # 兩者的 key 完全分得開：我們的都有 ingest: 前綴（app/services/ingest_job_store.py）。
+    image: redis:7-alpine
+    # ★ 覆寫啟動指令，把 AOF 打開。
+    #   AOF（append-only file，逐筆追加檔）＝ Redis 把每一個「改到資料」的命令
+    #   逐筆寫進磁碟，重開時重播一次就還原。
+    #   不開的話 Redis 只活在記憶體：重開 Docker ＝ 進行中的任務與失敗列全部消失
+    #   （design5.md §7 明文要求 appendonly yes）。
+    #   官方 Redis 持久化說明：https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/
+    #  （官方映像頁的持久化範例也是同一招——把設定當參數接在 redis-server 後面，
+    #    例如 `redis-server --save 60 1`；我們接的是 --appendonly yes。）
+    # ⚠ "yes" 的引號不能拿掉：YAML 1.1 的解析器會把沒引號的 yes 讀成布林值 true，
+    #   而 command 清單只能是字串——加引號永遠安全。
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # ★ 一定要有 127.0.0.1: 前綴（design5.md §7：「不發佈到 0.0.0.0。
+      #   若為了 host 除錯要發佈，只綁 127.0.0.1:6379」）。
+      #   Redis 預設沒有密碼——發佈到 0.0.0.0 等於把它交給同一個 Wi-Fi 上的所有人。
+      #   這一行純粹是為了在 Mac 上用 redis-cli 除錯；app 與 worker 走的是 Compose
+      #   內部網路（服務名 redis），不靠這個埠。
+      - "127.0.0.1:6379:6379"
+    volumes:
+      # named volume：AOF 檔住這裡。官方映像的資料目錄就是 /data
+      # （Docker Hub 官方說明：「data is stored in the VOLUME /data」）
+      - redisdata:/data
+    healthcheck:
+      # redis-cli ping 回 PONG ＝ 真的可以收命令了。
+      # app 與 worker 的 depends_on 就是在等這一格變綠。
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   app:
     build: .                       # 用同目錄的 Dockerfile 蓋映像
+    image: personaldocai-app       # ★ 明寫映像名，worker 才指得到同一份（見 worker 那段）
     ports:
       # 發佈到 0.0.0.0（不加 127.0.0.1 前綴）——手機要連得到才做得了無線鏡頭
       - "8000:8000"
@@ -72,6 +110,9 @@ services:
       DATABASE_URL: postgresql://postgres@db:5432/PersonalDocAI
       # ★ Ollama 跑在 Mac 上、不進 Docker：容器用這個特殊名字連回宿主機
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # ★ 增量五（design5.md §7）：入列要打到 redis 這個服務。
+      #   app 只負責「寫進去」，實際做事的是 worker。
+      CELERY_BROKER_URL: redis://redis:6379/0
     volumes:
       # 原圖與縮圖住在 host（§8.10：不打進映像）
       - ./data:/app/data
@@ -83,8 +124,56 @@ services:
     depends_on:
       db:
         condition: service_healthy   # 等 db 的 healthcheck 綠了才啟動 app
+      redis:
+        # ★ 沒有 Redis 就沒辦法入列——POST /photos 會在入列那一步炸成 500
+        #   （design5.md §8 錯誤表第 8 列）。等它 healthy 再起 app。
+        condition: service_healthy
     restart: unless-stopped
     # ★ 只能一個 replica（鏡頭配對 session 存在記憶體裡，兩個行程會配對失敗）
 
+  worker:
+    # ★ 與 app **同一份映像**（design5.md §7：「Dockerfile 不必為 worker 另寫一份」）。
+    #   build 與 image 兩行都寫、而且 image 名字與 app 相同，Compose 就會把兩個服務
+    #   指向同一個 tag——第二次 build 全部命中快取，幾乎不花時間。
+    #   （只寫 image 不寫 build 的話，映像還不存在時 Compose 會跑去 Docker Hub 拉
+    #     一個叫 personaldocai-app 的公開映像然後失敗。）
+    build: .
+    image: personaldocai-app
+    # ★ 啟動指令（契約 §3.5 逐字）。用陣列寫法，不會被 shell 拆錯字。
+    #   -A app.celery_app.celery_app ＝ 模組路徑 app/celery_app.py ＋ 裡面那個變數名
+    #   --concurrency=2 ＝ 同時開 2 個子行程做事（design5.md D6，上限就是 2）
+    #   **沒有 --reload**：Celery 不會盯檔案，改了 Python 要 restart（design5.md §7、§13）
+    command:
+      - celery
+      - -A
+      - app.celery_app.celery_app
+      - worker
+      - --loglevel=info
+      - --concurrency=2
+    environment:
+      # 與 app 完全相同的兩條（worker 也要寫資料庫、也要呼叫 Ollama）
+      DATABASE_URL: postgresql://postgres@db:5432/PersonalDocAI
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # ★ 佇列位址。redis 是 Compose 的服務名，6379 是容器內的埠（不是 Mac 上那個）
+      CELERY_BROKER_URL: redis://redis:6379/0
+    volumes:
+      # 要讀 staging、要寫原圖與縮圖，所以 data 一定要掛
+      - ./data:/app/data
+      # 模型名稱、OLLAMA_API_KEY…（連線字串由上面 environment 覆蓋）
+      - ./.env:/app/.env
+      # ★ 刻意**不掛** ./certs：worker 不聽 HTTPS，用不到憑證（design5.md §7 明文）
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # ★ worker 沒有 ports：它不聽任何埠，只主動去 Redis 拿工作
+
 volumes:
   pgdata:
+  # 增量五（design5.md §7）：Redis 的 AOF 檔。實際名字會是 personaldocai_redisdata
+  # （前面的 name: personaldocai ＋ 這裡的 redisdata）。
+  # ⚠ 它**不是**正式庫：丟了只丟「進度列與失敗列」，照片正本仍在 pgdata ＋ data/。
+  #   詳細差別見 CLAUDE.md 指令區的「⛔ 會弄丟資料的操作」。
+  redisdata:

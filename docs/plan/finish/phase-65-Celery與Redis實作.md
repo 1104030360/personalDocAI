@@ -4,6 +4,10 @@
 
 > 🎯 **一句話目標：** 把「真正的佇列」寫出來——新增 `app/celery_app.py`（Celery 實例＋一顆薄薄的 `ingest_task`）、把 JobStore 的正式實作換成 `RedisJobStore`、把 Phase 62 那個「什麼都不做」的過渡派工換成真的 `ingest_task.delay(job_id)`。**這一份完全不碰 `compose.yaml`**——容器怎麼起是 Phase 66 的事。
 
+> ⚠ **2026-08-26 校準：本檔引用的「契約備忘」是規劃階段的工作文件、未入庫**（與 phase-57／58
+> 定稿的註記同一件事）。本 phase 需要的簽章與程式碼已全部逐字內嵌在 §4 各步驟，
+> 驗收一律以本檔內嵌內容為準，不依賴那份文件。
+
 **為什麼要做這個：**
 
 Phase 57〜64 已經把非同步入庫的**骨架**做完了：`run_ingest_job()`（真正看圖、重試、寫庫的那一段）、`JobStore`（記錄「這個檔跑到哪了」，目前只有記憶體版）、`staging_service`（上傳當下先把檔落到 `data/staging/`）、`POST /photos` 回 202、`GET /ingest-jobs`。
@@ -62,7 +66,9 @@ Phase 57〜64 已經把非同步入庫的**骨架**做完了：`run_ingest_job()
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 
 docker compose ps          # db 那一列要是 Up (healthy)，否則測試會是一整片連線錯誤
-pytest -q                  # 2026-08-25 增量五開工基線是 405；做到這裡會更大，以實查為準
+pytest -q                  # 2026-08-26 校準：Phase 64 收工實測 **493 passed ＋ 0 skipped**
+                           #（原文寫「增量五開工基線是 405」——那是 Phase 52 開工的數字，
+                           #  52〜64 做完已經是 493。仍以當下實查為準）
 
 ls -l app/services/ingest_job_store.py app/services/staging_service.py app/services/ingest_job.py
 grep -n "get_job_store\|get_task_dispatcher" app/dependencies.py
@@ -692,7 +698,13 @@ def get_job_store() -> ingest_job_store.JobStore:
       它唯一的兩個用途都在本 phase 消失：`get_job_store()` 的舊本體（上面已換成 Redis 版）、
       `tests/conftest.py` 那行 `dependencies._memory_job_store().clear()` 雙保險（§4.8 會一併
       拿掉，由 monkeypatch 取代）。留著＝一顆永遠沒人呼叫的單例，之後讀碼的人會以為還有第三條路。
-      刪完跑 `grep -rn "_memory_job_store" app/ tests/` 必須**零輸出**（§6 有這一條）。
+      刪完跑 `grep -rnE "\b_memory_job_store" app/ tests/` 必須**零輸出**（§6 有這一條）。
+      （2026-08-26 校準：原文的 grep 沒有 `-E "\b…"`，實況是 **第四道安全網的 fixture 就叫
+      `wire_memory_job_store`**，字串裡含有 `_memory_job_store`——不加詞界的話
+      `tests/conftest.py` 與 `tests/unit/test_staging_service_unit.py`／`tests/integration/test_ingest_job.py`
+      會全部誤中，看起來像沒刪乾淨。`\b` 要求 `_` 前面是非文字字元，所以
+      `def _memory_job_store` 與 `dependencies._memory_job_store()` 抓得到、
+      `wire_memory_job_store` 抓不到。已在 macOS 內建 grep 實測。）
 
 - [ ] **改動三：`get_task_dispatcher()` 的函式本體換成真的派工。** 這正是 phase-62 §4.2
       預告的那一次換裝（「換的時候只改 `get_task_dispatcher()` 這一個函式，router 一個字都不動」）：
@@ -896,7 +908,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="PersonalDocAI", lifespan=lifespan)
 ```
 
-  （`include_router` 那七行、`/health`、`/`、`app.mount("/ui", …)` 全部不動。）
+  （`include_router` 那**八**行、`/health`、`/`、`app.mount("/ui", …)` 全部不動。）
+  （2026-08-26 校準：原文寫「七行」，實況是 Phase 64 又掛了 `ingest_jobs.router`，
+  現在是 photos／ask／folders／entities／tasks／camera／settings／ingest_jobs **共八行**，
+  `app/main.py` 的檔頭 docstring 也已寫「掛上八個 router」。）
 
 ### 4.8 `tests/conftest.py`：把第四道安全網補齊
 
@@ -969,9 +984,13 @@ def wire_memory_job_store(monkeypatch):
   import 只差一樣：`from app.dependencies import (...)` 那一串**加上 `get_task_dispatcher`**。
   （`from app import dependencies`、`get_job_store`、`InMemoryJobStore` 三樣 Phase 57 都已經加了。）
 
-> 📌 Phase 62 **沒有**動過這道 fixture——它那兩顆入列器測試（記事本入列器／一定壞掉的入列器）
-> 是每顆自己 `app.dependency_overrides[get_task_dispatcher] = ...`，測完由 wire_fake_ai 的
-> teardown `clear()` 收走。所以 ③ 的預設假派工**全部是本 phase 新加**，不是「確認還在」。
+> 📌 Phase 62 **沒有**動過這道 fixture——它那兩顆入列器測試（`tests/integration/test_photos_upload.py`
+> 的 `記帳假派工`／`一定壞掉的入列器`）是每顆自己 `app.dependency_overrides[get_task_dispatcher] = ...`，
+> 測完由 wire_fake_ai 的 teardown `clear()` 收走。
+>（2026-08-26 校準：原文把前者寫成「記事本入列器」，實況那個類別叫 **`記帳假派工`**——
+> 名字與上面 ③ 要新加的假件逐字相同，`test_photos_upload.py` 的 docstring 還明寫
+> 「與 phase-65 §4.8 測試安全網的假派工（記帳假派工）同一個形狀」。）
+> 所以 ③ 的預設假派工**全部是本 phase 新加**，不是「確認還在」。
 > 有沒有接對，§4.9 的死埠實證會告訴你答案。
 
 ### 4.9 跑起來（綠）＋ 零外部依賴實證
@@ -983,6 +1002,7 @@ pytest tests/unit/test_ingest_job_store_unit.py tests/unit/test_celery_app_unit.
 ```
 
 - [ ] 跑全量：`pytest -q` → 預期 `基線 + 14 passed`（5 顆 celery 煙霧 ＋ 9 顆 RedisJobStore），**0 failed、0 error**。
+      2026-08-26 校準：基線＝**493**（Phase 64 收工實測），所以做完是 **507 passed ＋ 0 skipped**，與總覽 §9 那張表同一個數字。
 
 - [ ] **零外部依賴實證（本 phase 最重要的一條）。** 把 broker 指到一個保證沒人在聽的埠再跑一次全量，顆數必須**一模一樣**：
 
@@ -1029,7 +1049,15 @@ pytest tests/integration/test_ask_three_paths.py::test_端點數不變 -q
 grep -n -A3 'log_ai("vlm"' app/services/ingest_job.py
 ```
 
-  預期看得到 `target=vlm_service.vlm_timing_target(vlm)`（與 `app/api/routers/photos.py` 的 `_ingest_image` 逐字相同）。**沒有的話現在就補上**——這本來是 Phase 59 該做到的，在這裡補比在 Phase 66 猜快得多。
+  預期看得到 `target=vlm_service.vlm_timing_target(vlm)`。**沒有的話現在就補上**——這本來是 Phase 59 該做到的，在這裡補比在 Phase 66 猜快得多。
+
+  （2026-08-26 校準，兩處：① 原文說「與 `app/api/routers/photos.py` 的 `_ingest_image` 逐字相同」
+  ——**那個函式已經不存在了**：Phase 63 把鏡頭端點也改走佇列之後，舊同步路
+  `_ingest_image`／`_ingest_pdf` 整段退役刪除，現在 `photos.py` 唯一的 `log_ai` 是
+  PATCH 歸類那條 `log_ai("embed", …)`，沒有 `kind=vlm` 了。② Phase 59 **已經帶上**
+  `target=`：`app/services/ingest_job.py::_understand_and_embed` 內就是
+  `with ai_timing.log_ai("vlm", target=vlm_service.vlm_timing_target(vlm)) as 計時:`。
+  所以這一步實務上是「複驗」，預期一次過，不必真的補碼。）
 
   兩件不用擔心的事：`kind=embed` 那一組**本來就永遠是** `backend=local`（`ai_timing._目標()` 對 embed 寫死本機，因為向量永遠本機）；加 `target=` 不會改變任何 422／500 語意，既有測試蓋著。
 
@@ -1119,16 +1147,20 @@ grep -rn "import celery\|from celery\|from app.celery_app" app/ --include="*.py"
 - [ ] **Phase 57 的過渡單例已刪乾淨**（§4.5 改動二之二）：
 
 ```bash
-grep -rn "_memory_job_store" app/ tests/
+grep -rnE "\b_memory_job_store" app/ tests/
 ```
 
   預期：**沒有任何輸出**。
+  （2026-08-26 校準：原文的 grep 沒有 `-E "\b…"`。第四道安全網的 fixture 名字是
+  `wire_memory_job_store`（契約釘死、不准改），字串裡含 `_memory_job_store`，
+  不加詞界會在 `tests/conftest.py`／`test_staging_service_unit.py`／`test_ingest_job.py`
+  誤中一堆，看起來像沒刪乾淨。）
 
 - [ ] **worker 不讀 `config.AI_BACKEND`**（D14 的硬證據）：
       `grep -n "AI_BACKEND" app/celery_app.py` → **沒有任何輸出**
 - [ ] `grep -n -A3 'log_ai("vlm"' app/services/ingest_job.py` 看得到 `target=vlm_service.vlm_timing_target(vlm)`（§4.10）
 - [ ] `grep -n -A20 "def wire_memory_job_store" tests/conftest.py` 看得到 `monkeypatch.setattr` 與 `get_task_dispatcher`
-- [ ] `pytest -q` ＝ 基線 ＋ 14，全綠
+- [ ] `pytest -q` ＝ 基線 ＋ 14，全綠（2026-08-26 校準：**493 → 507 passed ＋ 0 skipped**）
 - [ ] **死埠實證**：`CELERY_BROKER_URL=redis://127.0.0.1:9/0 pytest -q` 與上一條**顆數完全相同、全綠**
 - [ ] `OLLAMA_BASE_URL=http://localhost:9 pytest -q` 顆數相同
 - [ ] 端點仍 **22**、openapi 仍零 DELETE：

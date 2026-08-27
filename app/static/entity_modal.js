@@ -1,5 +1,6 @@
 /* 實體釘選彈窗（modal）：把某張照片釘上一或多個實體（design3.md D12、§2.1 的彈窗 2）。
-   上傳頁（upload.html）與瀏覽頁（browse.html）共用這一份；
+   待決定頁（pending.html）是唯一的呼叫端——增量五 D13 之後上傳改非同步，
+   上傳頁與鏡頭桌面頁都不再於入庫當下開鏈（Phase 68／69），三關彈窗只在待決定頁走；
    與 folder_modal.js 互不相碰——id 用 em- 前綴，樣式 class 沿用 fm-*（三個彈窗共用的視覺語言）。
 
    ⚠ 一律不用 alert／confirm／prompt（理由同 folder_modal.js 檔頭）。

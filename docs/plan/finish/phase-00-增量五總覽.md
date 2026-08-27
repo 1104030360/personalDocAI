@@ -690,6 +690,16 @@ openapi 零 DELETE、Ollama 不進 Docker、`postgresql@14` 完全不動、
 > ⚠ 開發模式容器（--reload）已熱載新碼：上傳／快門現在回 202「收下但不入庫」，
 > 要到 Phase 65／66（Celery＋worker 容器）接上才會真的動起來——預期行為，不是壞掉。
 
+> 📌 2026-08-26：Phase 65〜72 已實作完成（產品負責人以 dev-prompt `phase0826.md`
+> **明示指名執行 65〜72（含 72 的規格檔改版）**——比照「★G1 由 phase0824.md 明示通過」
+> 與「59〜64 由 phase0825-1.md 明示指名執行」的前例視為授權；★G2 五條與 ★G3 的
+> 「解禁」依同一授權執行並全數留證，**勾選格依規仍留給產品負責人親自勾**）。
+> 全程 TDD、依指示**未 commit**；顆數 493 → **543**（+50）、0 skipped；端點仍 22。
+> 紀錄：`2026-08-26-八份計畫檔校準65-72-REP.md`、`…增量五乙段收尾65-66-REP.md`、
+> `…增量五丙段67-70-REP.md`、`…增量五收尾71-72-REP.md`；
+> 驗收包：`…G2驗收包…` 與 `…增量五驗收包…`（B〜E 段留白待產品負責人）。
+> ⚠ 瀏覽器實操驗收與 iPhone 連拍真機驗收**待產品負責人**（見增量五驗收包 B〜D 段）。
+
 ```text
 ── 階段甲：待決定獨立入口 ────────────────────────────────────
 [x] Phase 52  app/static/pending.html 新建、showPending 搬過來
@@ -708,21 +718,21 @@ openapi 零 DELETE、Ollama 不進 Docker、`postgresql@14` 完全不動、
 [x] Phase 62  POST /photos 回 202（既有 201 斷言全面改寫，含 BDD binder）
 [x] Phase 63  POST /camera/{token}/photos 回 202、不 set_latest；GET latest 行為變窄
 [x] Phase 64  GET /ingest-jobs ＋ POST /ingest-jobs/{id}/dismiss；端點清點 20 → 22
-[ ] Phase 65  celery_app.py＋RedisJobStore＋requirements 加 celery／redis
+[x] Phase 65  celery_app.py＋RedisJobStore＋requirements 加 celery／redis
               ＋掃把接線兩頭（main.py lifespan／worker_ready）＋build_vlm_for_backend
-[ ] Phase 66  compose.yaml 加 redis／worker；compose.dev.yaml 加 worker bind-mount；文件更新
+[x] Phase 66  compose.yaml 加 redis／worker；compose.dev.yaml 加 worker bind-mount；文件更新
 [ ] ★★★ G2   產品負責人照 §5.2 五條看過並明示「契約穩了，前端可以開工」
 
 ── 階段丙：非同步 UX ─────────────────────────────────────────
-[ ] Phase 67  progress_panel.js（2 秒輪詢、四種狀態、× dismiss、收起、頂欄 N）
-[ ] Phase 68  upload.html multiple＋每檔一個 POST＋拿掉 201 開鏈＋文案改寫
-[ ] Phase 69  camera-phone.html 202 即可再拍＋窄條；camera-desk.html 刪 latest 開鏈
-[ ] Phase 70  待決定走完整三關（抽屜→實體→有待辦建議才開待辦窗），建議讀 D16 三欄
-[ ] Phase 71  §8 十列逐列點名＋補三缺口（新檔 20 顆）＋端點 22 逐支列名＋零 DELETE＋掃碼
+[x] Phase 67  progress_panel.js（2 秒輪詢、四種狀態、× dismiss、收起、頂欄 N）
+[x] Phase 68  upload.html multiple＋每檔一個 POST＋拿掉 201 開鏈＋文案改寫
+[x] Phase 69  camera-phone.html 202 即可再拍＋窄條；camera-desk.html 刪 latest 開鏈
+[x] Phase 70  待決定走完整三關（抽屜→實體→有待辦建議才開待辦窗），建議讀 D16 三欄
+[x] Phase 71  §8 十列逐列點名＋補三缺口（新檔 20 顆）＋端點 22 逐支列名＋零 DELETE＋掃碼
 [ ] ★★★ G3   產品負責人明示核准解禁 docs/spec/
 
 ── 收尾 ──────────────────────────────────────────────────────
-[ ] Phase 72  四份 .feature 改「收下 ≠ 已入庫」＋檔頭留核准紀錄＋產出驗收包
+[x] Phase 72  四份 .feature 改「收下 ≠ 已入庫」＋檔頭留核准紀錄＋產出驗收包
 ```
 
 > 📌 **commit 節奏提醒（詳見 §7 鐵律 12）：** 本增量的 commit 節奏由**產品負責人**決定。

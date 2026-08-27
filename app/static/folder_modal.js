@@ -144,7 +144,7 @@ function fm畫占位() {
 //
 // 為什麼直接掛 <img> 再用 onerror 降級，而不是先打一支 API 問「有沒有原圖」：
 //   ① 呼叫端零改動——openFolderModal() 的參數不必多一個欄位，
-//      三個呼叫端（pending.html／browse.html／classify_chain.js）都不用改；
+//      唯一的呼叫端（待決定頁 pending.html）不必改；
 //   ② 這是強制決定窗，開窗要快。多打一支 API 就多一次等待；
 //   ③ 與瀏覽牆同一套做法（照片卡 也是掛了 <img> 再 addEventListener("error", …)）。
 //

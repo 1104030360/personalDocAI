@@ -196,3 +196,36 @@ def test_沒有建議的舊照片三個欄位都是null(client):
     assert photo["suggested_entity"] is None
     assert photo["suggested_task_title"] is None
     assert photo["suggested_task_due"] is None
+
+
+def test_待決定的實體建議名字在實體清單裡逐字對得到(client):
+    """Phase 70：待決定頁靠「名字」把建議對回整筆實體物件，才拿得到 id 去釘。
+
+    Phase 61 已經釘住 GET /folders/{id} 的八鍵與三個欄位的值；
+    這一顆釘的是**跨端點的名字契約**：photo.suggested_entity 那個字串，
+    必須與 GET /entities 回的 name **逐字相同**（同樣的大小寫、同樣的空白）。
+    只要有一邊做了正規化，前端的
+        全部實體.find(e => e.name === photo.suggested_entity)
+    就會對不到——實體窗的①會靜靜消失，不會有任何錯誤訊息。
+
+    另外，這一顆走的是**收件箱**那條路（Phase 61 那兩顆用的是「收據」資料夾）：
+    待決定頁讀的就是收件箱，兩條路各驗一次。
+    """
+    photo_repository.create_entity("我的 MacBook", "筆電")
+    photo_id = _插入照片(
+        "MacBook 的維修發票",
+        "未分類",                    # insert_photo 會依 category 掛到同名資料夾（Phase 15）
+        有縮圖=True,
+        suggested_entity="我的 MacBook",
+    )
+
+    摘要 = client.get(f"/folders/{未分類_ID}").json()["photos"]
+    清單 = client.get("/entities").json()
+
+    assert [p["id"] for p in 摘要] == [photo_id]
+    建議名稱 = 摘要[0]["suggested_entity"]
+    對到的 = [entity for entity in 清單 if entity["name"] == 建議名稱]
+    assert len(對到的) == 1, (
+        f"待決定頁靠名字對回實體：「{建議名稱}」在 /entities 裡找不到逐字相同的那一筆"
+    )
+    assert isinstance(對到的[0]["id"], int), "對到之後要拿得到 id（彈窗要它才釘得上）"

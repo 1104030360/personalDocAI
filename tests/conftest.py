@@ -51,6 +51,7 @@ from app.dependencies import (  # noqa: E402
     get_job_store,
     get_now,
     get_router,
+    get_task_dispatcher,
     get_vlm,
 )
 from app.main import app  # noqa: E402
@@ -108,44 +109,42 @@ def isolated_data_dir(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def wire_memory_job_store(monkeypatch):
-    """安全網四：pytest 永遠用記憶體 JobStore，絕不連真 Redis，而且每測清空。
+    """第四道安全網（Phase 57 建、Phase 65 加長）：JobStore 一律記憶體版，派工一律假的。
 
-    這條安全網的精神與前三條完全一樣（wire_fake_ai 絕不打真 Ollama、
-    reset_tables 絕不動正式庫、isolated_data_dir 絕不寫專案的 data/）：
-    **危險的預設值由 conftest 統一擋掉，不靠個別測試自律。**
+    pytest **絕不連真 Redis、絕不啟動 Celery**（design5.md §9、契約 §7 第 2 條）。
+    本機開發時 Redis 容器常常開著，忘了覆寫就會默默把測試資料寫進去。
 
-    ★ 為什麼一定要 autouse（不能「需要的測試自己寫」）：
-      job 的狀態是**跨請求活著**的（app/dependencies.py 的 _memory_job_store
-      是整個行程共用的單例）。少了這條，A 測試建的 job 會被 B 測試的
-      GET /ingest-jobs 看到，症狀是「pending_count 多了一筆」「進度清單長度不對」
-      這種**看似隨機的紅**——而且單獨跑那顆測試永遠是綠的，只有整包跑才會紅，
-      跟 2026-08-24 那次「兩份 pytest 互相 TRUNCATE」一樣難查。
-
-    ★ 為什麼要「dependency_overrides ＋ monkeypatch」兩管齊下，缺一不可：
-      ① app.dependency_overrides[get_job_store] 只攔得住 router 參數列上的
-        Depends(get_job_store)——只有 FastAPI 解析 Depends 時才會查這張表，
-        查表的 key 是「原本那個函式物件」。
-      ② 但 Phase 65 起有兩處是把 get_job_store 當**普通函式直接呼叫**的：
-        app/main.py 的 lifespan 掃把、app/celery_app.py 的 ingest_task
-        （它們不是 HTTP 請求，Depends 根本不存在）。直接呼叫 dependency_overrides
-        看不到；只做 ① 的話，那兩處會拿到行程共用的單例（Phase 65 之後更會拿到
-        真的往 redis://redis:6379 撥號的 RedisJobStore），與每測的 store 各記各的
-        ——這就是跨測試污染的第二條漏水路。monkeypatch.setattr 換掉的是模組屬性，
-        直接呼叫端寫 dependencies.get_job_store()（呼叫當下才解析名字）就攔得到；
-        測試結束時 pytest 會自動還原，不必自己收。
-
-    回傳這個測試專屬的 store，需要直接檢查／預先塞 job 的測試可以把它寫進參數列。
+    三件事缺一不可：
+    ① dependency_overrides → router 上 Depends(get_job_store) 的拿到記憶體版
+       （Phase 57 原有的那一半，原封不動）
+    ② monkeypatch dependencies.get_job_store → **直接呼叫**的地方也拿到同一顆
+       （app/main.py 的 lifespan 掃把、app/celery_app.py 的 ingest_task 都不走 Depends）
+    ③ 派工換成假的 → 不然 POST /photos 會真的 .delay() 出去撞 Redis。
+       假件必須有 .dispatch() 方法（phase-62 的 TaskDispatcher Protocol；
+       router 呼叫的是 dispatcher.dispatch(job_id)，塞裸函式會炸 AttributeError）。
+       要跑任務的測試一律**自己**呼叫 run_ingest_job(...)（design5.md §9 的圖）。
     """
     store = InMemoryJobStore()
-    app.dependency_overrides[get_job_store] = lambda: store              # ① Depends() 這條路
-    monkeypatch.setattr(dependencies, "get_job_store", lambda: store)    # ② 直接呼叫這條路
-    # 第三道保險：萬一日後有人在自己檔案的最上面 from app.dependencies import
-    # get_job_store（早綁定，② 換不到他手上那份舊參照）再呼叫，摸到的會是行程共用的
-    # 單例——先把單例清空，至少保證上一個測試留下的 job 不會漏到下一個測試。
-    # （正確寫法是模組屬性存取 dependencies.get_job_store()，見常見陷阱 7。）
-    dependencies._memory_job_store().clear()
+    dispatched: list[str] = []
+
+    class 記帳假派工:
+        """符合 TaskDispatcher Protocol 的最小假件：只把 job_id 記下來。"""
+
+        def dispatch(self, job_id: str) -> None:
+            dispatched.append(job_id)
+
+    假派工 = 記帳假派工()
+
+    app.dependency_overrides[get_job_store] = lambda: store
+    monkeypatch.setattr(dependencies, "get_job_store", lambda: store)
+    app.dependency_overrides[get_task_dispatcher] = lambda: 假派工
+    monkeypatch.setattr(dependencies, "get_task_dispatcher", lambda: 假派工)
+
+    # 要斷言「有沒有派工出去」的測試，把這個 fixture 寫進參數列、讀 store.dispatched
+    store.dispatched = dispatched
     yield store
     app.dependency_overrides.pop(get_job_store, None)
+    app.dependency_overrides.pop(get_task_dispatcher, None)
 
 
 def pytest_bdd_apply_tag(tag, function):

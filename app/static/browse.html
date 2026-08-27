@@ -17,37 +17,13 @@
     <a href="/ui/ask.html">問問題</a>
   </nav>
 </header>
-<script>
-// 頂欄「待決定（N）」的 N（增量五 Phase 53；design5.md §6.1）。
-// 階段甲還沒有 GET /ingest-jobs，所以直接問既有的 GET /folders，
-// 取 is_inbox 那一筆的 photo_count——待決定就是收件箱，數字天生一致。
-//
-// ⚠ 這一段在五個 HTML 檔裡各有一份、逐字相同。
-//    階段丙 Phase 67 會由 progress_panel.js 一次接手（連同 2 秒輪詢），
-//    屆時把五份一起刪掉。要改就五份一起改，不要只改一份。
-//
-// 用 IIFE 包起來：裡面的變數不會外流，不會跟各頁自己的 response／folders 撞名。
-(function () {
-  const 格子 = document.getElementById("nav-pending-count");
-  if (!格子) return;                       // 沒有頂欄的頁面（例如手機取景頁）載入也不做事
-  fetch("/folders").then(function (response) {
-    if (!response.ok) return null;         // 4xx／5xx：維持「…」，不要顯示一個猜的 0
-    return response.json();
-  }).then(function (folders) {
-    if (!folders) return;
-    const inbox = folders.find(function (f) { return f.is_inbox; });
-    if (inbox) 格子.textContent = String(inbox.photo_count);
-  }).catch(function (error) {
-    // 服務沒起來：讓它維持「…」。頁面主體自己會顯示錯誤，這裡不要再吵一次。
-  });
-})();
-</script>
 
 <main class="page">
 <div id="view"><p class="message">載入中…</p></div>
 </main>
 
 <script src="/ui/photo_detail_modal.js"></script>
+<script src="/ui/progress_panel.js"></script>
 <script>
 const view = document.getElementById("view");
 

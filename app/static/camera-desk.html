@@ -17,9 +17,10 @@
       <a href="/ui/browse.html">瀏覽資料夾</a>
       <a href="/ui/ask.html">問問題</a>
     </nav>
-    <!-- AI 後端開關（2026-08-22）：與上傳頁、問問題頁是同一顆（同一個伺服器狀態）。
-         手機拍的照片走 POST /camera/{token}/photos → _ingest_image() → get_vlm，
-         跟一般上傳共用同一個注入點，所以這裡撥了、手機拍的看圖就跟著切。
+    <!-- AI 後端開關（2026-08-22；Phase 69 更新說明）：與上傳頁、問問題頁是同一顆
+         （同一個伺服器狀態）。手機拍的照片走 POST /camera/{token}/photos → 落 staging
+         ＋入列，worker 依**入列當下拍下的快照**建 VLM 客戶端（design5 D14），
+         所以這裡撥了、接下來收下的照片看圖就跟著切。
          行為在共用檔 /ui/ai_switch.js。 -->
     <div class="ai-switch">
       <span id="ai-switch-label" class="ai-switch-label">AI 模型</span>
@@ -33,31 +34,6 @@
     </div>
   </div>
 </header>
-<script>
-// 頂欄「待決定（N）」的 N（增量五 Phase 53；design5.md §6.1）。
-// 階段甲還沒有 GET /ingest-jobs，所以直接問既有的 GET /folders，
-// 取 is_inbox 那一筆的 photo_count——待決定就是收件箱，數字天生一致。
-//
-// ⚠ 這一段在五個 HTML 檔裡各有一份、逐字相同。
-//    階段丙 Phase 67 會由 progress_panel.js 一次接手（連同 2 秒輪詢），
-//    屆時把五份一起刪掉。要改就五份一起改，不要只改一份。
-//
-// 用 IIFE 包起來：裡面的變數不會外流，不會跟各頁自己的 response／folders 撞名。
-(function () {
-  const 格子 = document.getElementById("nav-pending-count");
-  if (!格子) return;                       // 沒有頂欄的頁面（例如手機取景頁）載入也不做事
-  fetch("/folders").then(function (response) {
-    if (!response.ok) return null;         // 4xx／5xx：維持「…」，不要顯示一個猜的 0
-    return response.json();
-  }).then(function (folders) {
-    if (!folders) return;
-    const inbox = folders.find(function (f) { return f.is_inbox; });
-    if (inbox) 格子.textContent = String(inbox.photo_count);
-  }).catch(function (error) {
-    // 服務沒起來：讓它維持「…」。頁面主體自己會顯示錯誤，這裡不要再吵一次。
-  });
-})();
-</script>
 
 <main class="page">
 
@@ -65,7 +41,8 @@
 
 <h2>用手機拍</h2>
 <p class="lead">手機掃下面這個 QR，就變成這台電腦的無線鏡頭：你在手機上對準什麼，這裡就看到什麼。
-快門兩邊都能按，拍下的照片直接入庫，接著在<strong>這台電腦</strong>上完成歸類。
+快門兩邊都能按，<strong>拍完立刻可以再拍</strong>——照片先收下，AI 看圖在背景進行，
+右下角看得到進度。分析完成的照片會出現在「待決定」，到那裡歸類。
 手機與電腦要在同一個 Wi-Fi。</p>
 
 <div class="cd-layout">
@@ -105,20 +82,29 @@
 
 </main>
 
-<script src="/ui/folder_modal.js"></script>
-<script src="/ui/entity_modal.js"></script>
-<script src="/ui/task_modal.js"></script>
-<script src="/ui/classify_chain.js"></script>
+<!-- design5 D13：快門後不再開歸類鏈，所以這一頁不再載入三顆彈窗與鏈的共用檔。
+     ⚠ 被拿掉的那四個共用檔**本身不要刪**：三顆彈窗是 Phase 70 待決定頁的主角；
+       鏈的那一支到本 phase 做完雖已零呼叫者，刪除仍留給 Phase 70 §4.5 的 grep 閘門
+       （先確認待決定頁自己組鏈走得通才刪）。檔名刻意不寫在這段註解裡——
+       本 phase 的契約測試與 §6.1 的 grep 會掃這一頁的原始碼，註解不能誤中
+       （同彈窗共用檔檔頭那行註解的手法）。 -->
 <script src="/ui/ai_switch.js"></script>
+<script src="/ui/progress_panel.js"></script>
 
 <script>
-// ===== 桌面端：配對 → 看即時畫面 → 遙控 → 收照片接彈窗鏈（Phase 36 路線 B）=====
+// ===== 桌面端：配對 → 看即時畫面 → 遙控 → 收照片（Phase 36 路線 B；Phase 69 改版）=====
 //
 // 這一頁自己不碰鏡頭。它做四件事：
 //   ① POST /camera/session 拿 token 與 QR
 //   ② 開 WebSocket（信令＋遙控指令的水管，伺服器只轉發不解讀）
 //   ③ 當 WebRTC 的「接收端」：手機送 offer，這裡回 answer，然後畫面就出來了
-//   ④ 手機說 uploaded → GET /camera/{token}/latest → 走既有的三關彈窗鏈
+//   ④ 手機說 uploaded → 把計數加一、叫右下角的全站進度面板更新一次
+//
+// ⚠ design5.md D13：④ **不再**去拿「最後那一張」、**不再**開三關彈窗鏈。
+//   快門當下照片還不存在（202 只是「已收下」），沒有東西可以餵給鏈。
+//   歸類整個搬到「待決定」那一頁（/ui/pending.html）。
+//   （這幾行刻意不寫出被刪掉的那支端點路徑、鏈的函式名、以及那幾個共用檔的檔名——
+//     驗收會用字串掃這一頁，註解不能誤中。同彈窗共用檔檔頭那行註解的手法。）
 //
 // WebRTC 的影像是兩台裝置**直接**傳的，不經過伺服器；
 // 同一個 Wi-Fi 用 host candidate 就連得起來，所以 iceServers 是空的（不接 STUN／TURN）。
@@ -147,6 +133,8 @@ let cd閃光能力 = null;
 // 快門按下去之後、照片回來（或失敗）之前不接受第二次快門，
 // 狀態列也不讓後續的點擊蓋掉「正在等照片」這件事。
 let cd等照片中 = false;
+// 這次配對總共收下幾張（本地計數）。真正的分析進度在右下角的全站進度面板上。
+let cd已收下 = 0;
 
 // 把使用者／AI 產生的文字安全地放進 HTML（與 upload.html 同一份寫法）。
 // 不做這件事的話，照片描述裡的一個 "<" 就會把版面弄壞，更糟的是被當成程式碼執行。
@@ -250,13 +238,10 @@ function 處理訊息(訊息) {
   } else if (訊息.type === "uploaded") {
     收到照片();
   } else if (訊息.type === "uploading") {
-    // 等待提示跟著頁首的 AI 開關走。aiBackendNow() 來自共用檔 /ui/ai_switch.js
-    連線狀態(aiBackendNow() === "cloud"
-      ? "手機正在上傳這一張…（AI 看圖走 Ollama Cloud，通常幾秒〜半分鐘）"
-      : "手機正在上傳這一張…（本機模型看圖可能要等 1〜5 分鐘）");
+    連線狀態("手機正在把這一張送上來…");
   } else if (訊息.type === "upload-failed") {
     等照片(false);
-    連線狀態("手機那一張沒有存成功：" + (訊息.detail || "未知原因"), "error");
+    連線狀態("手機那一張沒有送成功：" + (訊息.detail || "未知原因"), "error");
   }
 }
 
@@ -334,10 +319,10 @@ cd按鈕.torch.addEventListener("click", function () {
   送({ type: "torch", on: cd閃光開著 });
 });
 
-// 重拍＝回到取景再拍一張新的。已經入庫的那張**不會**被刪掉——
-// 本專案沒有刪除照片這件事（計畫「已知限制」），它就留在待決定區。
+// 重拍＝回到取景再拍一張新的。已經收下的那張**不會**被刪掉——
+// 本專案沒有刪除照片這件事（design5 §3），它會照常分析完進「待決定」。
 cd按鈕.retake.addEventListener("click", function () {
-  cdResult.innerHTML = '<p class="panel-empty">已回到取景，請重新對準後再按快門。</p>';
+  渲染收下("已回到取景，請重新對準後再按快門。");
   等照片(false);
   送({ type: "retake" });
   連線狀態("即時預覽中——快門兩邊都能按", "ok");
@@ -359,47 +344,30 @@ function 閃光不支援() {
   cdTorchNote.textContent = "這支手機的瀏覽器不支援閃光，請改用手電筒或找亮一點的地方。";
 }
 
-// ---------- ④ 收到照片 → 三關彈窗鏈 ----------
+// ---------- ④ 手機說「這一張送出去了」----------
+// design5 D13：這裡只更新畫面上的計數與進度面板，**不開任何彈窗**。
+// 為什麼不能開：快門當下照片還不存在（202 只是「已收下」），
+// 抽屜彈窗要的 text／suggested_folder／folders 全部都還沒有。
 
-async function 收到照片() {
-  等照片(false);                       // 照片回來了，快門解鎖
-  let response;
-  try {
-    response = await fetch("/camera/" + cdToken + "/latest");
-  } catch (error) {
-    連線狀態("連不上伺服器：" + error + "。照片可能已經入庫，請到瀏覽頁確認。", "error");
-    return;
-  }
-  if (response.status !== 200) {
-    連線狀態("拿不到剛剛那張照片（HTTP " + response.status + "）", "error");
-    return;
-  }
-  連線狀態("照片已入庫，請在彈出的視窗裡完成歸類", "ok");
-  // 鏈的邏輯與上傳頁共用（/ui/classify_chain.js）；這一頁只提供結果卡與收尾語
-  startClassifyChain({
-    photo: await response.json(),
-    render: renderResult,
-    完成語: "可以繼續拍下一張了。"
-  });
+function 收到照片() {
+  等照片(false);                       // 手機說送出去了，快門解鎖，可以拍下一張
+  cd已收下 += 1;
+  渲染收下("");
+  連線狀態("已收下這一張，可以繼續拍。分析完成後會出現在「待決定」。", "ok");
+  ppStart();                           // 立刻讓右下角的面板更新一次（/ui/progress_panel.js）
 }
 
-// ===== 結果卡：鏈的每一步都會呼叫這裡，把目前進度寫上去 =====
-// 鏈本身（抽屜 → 實體 → 待辦）在共用檔 /ui/classify_chain.js，與上傳頁同一份。
+// ===== 結果面板：只講「這次配對收下幾張」=====
+// 分析進度、重試、失敗全部交給右下角的全站進度面板（Phase 67），這一頁不重複做一份。
 
-function renderResult(body, folderName, note) {
-  const m = body.metadata;
-  const items = (m.items && m.items.length > 0) ? m.items.join(" · ") : "";
+function 渲染收下(補充) {
+  const 主文 = cd已收下 === 0
+    ? "還沒有拍到任何照片。"
+    : "這次配對已收下 " + cd已收下 + " 張。分析在背景進行——右下角看得到進度；" +
+      "完成的照片會出現在「待決定」，到那裡歸類。";
   cdResult.innerHTML =
-    '<p class="status status-ok">手機拍的這張已入庫</p>' +
-    '<dl class="kv">' +
-      '<dt>照片</dt><dd class="mono">#' + esc(body.id) + '</dd>' +
-      '<dt>文字描述</dt><dd>' + esc(body.text) + '</dd>' +
-      '<dt>資料夾</dt><dd>' + esc(folderName) + '</dd>' +
-      '<dt>地點</dt><dd>' + esc(m.location) + '</dd>' +
-      '<dt>物品</dt><dd>' + esc(items) + '</dd>' +
-      '<dt>內容時間</dt><dd>' + esc(m.content_time) + '</dd>' +
-    '</dl>' +
-    '<p class="note">' + esc(note) + '</p>';
+    '<p class="panel-empty">' + esc(主文) + '</p>' +
+    (補充 ? '<p class="note">' + esc(補充) + '</p>' : '');
 }
 
 建立配對();

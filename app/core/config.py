@@ -15,6 +15,13 @@ DATABASE_URL = os.getenv(
 )
 # Ollama 本機服務網址（不是雲端，不需要 API key）
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# 佇列的中間人（broker）位址（增量五 design5.md D5／§7）。
+# 預設值是**容器裡**的長相：redis 是 compose 的服務名、6379 是 Redis 預設埠、
+# /0 是 Redis 的第 0 號 database（Redis 內建 16 個互不相干的編號空間）。
+# 在 Mac 上跑 pytest 時根本用不到它——測試的 JobStore 是記憶體版、派工是假的
+# （tests/conftest.py 的 wire_memory_job_store）。
+# 真要在 host 手動連容器裡的 Redis 除錯，就在 .env 覆蓋成 redis://127.0.0.1:6379/0。
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
 
 # --- Ollama Cloud（2026-08-22 產品負責人指示新增：看圖與詢問可切雲端）---
 # API key 放 .env（OLLAMA_API_KEY=…）。沒填時開關切不到雲端（PUT 回 422）；

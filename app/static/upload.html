@@ -33,46 +33,28 @@
     </div>
   </div>
 </header>
-<script>
-// 頂欄「待決定（N）」的 N（增量五 Phase 53；design5.md §6.1）。
-// 階段甲還沒有 GET /ingest-jobs，所以直接問既有的 GET /folders，
-// 取 is_inbox 那一筆的 photo_count——待決定就是收件箱，數字天生一致。
-//
-// ⚠ 這一段在五個 HTML 檔裡各有一份、逐字相同。
-//    階段丙 Phase 67 會由 progress_panel.js 一次接手（連同 2 秒輪詢），
-//    屆時把五份一起刪掉。要改就五份一起改，不要只改一份。
-//
-// 用 IIFE 包起來：裡面的變數不會外流，不會跟各頁自己的 response／folders 撞名。
-(function () {
-  const 格子 = document.getElementById("nav-pending-count");
-  if (!格子) return;                       // 沒有頂欄的頁面（例如手機取景頁）載入也不做事
-  fetch("/folders").then(function (response) {
-    if (!response.ok) return null;         // 4xx／5xx：維持「…」，不要顯示一個猜的 0
-    return response.json();
-  }).then(function (folders) {
-    if (!folders) return;
-    const inbox = folders.find(function (f) { return f.is_inbox; });
-    if (inbox) 格子.textContent = String(inbox.photo_count);
-  }).catch(function (error) {
-    // 服務沒起來：讓它維持「…」。頁面主體自己會顯示錯誤，這裡不要再吵一次。
-  });
-})();
-</script>
 
 <main class="page">
 
 <h2>上傳照片</h2>
-<p class="lead">選一張 JPEG／PNG，或一份 PDF（一頁會存成一張照片）。AI 會看圖並存成文字描述＋四個欄位，
-接著在彈出的視窗裡決定要收進哪個資料夾——選定就定案，或按「稍後再說」先放進待決定區。</p>
+<p class="lead">選一張或多張 JPEG／PNG，也可以混一份 PDF（PDF 一頁會存成一張照片）——一次可以選很多個。
+按「上傳」之後系統會<strong>先把檔案收下</strong>，AI 看圖在背景進行，右下角看得到進度。
+分析完成的照片會出現在「待決定」，到那裡再決定要收進哪個資料夾。</p>
 
 <form id="upload-form" class="field-row">
-  <input type="file" id="file-input" class="field" accept="image/jpeg,image/png,application/pdf" required>
+  <input type="file" id="file-input" class="field" multiple
+         accept="image/jpeg,image/png,application/pdf" required>
   <button type="submit" id="submit-button" class="btn btn-primary">上傳</button>
 </form>
 
 <!-- 無線鏡頭（Phase 36）：東西在手上、還沒進電腦時走這條，省掉 AirDrop 那一步 -->
 <p class="note">東西還在手上？<a href="/ui/camera-desk.html">用手機拍</a>——
-電腦顯示 QR，手機掃了就變成這台電腦的鏡頭，拍完直接入庫。</p>
+電腦顯示 QR，手機掃了就變成這台電腦的鏡頭，拍完先收下、分析完進「待決定」。</p>
+
+<!-- design5 D14：AI 開關是在「入列當下」拍一張快照存進任務裡，
+     worker 照那張快照建 VLM 客戶端。所以撥開關只影響**之後**收下的檔。 -->
+<p class="note">頁首的「AI 模型」開關決定<strong>接下來收下的檔</strong>用哪個後端看圖；
+已經在排隊或分析中的不會改道。</p>
 
 <section class="panel" id="result" aria-live="polite">
   <p class="panel-empty">尚未上傳任何照片。</p>
@@ -80,21 +62,36 @@
 
 </main>
 
-<script src="/ui/folder_modal.js"></script>
-<script src="/ui/entity_modal.js"></script>
-<script src="/ui/task_modal.js"></script>
-<script src="/ui/classify_chain.js"></script>
+<!-- design5 D13：上傳當下不再開歸類鏈，所以這一頁不再載入三顆彈窗與鏈的共用檔。
+     ⚠ 被拿掉的那四個共用檔**本身不要刪**：三顆彈窗是 Phase 70 待決定頁的主角；
+       鏈的那一支這時還有鏡頭桌面頁在用（Phase 69 才拆），最終去留由 Phase 70 §4.5
+       的 grep 閘門處理。檔名刻意不寫在這段註解裡——本 phase 的契約測試與 §6.1 的
+       grep 會掃這一頁的原始碼，註解不能誤中（同彈窗共用檔檔頭那行註解的手法）。 -->
 <script src="/ui/ai_switch.js"></script>
+<script src="/ui/progress_panel.js"></script>
 
 <script>
-// ===== 上傳頁自己的程式（這段不會搬走）=====
+// ===== 上傳頁自己的程式（design5 階段丙）=====
+//
+// 這一頁現在只做三件事：
+//   ① 把選到的**每一個**檔各送一次 POST /photos（順序送；理由見計畫 §4.4）
+//   ② 把每個檔的「收下了沒」畫成一行結果
+//   ③ 叫右下角的進度面板立刻更新（ppStart() 來自共用檔 /ui/progress_panel.js）
+//
+// ⚠ design5 D13：入庫當下**不開**歸類鏈。
+//   抽屜→實體→待辦整條鏈搬到「待決定」那一頁（/ui/pending.html）。
+//   202 的回應裡也沒有 text／suggested_folder／folders 可以餵給鏈——
+//   那時候照片還不存在（§4.2：VLM 成功之後才 INSERT）。
+//
+// ⚠ 全站鐵律：不用 alert／confirm／prompt；動態文字一律走 esc()；屬性不插值。
+
 const form = document.getElementById("upload-form");
 const fileInput = document.getElementById("file-input");
 const button = document.getElementById("submit-button");
 const result = document.getElementById("result");
 
-// 把使用者／AI 產生的文字安全地放進 HTML。
-// 不做這件事的話，照片描述裡的一個 "<" 就會把版面弄壞，
+// 把使用者提供的文字安全地放進 HTML。
+// 不做這件事的話，檔名裡的一個 "<" 就會把版面弄壞，
 // 更糟的情況是其中夾帶的內容被瀏覽器當成程式碼執行（XSS）。
 function esc(value) {
   const 文字 = (value === null || value === undefined || value === "") ? "（無）" : value;
@@ -104,95 +101,120 @@ function esc(value) {
     .replace(/>/g, "&gt;");
 }
 
-// 把上傳結果畫成一張卡片。歸類成功後資料夾名稱會變，所以獨立成一個參數。
-// 提醒：資料夾名稱就是 category（design1.md §4），不是兩個東西。
-function renderResult(body, folderName, note) {
-  const m = body.metadata;
-  const items = (m.items && m.items.length > 0) ? m.items.join(" · ") : "";
-  result.innerHTML =
-    '<p class="status status-ok">已上傳</p>' +
-    '<dl class="kv">' +
-      '<dt>照片</dt><dd class="mono">#' + esc(body.id) + '</dd>' +
-      '<dt>文字描述</dt><dd>' + esc(body.text) + '</dd>' +
-      '<dt>資料夾</dt><dd>' + esc(folderName) + '</dd>' +
-      '<dt>地點</dt><dd>' + esc(m.location) + '</dd>' +
-      '<dt>物品</dt><dd>' + esc(items) + '</dd>' +
-      '<dt>內容時間</dt><dd>' + esc(m.content_time) + '</dd>' +
-    '</dl>' +
-    '<p class="note">' + esc(note) + '</p>';
+// FastAPI 的錯誤訊息有兩種形狀：我們自己丟的是字串，
+// Pydantic 驗證失敗（422）則是一個陣列，裡面每筆有 msg。
+// payload 是 null＝回應根本不是 JSON（例如中間有東西回了一頁 HTML 錯誤畫面）。
+function 錯誤說明(payload) {
+  if (!payload) return "伺服器沒有給說明";
+  const detail = payload.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(function (one) {
+      return one.msg || JSON.stringify(one);
+    }).join("；");
+  }
+  return JSON.stringify(payload);
 }
 
-// 還沒選檔案 / 上傳中：一行提示就夠
+// 還沒選檔案之類的一行提示
 function renderNotice(message) {
   result.innerHTML = '<p class="panel-empty">' + esc(message) + '</p>';
 }
 
-// 415 / 422 / 500 / 連不上伺服器。label 是狀態列那行字，detail 是底下的細節。
-function renderError(label, detail) {
-  const 說明 = (typeof detail === "string") ? detail : JSON.stringify(detail);
-  result.innerHTML =
-    '<p class="status status-error">' + esc(label) + '</p>' +
-    '<p>' + esc(說明) + '</p>';
-}
+// 一批檔的結果卡片：一行一個檔。
+// 送出中會被叫很多次（每送完一個就重畫一次），所以它是「照現況重畫」而不是「追加」。
+function renderBatch(files, 結果, 送完了) {
+  const 收下 = 結果.filter(function (one) { return one.ok; }).length;
+  const 沒收下 = 結果.length - 收下;
 
-// 上傳成功後：開三關彈窗鏈（抽屜 → 實體 → 待辦）。
-// 鏈的邏輯在共用檔 /ui/classify_chain.js（相機頁走的是同一份）；
-// 這一頁只提供「結果卡怎麼畫」與 PDF 的前言。
-// 前言＝寫在說明最前面的補充，PDF 用它交代整份的入庫結果；單圖傳空字串。
-function 開始歸類(photo, 前言) {
-  startClassifyChain({ photo: photo, 前言: 前言, render: renderResult });
-}
+  const 標題 = 送完了
+    ? "已收下 " + 收下 + " 個檔" + (沒收下 > 0 ? "，" + 沒收下 + " 個沒收下" : "")
+    : "送出中…（" + 結果.length + "／" + files.length + "）";
 
-// PDF 的 201 回應（design3.md D7）：pages 總頁數、created 每頁一筆、skipped_pages 看不懂的頁。
-function pdf摘要(body) {
-  const 跳過 = body.skipped_pages.length > 0
-    ? "（第 " + body.skipped_pages.join("、") + " 頁看不懂，已跳過）"
+  // 這兩個值都是寫死的字串，沒有任何外來資料進到屬性裡（全站鐵律：屬性不插值）
+  const 標題類別 = (送完了 && 沒收下 > 0) ? "status status-error" : "status status-ok";
+
+  const 列 = files.map(function (file, index) {
+    const 這個 = 結果[index];
+    const 說明 = 這個 ? 這個.說明 : "等著送出…";
+    return '<dt>' + esc(file.name) + '</dt><dd>' + esc(說明) + '</dd>';
+  }).join("");
+
+  const 尾註 = (送完了 && 收下 > 0)
+    ? "分析在背景進行，右下角看得到進度。分析完成的照片會出現在「待決定」，到那裡歸類。"
     : "";
-  return "PDF 共 " + body.pages + " 頁，已入庫 " + body.created.length + " 頁" + 跳過 +
-    "；其餘頁留在待決定區，可到瀏覽頁的「待決定」分頁完成歸類。以下先處理第 1 頁——";
+
+  result.innerHTML =
+    '<p class="' + 標題類別 + '">' + esc(標題) + '</p>' +
+    '<dl class="kv">' + 列 + '</dl>' +
+    (尾註 ? '<p class="note">' + esc(尾註) + '</p>' : '');
 }
 
-form.addEventListener("submit", async function (event) {
-  event.preventDefault();               // 不要讓瀏覽器用傳統方式送出表單並跳頁
-
-  const file = fileInput.files[0];
-  if (!file) {
-    renderNotice("請先選一個檔案。");
-    return;
-  }
-
-  button.disabled = true;
-  // 等待提示跟著開關走：本機看圖實測要數分鐘（Phase 33 記錄），雲端快得多。
-  // aiBackendNow() 來自共用檔 /ui/ai_switch.js
-  renderNotice(aiBackendNow() === "cloud"
-    ? "上傳中…（AI 看圖走 Ollama Cloud，通常幾秒〜半分鐘）"
-    : "上傳中…（本機模型看圖可能要等數分鐘，請耐心等候）");
-
-  // FormData 會自動組成 multipart/form-data，欄位名必須是 file
+// 送一個檔。永遠 resolve（不 throw），呼叫端才能一路跑完整批。
+async function 送一個檔(file) {
+  // FormData 會自動組成 multipart/form-data，欄位名必須是 file。
+  // ⚠ 不要自己加 Content-Type：手動加會少掉分隔字串，伺服器解不開。
   const formData = new FormData();
   formData.append("file", file);
 
   try {
     const response = await fetch("/photos", { method: "POST", body: formData });
-    const body = await response.json();
 
-    if (response.status === 201) {
-      // 回應帶 created ＝ 這是 PDF（一頁一張照片）。彈窗只為第一頁開——
-      // 其餘頁留在待決定區，免得一份 20 頁的掃描檔逼使用者連按 20 次。
-      if (body.created) {
-        開始歸類(body.created[0], pdf摘要(body));
-      } else {
-        開始歸類(body, "");
-      }
-    } else {
-      // 415＝不是 JPEG/PNG/PDF；422＝VLM 看不懂或 PDF 讀不開（什麼都沒存）；其他＝伺服器問題
-      renderError("失敗（HTTP " + response.status + "）", body.detail);
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = null;               // 回的不是 JSON，交給 錯誤說明() 處理
     }
+
+    // 202＝「已收下」，**不是**「已入庫」（design5 D7）。
+    // 照片要等背景的 worker 分析成功之後才存在，那時它會出現在「待決定」。
+    if (response.status === 202) {
+      return { ok: true, 說明: "已收下，排隊分析中" };
+    }
+    // 415＝不是 JPEG／PNG／PDF。這個檔**根本沒有進佇列**（design5 §8 第 1 列），
+    // 所以右下角的進度面板不會有它——它只會出現在這張清單裡（計畫 §4.5）。
+    return {
+      ok: false,
+      說明: "（HTTP " + response.status + "）" + 錯誤說明(payload)
+    };
   } catch (error) {
-    renderError("請求失敗", error + "。最常見原因：uvicorn 沒在跑，或網址、埠號不對。");
-  } finally {
-    button.disabled = false;
+    return { ok: false, 說明: "送不出去。請確認服務已啟動後再試一次。" };
   }
+}
+
+form.addEventListener("submit", async function (event) {
+  event.preventDefault();          // 不要讓瀏覽器用傳統方式送出表單並跳頁
+
+  // FileList 不是真陣列（沒有 map／filter），先轉成陣列再用
+  const files = Array.prototype.slice.call(fileInput.files);
+  if (files.length === 0) {
+    renderNotice("請先選一個或多個檔案。");
+    return;
+  }
+
+  button.disabled = true;
+  const 結果 = [];
+  renderBatch(files, 結果, false);
+
+  // ── 順序送：一次送一個，等前一個回來再送下一個（理由見計畫 §4.4）──
+  let 已叫面板 = false;
+  for (const file of files) {
+    const 這個 = await 送一個檔(file);
+    結果.push(這個);
+    // 第一個真的入列的檔一出現就把面板叫起來，不必等整批送完。
+    // ppStart() 可以重複呼叫（已經在跑就只是立刻多打一次），這裡仍然只叫一次。
+    if (這個.ok && !已叫面板) {
+      已叫面板 = true;
+      ppStart();
+    }
+    renderBatch(files, 結果, false);
+  }
+
+  renderBatch(files, 結果, true);
+  // 清空選檔框：不清的話，下一批會連同這一批一起再送一次
+  fileInput.value = "";
+  button.disabled = false;
 });
 </script>
 

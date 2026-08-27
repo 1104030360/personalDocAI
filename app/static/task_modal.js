@@ -1,6 +1,9 @@
 /* 待辦確認彈窗（modal）：把 VLM 建議的待辦寫進待辦清單（design3.md D13、§2.1 的彈窗 3）。
-   只有上傳頁（upload.html）用得到——待決定分頁的補完鏈沒有持久化的建議，
-   判不出「有沒有 actionable」，所以那條鏈不開這一窗（增量三總覽 §5 已知限制）。
+   只有待決定頁（pending.html）用得到——增量五 D13 之後上傳改非同步，
+   上傳頁不再於入庫當下開鏈（Phase 68）。建議改由 photo 表落庫的欄位提供
+   （D16 的 suggested_task_title／suggested_task_due，Phase 56 起隨入庫寫進去），
+   所以待決定的補完鏈判得出「有沒有 actionable」，這一窗照開（Phase 70）——
+   增量三總覽 §5 那條「那條鏈不開這一窗」的已知限制到此解除。
 
    ⚠ 一律不用 alert／confirm／prompt（理由同 folder_modal.js 檔頭）。
      錯誤寫進彈窗裡的 <p id="tm-error">。

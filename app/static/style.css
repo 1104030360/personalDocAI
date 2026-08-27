@@ -513,6 +513,7 @@ input[type="file"].field { padding: var(--sp-2); }
 .fm-backdrop {
   position: fixed;
   inset: 0;
+  z-index: 20;                     /* 彈窗永遠蓋在進度面板（10）上面 */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -694,6 +695,100 @@ body.fm-open { overflow: hidden; }
 }
 
 
+/* ══ 入庫進度面板（progress_panel.js；五頁共用）═══════════════════════
+   為什麼固定在右下角：這是**背景資訊**，不是任何一頁的主角。
+   全站三種版面的主要操作都不在那個角落——`.page` 是置中 60rem 的直欄、
+   `.cd-layout` 是左配對右舞台的兩欄、彈窗一律置中——所以右下角是全站
+   最安全的空地。
+
+   為什麼不會遮住內容：
+     ① 沒有工作在跑時整塊是 hidden ＝ 畫面上根本不存在（大部分時間都是這樣）
+     ② 寬度上限 22rem，不吃滿版
+     ③ 高度上限 22rem／50vh，超過就自己捲，長不到把整頁蓋掉
+     ④ 手機寬度（≤32rem）改成貼齊左右下緣的一條，不會壓到中間的內容
+
+   為什麼沒有陰影：`--shadow-modal` 的註解寫明「全站唯一用陰影的地方」是彈窗。
+   面板是常駐元件，用**深一階的邊框**（--c-text）做分離就夠——
+   看起來像一張夾在螢幕角落的索引卡，正好是本站的設計語言。 */
+.pp-panel {
+  position: fixed;
+  right: var(--sp-4);
+  bottom: var(--sp-4);
+  z-index: 10;                     /* 比頁面內容高，比彈窗（20）低 */
+  width: min(22rem, calc(100vw - var(--sp-5)));
+  max-height: min(50vh, 22rem);
+  overflow-y: auto;
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-text);
+  border-radius: var(--radius-m);
+}
+.pp-panel[hidden] { display: none; }
+
+/* 面板標題＝牛皮紙色的一條，與資料夾卡片的索引 tab 同一套語言。
+   sticky：列多到要捲動時，標題留在上緣不跟著捲走。 */
+.pp-head {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--f-display);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--c-text-muted);
+  background: var(--c-surface-2);
+  border-bottom: var(--bw) solid var(--c-border);
+}
+
+.pp-list { margin: 0; padding: 0; list-style: none; }
+
+/* 一列＝左邊兩行文字（檔名／狀態）、右邊一顆 ×（只有失敗才露出來） */
+.pp-job {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-top: var(--bw) solid var(--c-border);
+}
+.pp-job:first-child { border-top: none; }
+
+.pp-name {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;         /* 檔名可能很長又沒有空白可斷 */
+}
+
+/* 狀態用等寬字：頁碼與次數對齊了才掃得快（與照片 id、日期同一套「收據字」規則） */
+.pp-state {
+  grid-column: 1;
+  grid-row: 2;
+  font-family: var(--f-mono);
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+  overflow-wrap: anywhere;
+}
+.pp-job.is-failed .pp-state { color: var(--c-danger); }
+
+.pp-x {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  padding: 0 var(--sp-2);
+  font: inherit;
+  font-size: var(--fs-section);
+  line-height: 1;
+  color: var(--c-text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.pp-x:hover { color: var(--c-text); }
+/* grid 的子元素有 display 之外的排版角色，hidden 的預設 display:none 還是有效，
+   但 .fm-option 踩過同類的坑——先寫死，之後有人給 .pp-x 設 display 也不會破 */
+.pp-x[hidden] { display: none; }
+
+
 /* ══ 待辦列表（browse.html 第三分頁，design3.md D15）═════════════════ */
 /* 待辦不是照片牆——它是清單：一列一件事，掃「要做什麼、何時到期」比看圖重要 */
 ul.tasks {
@@ -866,6 +961,23 @@ ul.tasks {
 }
 .cp-stage video { width: 100%; height: 100%; object-fit: cover; }
 
+/* 送出進度的窄條（design5 §6.5；Phase 69）。
+   它是版面裡的一「列」（flex 的兄弟節點），不是浮在畫面上的東西——
+   所以下緣那三顆按鈕（.cp-controls）永遠不會被它壓到，這就是「不擋快門」。
+   flex: none ＝ 不跟著伸縮；沒東西可講的時候整條 hidden，取景區就自動長回來。 */
+.cp-bar {
+  flex: none;
+  margin: 0;
+  padding: var(--sp-1) var(--sp-2);
+  font-family: var(--f-mono);
+  font-size: var(--fs-small);
+  text-align: center;
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border-radius: var(--radius-s);
+}
+.cp-bar[hidden] { display: none; }
+
 .cp-status {
   margin: 0;
   font-size: var(--fs-small);
@@ -890,4 +1002,5 @@ ul.tasks {
   .kv { grid-template-columns: 1fr; gap: var(--sp-1) 0; }
   .kv dt { padding-top: var(--sp-2); }
   .cd-layout { grid-template-columns: 1fr; }   /* 窄螢幕：配對與舞台上下排 */
+  .pp-panel { right: var(--sp-2); left: var(--sp-2); bottom: var(--sp-2); width: auto; }
 }

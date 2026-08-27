@@ -64,7 +64,7 @@ Phase 67 也做好了右下角的全站進度面板。
 
 | Phase | 為什麼需要 |
 |---|---|
-| **63** | `POST /camera/{token}/photos` 已經回 **202**、不再 `set_latest`；`GET …/latest` 已變窄。還在回 201 的話手機端整段判斷都是錯的。 |
+| **63** | `POST /camera/{token}/photos` 已經回 **202**、不再 `set_latest`；`GET …/latest` 已變窄。還在回 201 的話手機端整段判斷都是錯的。（2026-08-26 校準：63 已隨 commit `f1a7e71` 落地——`camera.py` 的 `upload_camera_photo` 已是 `status_code=202` ＋ `IngestAcceptedResponse`（三鍵 `job_id`／`filename`／`content_type`），並帶 `source="camera"` 進 job（`ingest_job_store.py` 的 `source` 欄，值 `"upload"`／`"camera"`；`IngestJobOut` 刻意不外送它）；`get_camera_latest` 已是 `status_code=204` 的「永遠 204」。**因此在做完本 phase 之前，桌面按快門會走 `收到照片()` 的「不是 200」分支、狀態列跳「拿不到剛剛那張照片（HTTP 204）」——那是 63→69 之間的已知過渡症狀，不是 bug**，本 phase §4.4 ⑤ 把整段刪掉就沒了。） |
 | **67** | 右下角全站進度面板已經在跑、`ppStart()` 已是全域函式、`camera-desk.html` 已經掛了 `progress_panel.js`。 |
 | **68** | 不是硬相依，但強烈建議先做完——兩個 phase 都在拆 `classify_chain` 的呼叫點，一起驗收比較好對照。 |
 | **★ G2** | design5 §0 的閘門：階段乙已由產品負責人驗收通過。 |
@@ -387,8 +387,20 @@ function 上傳結束(訊息) {
 
 > ⚠ 本節行號＝**增量五開工前**的 `camera-desk.html`。Phase 53（頂欄多一格）與
 > Phase 67（掛 `progress_panel.js`）各讓後段行號 +1，開工時大約整體 **+2 行**。
+>
+> （2026-08-26 校準：那個「+1／+1」是**兩相抵銷之後**的淨值，中間的過程要講清楚才不會對錯行——
+> Phase 53 實際加了 **26 行**（頂欄那一格 1 行 ＋ 一段 25 行的 `nav-pending-count` IIFE
+> `<script>`，就是現況 `camera-desk.html` 的第 36〜60 行）；Phase 67 §4.5 會把那 25 行
+> **整段刪掉**、§4.4 另加 1 行 `<script src>`。所以「整體 +2」**只在 Phase 67 做完之後成立**；
+> 67 還沒做就先按 **+26** 換算。已逐項實測對過：現況 HEAD 的 `收到照片()` 在第 362 行
+> ＝開工前 336 ＋ 26、`let cd等照片中` 在第 149 行 ＝ 123 ＋ 26、`<script src>` 那一區在
+> 第 108〜112 行 ＝ 82〜86 ＋ 26。另注意 `<p class="lead">`（§4.4 ⑦）上面只有那 1 行頂欄格子，
+> 所以它做完 67 之後只漂 **+1**，不是 +2。）
+>
 > 行號只當導覽，**定位一律靠引用的原文搜尋**（引用的內容 53／67 都沒動過）。
-> `camera-phone.html` 不在此限——53／67 都不碰它，§4.1〜4.2 的行號可直接用。
+> `camera-phone.html` 不在此限——53／67 都不碰它，§4.1〜4.2 的行號可直接用
+> （2026-08-26 校準：`git diff 4345846 HEAD -- app/static/camera-phone.html` 零差異，
+> §4.1〜4.2 引用的每一行都已逐字核對過，行號原封不動）。
 
 - [ ] **① 檔頭註解**（第 89〜98 行）：**整段十行換成下面這一份**——
       不只第 95 行那一句（④ 的內容變了），第 89 行的標題也從
@@ -788,6 +800,10 @@ diff /tmp/p69-before.txt /tmp/p69-after.txt
       `tests/integration/test_progress_panel_contract.py`——前面的 phase 已動過，
       在兩份快照裡都已經在了。有別的新列＝動到了不該動的檔。
       實際改了什麼用 `git diff <檔名>` 逐檔看（未追蹤的新檔才需要直接開檔）。
+      （2026-08-26 校準：**Phase 52〜64 已經進 commit 了**（`e1d1d5e`＋`f1a7e71`），
+      所以上面說的「前面的 phase 已動過」指的只有 **65〜68**。若 65〜68 屆時也已 commit，
+      開工前的快照會是乾淨的、`diff` 會一次多出四個檔——**那不是動錯檔**，
+      照樣用 `git diff <檔名>` 逐檔看內容確認即可。）
 
 ### 6.2 桌面雙分頁模擬（不必手機，先自己驗一輪）
 

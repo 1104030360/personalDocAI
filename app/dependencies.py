@@ -51,6 +51,21 @@ def _ollama_cloud_vlm() -> vlm_service.OllamaCloudVLM:
     return vlm_service.OllamaCloudVLM()
 
 
+def build_vlm_for_backend(ai_backend: str) -> vlm_service.VLMClient:
+    """依「指定的」後端建看圖物件——**不看** config.AI_BACKEND。
+
+    誰會用它：
+    - get_vlm()（下面那個）：web 行程，參數是當下的開關值
+    - app/celery_app.py 的 ingest_task：worker 行程，參數是**入列當下寫進 job 的快照**
+      （design5.md D14）。worker 讀不到 web 行程的開關，只能靠快照。
+
+    兩條路拿到同兩個物件、同一份 prompt——這一支就是「同一套實作」的保證。
+    """
+    if ai_backend == "cloud":
+        return _ollama_cloud_vlm()
+    return _ollama_vlm()
+
+
 def get_vlm() -> vlm_service.VLMClient:
     """給 router 的看圖物件。跟著頁首的 AI 開關走：本機（預設）或 Ollama Cloud。
 
@@ -59,9 +74,7 @@ def get_vlm() -> vlm_service.VLMClient:
     pytest 若要換成 FakeVLM：app.dependency_overrides[get_vlm] = ...
     那個覆寫只活在測試裡，不影響 uvicorn。
     """
-    if config.AI_BACKEND == "cloud":
-        return _ollama_cloud_vlm()
-    return _ollama_vlm()
+    return build_vlm_for_backend(config.AI_BACKEND)
 
 
 def get_embeddings() -> Embeddings:
@@ -143,37 +156,30 @@ def get_today(now: datetime | None = Depends(get_now)) -> date:
 
 
 @lru_cache(maxsize=1)
-def _memory_job_store() -> ingest_job_store.InMemoryJobStore:
-    """整個行程共用同一個記憶體 store。
+def _redis_client():
+    """整個行程共用一個 Redis 客戶端。
 
-    @lru_cache(maxsize=1) 就是本專案的「只建立一次」寫法（與 _ollama_vlm 同一招）。
-    不共用的話，每個 HTTP 請求都會拿到一個全新的空 store，
-    上一個請求建的 job 下一個請求就查不到了。
+    建立它**不會連線**（redis-py 是第一次真的下命令時才撥號），所以 pytest
+    就算不小心走到這裡也不會卡在連線逾時。
+
+    decode_responses=True 一定要有：不加的話 Redis 回來的是 bytes，
+    smembers() 拿到 b"abc"，組出來的 key 變成 "ingest:b'abc'"——而且是安靜地錯，
+    list_open() 只會永遠回空清單。
+    from_url 的 URL 格式：<https://redis.readthedocs.io/en/stable/connections.html>
     """
-    return ingest_job_store.InMemoryJobStore()
+    import redis
+
+    return redis.Redis.from_url(config.CELERY_BROKER_URL, decode_responses=True)
 
 
 def get_job_store() -> ingest_job_store.JobStore:
-    """任務狀態存放處的唯一取用入口。
+    """入庫任務的進度簿。
 
-    現在一律回記憶體實作。**Phase 65** 會改成「有設定 CELERY_BROKER_URL 就回
-    RedisJobStore」——正式環境的 app 與 worker 是兩個行程，記憶體版彼此看不到。
-
-    ⚠ 它有兩種呼叫端，pytest 攔截的方法**不一樣**（Phase 65 起兩種都會出現）：
-      1. router 參數列上的 Depends(get_job_store)——測試用
-         app.dependency_overrides[get_job_store] 換（只有 FastAPI 解析 Depends 時才查表）。
-      2. 把它當**普通函式直接呼叫**——Phase 65 的 app 啟動掃把（main.py 的 lifespan）
-         與 Celery 的 ingest_task（它們不是 HTTP 請求，沒有 Depends 可攔）。
-         這種呼叫 dependency_overrides 根本看不到，測試靠 conftest 的
-         monkeypatch.setattr 換掉本函式（wire_memory_job_store 安全網的第二管）。
-         ★ 因此直接呼叫端一律要寫「from app import dependencies」＋
-           「dependencies.get_job_store()」——呼叫當下才解析模組屬性，monkeypatch
-           換得掉；寫成「from app.dependencies import get_job_store」再呼叫是早綁定，
-           換不掉（見 tests/conftest.py 的說明與本 phase 常見陷阱 7）。
-      拿到 store 之後怎麼用：run_ingest_job() 仍是**明寫參數**收它
-      （Phase 59 的簽章約定——store 是參數，不是任務本體裡的隱形全域）。
+    正式：Redis（web 與 worker 兩個行程共用同一份資料）。
+    測試：tests/conftest.py 的 wire_memory_job_store 會換成 InMemoryJobStore
+    ——pytest 絕不連真 Redis（design5 §9、契約 §7 第 2 條）。
     """
-    return _memory_job_store()
+    return ingest_job_store.RedisJobStore(_redis_client())
 
 
 # ---------------- 入庫任務的入列器（增量五 Phase 62）----------------
@@ -221,12 +227,19 @@ class NoopDispatcher:
 
 
 def get_task_dispatcher() -> TaskDispatcher:
-    """給 router 的入列器。
+    """給 router 的入列器。**全系統只有這一個地方碰 Celery。**
 
-    Phase 65 要接上 Celery 時，把這個函式的**本體**換成：
-    「函式內 `from app.celery_app import CeleryDispatcher`，
-    回傳 `CeleryDispatcher()`」——它的 dispatch() 把 job_id 交給
-    `ingest_task.delay()`。完整程式碼在 phase-65 §4.5「改動三」，
-    **就改這一個函式**。
+    Phase 62〜64 這裡回 NoopDispatcher（沒人接住任務是當時的預期行為）；
+    Phase 65 起回 CeleryDispatcher（住在 app/celery_app.py），它的 dispatch(job_id)
+    會真的把訊息寫進 Redis。router 只呼叫 dispatcher.dispatch(job_id)，
+    完全不知道底下是 Celery——這正是 Phase 62 先立好抽象、本 phase 才換得掉的原因。
+
+    ★ import 寫在函式裡面（不是檔案最上面），兩個理由：
+      ① app/celery_app.py 會 import 這個模組（它要拿 get_job_store、
+         build_vlm_for_backend、get_embeddings）。這裡若在最上面 import 它，就是循環匯入。
+      ② pytest 收集階段不必為了跑一顆前端字串測試就把整個 Celery 拉起來
+        （測試一律被 §4.8 的假派工蓋掉，這個函式本體在 pytest 裡根本不會執行）。
     """
-    return NoopDispatcher()
+    from app.celery_app import CeleryDispatcher
+
+    return CeleryDispatcher()

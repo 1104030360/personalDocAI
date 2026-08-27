@@ -64,6 +64,7 @@ Phase 64 已經做好資料來源 `GET /ingest-jobs`（回「還沒結束的工�
 | **64** | `GET /ingest-jobs` 與 `POST /ingest-jobs/{job_id}/dismiss` 是本面板唯一的資料來源與唯一的動作。沒有它，本 phase 一行都寫不下去。 |
 | **62** | `POST /photos` 已經回 202 並真的建出 job，否則清單永遠是空的、驗收看不到東西。 |
 | **57／59** | JobStore 與 `run_ingest_job()`——驗收時要靠它們把一筆 job 從 queued 推到 failed。 |
+| **65／66** | （2026-08-26 校準：原表漏列這一條）Celery worker ＋ Redis JobStore ＋ Compose 的 `worker` 服務。**光有 57／59 還不夠**：階段乙做完的當下 `get_task_dispatcher()` 回的是 `NoopDispatcher`（`app/dependencies.py` 第 205／223 行，註解明寫「Phase 62〜64：沒有人接住——這是**預期**的」），上傳收下之後那筆 job 會永遠停在 `queued`。所以 §6.2 的第 2、3、5、7 項（狀態往前走、成功列自己消失、失敗列、PDF 頁碼）在 65／66 做完之前**一項都驗不出來**；§6.2 第 5 項要 `restart app worker` 的那個 `worker` 服務也是 Phase 66 才建出來的。 |
 | **52／53** | `/ui/pending.html` 存在、五頁頂欄已經是四格（本 phase 要接管其中「待決定（N）」的數字）。 |
 | **55** | `browse.html` 已經拿掉待決定 tab（否則會有兩個地方顯示 N，很容易對不起來）。 |
 | **★ G2** | design5 §0 的閘門：階段乙已由產品負責人驗收通過。前端要靠乙的 API 契約穩定才動得了。 |
@@ -174,10 +175,11 @@ curl -sk https://127.0.0.1:8000/ingest-jobs | python -m json.tool
 }
 ```
 
-- [ ] **記住三件事，後面全部靠它們：**
+- [ ] **記住四件事，後面全部靠它們：**
   1. **成功的 job 不在這裡。** 伺服器一成功就 `delete(job_id)`（§4.3）。所以前端只要「畫出回來的每一筆」就對了，**不必也不可以**寫 `if (job.status === "success")` 之類的判斷——那是一段永遠不會執行的死碼。
   2. **`pages_done` 是「做完幾頁」**（含跳過的），所以**現在正在看**的是第 `pages_done + 1` 頁。
   3. **`page_count` 未拆頁前是 `null`**。單張圖也是 `null`。所以「有沒有 `page_count`」就等於「是不是已知頁數的 PDF」。
+  4. **`attempt` 剛建立時是 `0`**（2026-08-26 校準：階段乙落地後才看得到的時序）。`InMemoryJobStore.create()` 把 `attempt` 寫死成 0；而 `run_ingest_job()` 一進門就先把 `status` 改成 `analyzing`（`app/services/ingest_job.py` 第 103 行，為了讓崩潰重送不要停在 queued 讓人以為沒動靜），`attempt` 卻要等 `_understand_and_embed()` 的迴圈才寫成 1。**中間那一小段 `status="analyzing"` 但 `attempt=0`**，照 §4.2 的規則會顯示成「分析中（第 0 次）」。單圖時短到看不見；**PDF 會停在這裡整段拆頁時間**（拆得開才寫 `page_count`，第 237 行）。這是既有行為的觀察，**不要順手改 §4.2 的程式或後端去「修」它**——真要處理請先問產品負責人。（2026-08-26 執行者裁決：前端 `Math.max(attempt, 1)` 顯示保護，零後端改動——`pp狀態文字()` 顯示次數時當第 1 次，旁邊留一行註解說明；§4.8 契約測試沒有釘這一段的原字串，兩邊不需同步。）
 
 ### 4.2 新建 `app/static/progress_panel.js`
 
@@ -605,7 +607,7 @@ ppStart();
 | 檔案 | 加在哪一行之後 |
 |---|---|
 | `upload.html` | 既有的 `<script src="/ui/ai_switch.js"></script>` 之後 |
-| `pending.html` | Phase 52 建的那一區 `<script src=…>` 的最後一行之後 |
+| `pending.html` | 既有的 `<script src="/ui/entity_modal.js"></script>` 之後（＝Phase 52 建的那一區的最後一行；那一區只有 `folder_modal.js`／`entity_modal.js` 兩行，2026-08-26 校準時逐字核對過） |
 | `browse.html` | `<script src="/ui/photo_detail_modal.js"></script>` 之後 |
 | `ask.html` | `<script src="/ui/ai_switch.js"></script>` 之後 |
 | `camera-desk.html` | `<script src="/ui/ai_switch.js"></script>` 之後 |
@@ -715,8 +717,10 @@ def test_五頁的計數片段已交棒給進度面板():
     assert 'ppEl("nav-pending-count")' in 面板
 ```
 
-  順手把檔頭那個常數 `計數片段的關鍵行`（Phase 53 §4.8 定義的四行清單）一起刪掉——
-  沒有人再用它了，留著就是垃圾。
+  順手把檔頭那個常數 `計數片段的關鍵行` 一起刪掉——沒有人再用它了，留著就是垃圾。
+  （2026-08-26 校準：Phase 53 §4.8 原本定義**四行**，2026-08-25 審查後又補釘了兩行
+  ——「4xx/5xx 時維持『…』不顯示猜的 0」與「服務連不上時安靜維持『…』」——
+  所以現在檔案裡是**六行**的清單，刪的時候整個常數連同它下面那段沿革註解一起拿掉。）
 
 ### 4.6 決策：`document.hidden` 時**要**停止輪詢
 
@@ -752,7 +756,9 @@ design5 **D8** 寫「每一頁右下角同一份面板（含問問題、瀏覽�
 
 **這是計畫層的裁決，不是 design5 自己寫的字**；寫進 Phase 69 的「明確不做」表以免日後又被翻出來。
 
-`docs/plan/unfinish/phase-00-增量五總覽.md` §10「撰寫本總覽時發現的缺口」表第 3 列也記了同一條，結論一致：
+`docs/plan/unfinish/phase-00-增量五總覽.md` §10 那張表的**第 3 列**也記了同一條，結論一致
+（2026-08-26 校準：那一節現在的標題是「design5 沒寫清楚、由計畫層裁決的項目」，
+「撰寫本總覽時發現的缺口」是它的舊名；總覽自己也註明「phase-67 §4.7 引用本表『第 3 列』——列序不可重排」）：
 **67 做桌面五頁的完整面板、69 做 camera-phone 的窄條**（總覽另補一句：手機端「可以」
 也呼叫同一支 `GET /ingest-jobs`，只是**不要**把整個面板疊在取景畫面上）。
 Phase 69 §4.2 進一步選了「連呼叫都不呼叫、只用純本地計數」——理由寫在那裡。
@@ -938,7 +944,11 @@ pytest -q
  │                                  │        顯示規則相同——「第 2 次」就代表重試了）
  ├──────────────────────────────────┤
  │ blurry.png                  [ × ]│   ④ failed（.is-failed → 狀態列變紅）
- │ 失敗：看不懂這張照片（已試 3 次）    │      × 只有失敗列才露出來（D9）
+ │ 失敗：AI 看不懂這張照片（已試 3 次） │      × 只有失敗列才露出來（D9）
+ │                                  │      （2026-08-26 校準：`error` 的實際措辭是
+ │                                  │        `app/services/ingest_job.py` 的
+ │                                  │        `ERROR_VLM_FAILED`＝「AI 看不懂這張照片
+ │                                  │        （已試 {attempts} 次）」，開頭有「AI」兩個字）
  └──────────────────────────────────┘
 
       ★ 成功的**不會出現**。伺服器一成功就 delete(job_id)，
@@ -1035,8 +1045,10 @@ grep -nE "再試|retry|Retry" app/static/progress_panel.js || echo "OK：面板�
 ```bash
 pytest tests/integration/test_nav_header.py -v
 ```
-      預期：全綠，而且**沒有** `test_五頁都有同一份待決定計數片段`
-      （它已被 `test_五頁的計數片段已交棒給進度面板` 取代，見 §4.5 最後一步）
+      預期：**10 passed**（2026-08-26 校準：`--collect-only` 實查，Phase 53 的 7 顆
+      ＋ Phase 55 追加的 3 顆＝10；換名不加顆，所以做完仍是 10），而且**沒有**
+      `test_五頁都有同一份待決定計數片段`（它已被
+      `test_五頁的計數片段已交棒給進度面板` 取代，見 §4.5 最後一步）
 
 - [ ] **全量測試 ＝ 開工前的 N ＋ 7**
 

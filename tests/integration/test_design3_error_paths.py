@@ -439,6 +439,14 @@ def test_openapi裡沒有任何DELETE動詞(client):
 # 只要出現這些字，就代表這個檔案自己在開連線或送 SQL
 資料庫關鍵字 = ("psycopg", "get_connection", "cursor(", ".execute(")
 
+# 已知的**非 SQL** `.execute(`：redis-py pipeline 的收尾呼叫（增量五 Phase 65 的
+# RedisJobStore 用它把「寫 JSON」與「登記集合」綁成一次送出）。方法名是 redis 客戶端
+# 定的，改不掉；它跟資料庫一點關係都沒有，掃描前先剔除，`.execute(` 這個關鍵字
+# 對 psycopg 游標（cur.execute）的防護强度一分不減。
+# ★ 刻意**不**把 ingest_job_store.py 加進上面的豁免名單——那個檔案真的不准寫 SQL，
+#   Phase 71 的掃碼測試也釘死它不可以出現在名單裡。
+非SQL的execute慣用法 = ("pipe.execute()",)
+
 
 def test_SQL只出現在repository與db層():
     """收尾掃碼：router／service／schema 一律零 SQL、零資料庫連線。
@@ -453,6 +461,8 @@ def test_SQL只出現在repository與db層():
         if 相對路徑 in 可以碰資料庫的檔案:
             continue
         原始碼 = 檔案.read_text(encoding="utf-8")
+        for 慣用法 in 非SQL的execute慣用法:
+            原始碼 = 原始碼.replace(慣用法, "")
         命中 = [關鍵字 for 關鍵字 in 資料庫關鍵字 if 關鍵字 in 原始碼]
         if 命中:
             違規.append(f"{相對路徑}：{命中}")

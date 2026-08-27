@@ -1,12 +1,14 @@
 """FastAPI app 組裝：掛上八個 router ＋ 極簡網頁介面（靜態檔案）。"""
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import dependencies
 from app.api.routers import (
     ask,
     camera,
@@ -17,6 +19,7 @@ from app.api.routers import (
     settings,
     tasks,
 )
+from app.services import staging_service
 
 # 讓 app.* 的 INFO log 顯示在 uvicorn 終端機。
 # uvicorn 只配置它自家的 logger（uvicorn / uvicorn.access），應用程式的 logger
@@ -29,7 +32,30 @@ if not _app_logger.handlers:
     _app_logger.addHandler(_handler)
     _app_logger.setLevel(logging.INFO)
 
-app = FastAPI(title="PersonalDocAI")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """服務啟動／關閉時要做的事（增量五 design5.md §4.1）。
+
+    啟動時掃一次 data/staging，把「超過 24 小時、而且 JobStore 裡沒有對應進行中任務」
+    的孤兒檔清掉。這是崩潰後的後悔藥——上傳當下先落 staging 再入列，中間斷電的話
+    那個檔就沒人認領了。
+
+    worker 那邊也有一份一樣的（app/celery_app.py 的 worker_ready）。兩邊都掃是刻意的：
+    常駐時兩個容器一起起來，誰先掃到都行；只起其中一個時也不會漏。
+    sweep_stale_staging 本身冪等，掃兩次沒有副作用。
+
+    整段包在 try 裡：掃把失敗只是少清幾個垃圾檔，**絕不可以讓服務起不來**。
+    """
+    try:
+        清掉幾個 = staging_service.sweep_stale_staging(dependencies.get_job_store())
+        _app_logger.info("staging 掃把（app 啟動）：清掉 %d 個過期暫存檔", 清掉幾個)
+    except Exception:
+        _app_logger.warning("staging 掃把執行失敗，不影響服務啟動", exc_info=True)
+    yield
+    # 關閉時沒有要做的事：資料庫連線是每個請求現開現關（app/db/session.py）
+
+
+app = FastAPI(title="PersonalDocAI", lifespan=lifespan)
 
 app.include_router(photos.router)
 app.include_router(ask.router)

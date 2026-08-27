@@ -17,31 +17,6 @@
     <a href="/ui/ask.html">問問題</a>
   </nav>
 </header>
-<script>
-// 頂欄「待決定（N）」的 N（增量五 Phase 53；design5.md §6.1）。
-// 階段甲還沒有 GET /ingest-jobs，所以直接問既有的 GET /folders，
-// 取 is_inbox 那一筆的 photo_count——待決定就是收件箱，數字天生一致。
-//
-// ⚠ 這一段在五個 HTML 檔裡各有一份、逐字相同。
-//    階段丙 Phase 67 會由 progress_panel.js 一次接手（連同 2 秒輪詢），
-//    屆時把五份一起刪掉。要改就五份一起改，不要只改一份。
-//
-// 用 IIFE 包起來：裡面的變數不會外流，不會跟各頁自己的 response／folders 撞名。
-(function () {
-  const 格子 = document.getElementById("nav-pending-count");
-  if (!格子) return;                       // 沒有頂欄的頁面（例如手機取景頁）載入也不做事
-  fetch("/folders").then(function (response) {
-    if (!response.ok) return null;         // 4xx／5xx：維持「…」，不要顯示一個猜的 0
-    return response.json();
-  }).then(function (folders) {
-    if (!folders) return;
-    const inbox = folders.find(function (f) { return f.is_inbox; });
-    if (inbox) 格子.textContent = String(inbox.photo_count);
-  }).catch(function (error) {
-    // 服務沒起來：讓它維持「…」。頁面主體自己會顯示錯誤，這裡不要再吵一次。
-  });
-})();
-</script>
 
 <main class="page">
 
@@ -55,6 +30,8 @@
 
 <script src="/ui/folder_modal.js"></script>
 <script src="/ui/entity_modal.js"></script>
+<script src="/ui/task_modal.js"></script>
+<script src="/ui/progress_panel.js"></script>
 <script>
 // 待決定頁（增量五 Phase 52；design5.md D1／D2／§6.2）。
 // 這一頁就是「收件箱（未分類）的縮圖牆」——待決定不是新的儲存位，
@@ -65,8 +42,9 @@
 //   GET /folders        → 找出 is_inbox 為 true 的那一筆（收件箱）
 //   GET /folders/{id}   → 那個資料夾裡的照片摘要（新的在前）
 //
-// 彈窗鏈（階段甲）：抽屜 → 實體，兩關。**沒有第三關待辦窗**——
-// 那要等 Phase 61 把待辦建議寫進 photo 表、Phase 70 才接上去（design5.md §6.2）。
+// 彈窗鏈（Phase 70 起）：抽屜 → 實體 → **有待辦建議才開**待辦窗，三關。
+// 三關的建議都讀 GET /folders/{id} 的八鍵摘要（Phase 61 落庫），不必再看一次圖
+// （design5.md D2／§6.2）。鏈本身寫在下面的「待決定的三關彈窗鏈」那一段。
 //
 // 小工具（el／保護數字單位／getJson／照片卡）與 browse.html 各有一份。
 // 這是本專案既有的做法：頁面各自帶自己的小工具（esc() 現在就在
@@ -139,26 +117,87 @@ function 照片卡(photo) {
   return item;
 }
 
-// 彈窗 2【實體】：抽屜窗結束（定案**或**稍後再說）都接著開這一關（design3.md §2.1）。
-// 這裡沒有持久化的 AI 建議（suggested: null＝①不顯示）——
-// 想要建議就按窗裡的「再建議一個」現算；實體清單開窗前現抓最新的。
-// （Phase 61 會把建議寫進 photo 表，Phase 70 才改成讀得到建議＋接第三關待辦窗。）
-async function 接著釘實體(photoId) {
-  let entities = [];
+// ---------- 待決定的三關彈窗鏈（design5.md D2、§6.2）----------
+//
+// 順序固定：抽屜 → 實體 → 有待辦建議才開待辦窗。三關都結束才 location.reload()。
+//
+// 三關要用的建議全部來自 GET /folders/{收件箱} 的**八鍵摘要**（Phase 61 落庫、
+// 本頁只是讀出來），所以開窗是零延遲的——**不會**再去看一次圖
+// （本機看一張圖 64〜88 秒，那是 design5 §6.2 特別交代不要做的事）。
+//
+// ⚠ 兩個資料形狀要轉換，兩個都是「錯了不會報錯、只會安靜地少一個選項」的地雷：
+//   ① suggested_entity 是**名字字串**，openEntityModal 要的是**整筆實體物件**（要 id 才釘得上）
+//   ② suggested_task_due 是 ISO 的 "YYYY-MM-DD"；task_modal.js 讀的鍵叫 due（不是 due_date）
+
+let 全部實體 = [];      // GET /entities 的最新清單（每次開實體窗前重抓）
+
+function 開始三關(photo, 可選資料夾) {
+  // 第一關【抽屜】：①的來源是 suggested_category（Phase 35 就有了，這裡沿用）。
+  // 照名字對回資料夾清單；對不到（或根本沒建議）就沒有①，交給「稍後再說」。
+  const 建議資料夾 = photo.suggested_category
+    ? 可選資料夾.find(function (f) { return f.name === photo.suggested_category; }) || null
+    : null;
+
+  openFolderModal({
+    photoId: photo.id,
+    folders: 可選資料夾,          // 呼叫端已濾掉收件箱（design2.md D7）
+    primary: 建議資料夾,
+    primaryVerb: "採用",
+    // 抽屜窗結束——定案**或**稍後再說——都接著開實體窗（design3.md §2.1，本增量未推翻）
+    onAssigned: function () { 接著釘實體(photo); },
+    onClosed: function () { 接著釘實體(photo); }
+  });
+}
+
+async function 接著釘實體(photo) {
+  // 實體清單每次開窗前重抓：上一輪③自創的實體要出現在這一輪的②下拉
   try {
-    entities = await getJson("/entities");
+    全部實體 = await getJson("/entities");
   } catch (error) {
     // 拿不到清單就當空清單開窗——③自創與④跳過仍然能走；
-    // 之後真的釘選失敗會以紅字顯示在窗內，不必在這裡另立錯誤畫面。
+    // 真的釘選失敗會以紅字顯示在窗內，不必在這裡另立錯誤畫面。
+    全部實體 = [];
   }
+
+  // ★ Phase 70：①終於有東西可顯示了。
+  //   suggested_entity 存的是**名字**（photo 表那一欄是 TEXT），
+  //   照名字對回剛抓到的實體清單，拿到整筆物件（彈窗要 id 才釘得上）。
+  //   對不到就是 null＝①整列不顯示，與改版前完全一樣（實體沒有「未分類」保底）。
+  const 建議實體 = photo.suggested_entity
+    ? 全部實體.find(function (e) { return e.name === photo.suggested_entity; }) || null
+    : null;
+
   openEntityModal({
-    photoId: photoId,
-    entities: entities,
-    suggested: null,
-    onDone: function () {
-      location.reload();   // 鏈收工才刷新：定案的照片離開待決定
-    }
+    photoId: photo.id,
+    entities: 全部實體,
+    suggested: 建議實體,
+    onDone: function () { 接著確認待辦(photo); }
   });
+}
+
+function 接著確認待辦(photo) {
+  // 「空關不跳」（design3.md §2.1、design5.md D2／§6.2）：
+  // 沒有標題就不開第三窗，直接收工——一個空白的待辦窗只會讓人不知道要填什麼。
+  // trim() 不能省：VLM 偶爾回一個只有空白的字串，那不是待辦。
+  const 標題 = (photo.suggested_task_title || "").trim();
+  if (!標題) {
+    收工();
+    return;
+  }
+
+  openTaskModal({
+    photoId: photo.id,
+    // ★ 鍵名是 due 不是 due_date（task_modal.js 第 154 行讀的就是 config.suggestion.due）；
+    //   值是 "YYYY-MM-DD" 或空字串——<input type="date"> 只吃這個格式。
+    suggestion: { title: 標題, due: photo.suggested_task_due || "" },
+    onDone: function () { 收工(); }
+  });
+}
+
+function 收工() {
+  // 三關都結束才刷新：定案的照片離開待決定、頂欄的「待決定（N）」跟著少一張。
+  // 中途刷新會把還沒開的窗一起關掉，等於使用者被打斷。
+  location.reload();
 }
 
 // ---------- 唯一的畫面：收件箱縮圖牆 ----------
@@ -184,11 +223,9 @@ async function showPending() {
     wall.appendChild(照片卡(photo));
   });
 
-  // 彈窗 1【抽屜】：下拉排除收件箱（design2.md D7——定案目標必須是真資料夾）；
-  //「稍後再說」＝什麼都不做、照片留在這一頁。
-  // ①：上傳當下的建議存在照片上（suggested_category，Phase 35 起），
-  //    這裡照名字對回資料夾清單即可，不必為了畫①再看一次圖。
-  //    沒建議（clamp 成未分類的、以及遷移進來的舊照片）就照舊沒有①。
+  // 待決定牆：點一張照片就走完整三關（design5.md D2）。
+  // 照片對照表把 id 換回**整筆八鍵摘要**——三關要的三個建議都在那一筆裡面，
+  // 只傳 photoId 的話等一下還要再查一次。
   const 可選資料夾 = folders.filter(function (f) { return !f.is_inbox; });
   const 照片對照 = {};
   detail.photos.forEach(function (photo) { 照片對照[photo.id] = photo; });
@@ -196,23 +233,9 @@ async function showPending() {
   wall.addEventListener("click", function (event) {
     const card = event.target.closest(".photo");
     if (!card || !card.dataset.photoId) return;
-    const photoId = Number(card.dataset.photoId);
-    const 建議名稱 = (照片對照[photoId] || {}).suggested_category;
-    // find 找不到會回 undefined，彈窗要的是 null（|| null 一併處理沒建議的情況）
-    const 建議資料夾 = 建議名稱
-      ? 可選資料夾.find(function (f) { return f.name === 建議名稱; }) || null
-      : null;
-
-    openFolderModal({
-      photoId: photoId,
-      folders: 可選資料夾,
-      primary: 建議資料夾,
-      primaryVerb: "採用",
-      // 抽屜窗結束——定案**或**稍後再說——都接著開實體窗；
-      // 整頁重讀移到鏈的最尾端（等實體窗收工一次刷新最單純）。
-      onAssigned: function () { 接著釘實體(photoId); },
-      onClosed: function () { 接著釘實體(photoId); }
-    });
+    const photo = 照片對照[Number(card.dataset.photoId)];
+    if (!photo) return;        // 理論上不會發生；防的是 DOM 被別的程式改過
+    開始三關(photo, 可選資料夾);
   });
 
   view.appendChild(wall);

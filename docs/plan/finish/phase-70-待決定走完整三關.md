@@ -68,7 +68,7 @@ Phase 68 把上傳頁的開鏈邏輯**整個拿掉**了（design5 D13：上傳�
 |---|---|
 | **52** | 建了 `app/static/pending.html`，把 `browse.html` 的 `showPending()` 搬過去。本 phase 改的就是那一頁 |
 | **54** | `folder_modal.js` 窗頂加原圖、「稍後再說」文案改指向待決定頁。本 phase 不再動這支檔案 |
-| **61** | `photo` 表三個建議欄真的有值，而且 `GET /folders/{id}` 的摘要已經是**八鍵**。**沒有 61 就沒有東西可讀**，本 phase 做不了 |
+| **61** | `photo` 表三個建議欄真的有值，而且 `GET /folders/{id}` 的摘要已經是**八鍵**。**沒有 61 就沒有東西可讀**，本 phase 做不了。（2026-08-26 校準：**61 已隨 commit `f1a7e71` 落地**——`app/schemas/folder.py` 的 `PhotoSummary` 已是八鍵（`id`／`thumbnail_url`／`text`／`uploaded_at`／`suggested_category`／`suggested_entity`／`suggested_task_title`／`suggested_task_due`，型別分別是 `str \| None`／`str \| None`／`date \| None`）、`app/api/routers/folders.py` 三個欄位都有接、`db/migrate_design5.sql` 三個 `ALTER TABLE … ADD COLUMN IF NOT EXISTS` 都在，`test_folders_endpoint.py` 的那三顆也都在。下面的 grep 會直接綠。） |
 | **68** | 上傳頁拿掉 201 開鏈。**沒有 68，第三關會問兩次**（上傳問一次、待決定又問一次） |
 | **69** | 鏡頭桌面頁拿掉「GET latest → 開彈窗鏈」＝ `classify_chain.js` 的**最後一個呼叫者**也消失（phase-69 §3 明文把「刪檔」留給本 phase §4.5）。69 沒做完可以先做 §4.1〜4.4，但 **§4.5 刪檔一定要等它**——§2 下面的第三個 grep 與 §4.5 的閘門都會把這件事守住 |
 
@@ -105,8 +105,13 @@ grep -n "suggested_entity\|suggested_task_title\|suggested_task_due" app/schemas
 grep -rn "startClassifyChain" app/static/
 ```
 
-  預期：**只**在 `app/static/classify_chain.js` 自己裡面出現（定義那一行），
+  預期：**只**在 `app/static/classify_chain.js` 自己裡面出現，
   `upload.html` 與 `camera-desk.html` 都不該再有。撈到別的檔案就是 68／69 沒做完。
+  （2026-08-26 校準：`classify_chain.js` 自己有 **兩行**——檔頭「用法」那段的
+  `startClassifyChain({` 與 `function startClassifyChain(config) {`；舊版寫「定義那一行」
+  容易讓人以為多一行就是出事了。另外這一支 grep 只找 `startClassifyChain`，
+  所以**不會**撈到 `folder_modal.js` 第 147 行那句只寫檔名的註解——那是 §4.5 那一支
+  比較寬的 grep 才會遇到的事。）
 
 ---
 
@@ -429,6 +434,16 @@ function 收工() {
 - [ ] **第三步：把縮圖牆的點擊改成呼叫 `開始三關`。** 找到 `showPending()` 裡
       `wall.addEventListener("click", …)` 那一段，換成：
 
+> ⚠ **（2026-08-26 校準）替換範圍不能只圈 `wall.addEventListener` 那一段。**
+> 現況（Phase 52 落地版）`pending.html` 的 **第 187〜216 行**是一整塊：
+> 187〜191 是「彈窗 1【抽屜】」那五行區塊註解、192 是 `const 可選資料夾 = …`、
+> 193〜194 是 `const 照片對照 = {};` 與那一行 `forEach`，196〜216 才是監聽器。
+> 下面的替換區塊**自己帶了** `可選資料夾` 與 `照片對照` 兩個 `const`——
+> 只換監聽器、把上面那兩個舊的留著，就會是**同一個 `const` 宣告兩次**，
+> 整頁當場 `SyntaxError: Identifier '可選資料夾' has already been declared`，
+> 而且是**整頁白掉**（inline script 一個字都不會執行）。
+> **從第 187 行的註解開始整段換到 216**，不要自己縮小範圍。
+
 ```js
   // 待決定牆：點一張照片就走完整三關（design5.md D2）。
   // 照片對照表把 id 換回**整筆八鍵摘要**——三關要的三個建議都在那一筆裡面，
@@ -586,7 +601,28 @@ grep -rn "classify_chain\|startClassifyChain" app/ --include="*.html" --include=
 ```
 
   **預期：只有 `app/static/classify_chain.js` 自己的那幾行**（檔頭註解與
-  `function startClassifyChain(config) {` 那一行）。
+  `function startClassifyChain(config) {` 那一行）**，外加 `app/static/folder_modal.js`
+  第 147 行的一句註解**。
+
+> 📌 **（2026-08-26 事後追記，Phase 71 之後讀本檔的人看這裡）**：本 phase 執行當下
+> 下面這段校準完全成立、驗收也照它過了；但 **Phase 71 已把 `folder_modal.js:147`
+> 那句過期註解一併校正**（執行者裁決的純註解修正，71 的 REP 有記錄），
+> 所以**現在** `grep -rn "classify_chain" app/` 是**零輸出**、比下面寫的更乾淨。
+> 下面那段保留不動，作為本 phase 執行當下的歷史紀錄。
+>
+> ⚠ **（2026-08-26 校準）`folder_modal.js:147` 會一直被撈到，那是正常的。**
+> Phase 54 在 `fm畫圖()` 上方寫了一行說明：
+> 「`//      三個呼叫端（pending.html／browse.html／classify_chain.js）都不用改；`」
+> ——那是**註解裡的檔名**，不是呼叫，而且 §3「明確不做」第 1 列禁止改 `folder_modal.js`
+> 的任何一行，所以它刪檔之後仍然會留著。
+> **判準因此改成：除了 `classify_chain.js` 自己與 `folder_modal.js` 第 147 行那句註解之外，
+> 沒有第二個檔案提到它。** 想一眼看乾淨的話用這一行（把註解那個檔排除掉）：
+>
+> ```bash
+> grep -rn "classify_chain\|startClassifyChain" app/ \
+>   --include="*.html" --include="*.js" --include="*.py" \
+>   | grep -v "^app/static/folder_modal.js:"
+> ```
 
   ⛔ **只要撈到任何一個 `.html` 還在載入它，就停手**——那代表 Phase 68 或 69 沒做完。
   回去把那一頁處理掉，再回來做這一步。
@@ -610,7 +646,9 @@ pytest -q
 ```
 
 > **後悔藥**：刪錯了就 `git checkout -- app/static/classify_chain.js` 把它拿回來
-> （本增量依慣例還沒 commit，檔案的內容仍在 git 索引裡）。
+> （2026-08-26 校準：這一招成立的理由與「本增量有沒有 commit」無關——
+> `classify_chain.js` 是**增量三**就入版控的檔（`git ls-files app/static/classify_chain.js`
+> 查得到），`rm` 之後內容仍在 HEAD 裡，`git checkout --` 一定拿得回來）。
 
 ### 4.6 瀏覽器實操驗收（前端唯一的真驗收）
 
@@ -641,11 +679,27 @@ docker compose -f compose.yaml -f compose.dev.yaml logs -f app worker
 | 8 | 回待決定頁，點一張**沒有**待辦建議的照片（風景照最容易），走完抽屜 → 實體 | ★**待辦窗不開**（空關不跳）——實體窗按④之後直接刷新回縮圖牆 |
 | 9 | 再點一張，抽屜窗按④「稍後再說」 | 照片**留在**待決定，但**仍然**跳出實體窗（抽屜稍後再說不影響釘實體） |
 | 10 | 上一步的實體窗按③自創一個新實體、再按④ | 釘上之後**窗不關**、已釘列表 +1；按④才收工 |
-| 11 | 點一張**很舊的照片**（正式庫最早那兩張沒有原圖的） | 抽屜窗照樣開，圖的位置是灰底占位；三關照樣走得完 |
+| 11 | 點一張**沒有原圖的照片**（見下面的校準框；沒有就標 N/A） | 抽屜窗照樣開，圖的位置是灰底占位；三關照樣走得完 |
 | 12 | 全程開著開發者工具的 Console | **沒有**紅色錯誤；特別確認沒有 `openTaskModal is not defined`（那代表第一步的 `<script>` 忘了加） |
 | 13 | 全程 | **沒有**任何瀏覽器原生對話框（`alert`／`confirm`／`prompt`）——錯誤一律是窗內紅字 |
 
-- [ ] 十三項全部通過才算完成。
+> ⚠ **（2026-08-26 校準）第 11 項的「正式庫最早那兩張沒有原圖的」已經不在待決定裡了。**
+> 實測正式庫（唯讀 SQL）：`original_path IS NULL` 的就是那兩張，兩張都在**「收據」**資料夾——
+> 也就是**早就定案了**，永遠不會出現在待決定牆上；收件箱（未分類）現有 10 張，**全部都有原圖**。
+> 所以這一項改成**選擇性**：開工當天先用下面這行看有沒有這種照片，沒有就**標 N/A**
+> （`folder_modal.js` 的 `fm畫占位()` 降級路徑已由 Phase 54 的瀏覽器實操驗過，
+> 本 phase 一行都沒動它）：
+>
+> ```bash
+> psql -h 127.0.0.1 -p 5433 -U postgres -d PersonalDocAI -tAc \
+>   "select p.id from photo p join folder f on f.id=p.folder_id \
+>    where f.is_inbox and p.original_path is null;"
+> ```
+>
+> ⛔ **不要**為了驗這一項去搬動或改名 `data/photos/` 裡的檔案——那是全世界只有一份、
+> 不入版控的原圖（CLAUDE.md 指令區的備份段落）。
+
+- [ ] 十三項全部通過才算完成（第 11 項可為 N/A）。
 
 ---
 
@@ -823,13 +877,18 @@ pytest tests/integration/test_folders_endpoint.py -v -k "摘要 or 建議"
 - [ ] `grep -c "openTaskModal" app/static/pending.html` ＝ **1**（第三關真的接上了）
 - [ ] `grep -c "location.reload();" app/static/pending.html` ＝ **1**（只在鏈尾刷新一次）
 - [ ] `node --check /tmp/pending-inline.js` 通過（§4.3 第五步那段指令會產生這個檔）
-- [ ] `grep -rn "classify_chain\|startClassifyChain" app/` ＝ **無輸出**（檔案已刪、沒有殘留引用；
-      `tests/` 不列入——Phase 69 那顆「斷言桌面頁沒有它」的契約測試裡合法含有這個字串）
+- [ ] `grep -rn "classify_chain\|startClassifyChain" app/` ＝ **只剩 `app/static/folder_modal.js:147`
+      那一句註解**（檔案已刪、沒有殘留**引用**；那一行是 Phase 54 寫的說明文字，
+      §3「不做」禁止改它，見 §4.5 的校準框。`tests/` 不列入——Phase 69 那顆
+      「斷言桌面頁沒有它」的契約測試裡合法含有這個字串）
 - [ ] `ls app/static/classify_chain.js` ＝ `No such file or directory`
-- [ ] `git status --short app/static/` 與**本 phase 開工前記下的輸出**相比，只多一行
-      ` D app/static/classify_chain.js`（增量五全程未 commit，Phase 52〜69 的
-      `?? pending.html`、`M upload.html` 等既有變更本來就會一直在清單上；
-      `pending.html` 是 52 建的新檔，本 phase 改它**不會**讓狀態列多出新的一行）
+- [ ] `git status --short app/static/` 與**本 phase 開工前記下的輸出**相比，多兩行：
+      ` M app/static/pending.html` 與 ` D app/static/classify_chain.js`
+      （2026-08-26 校準：舊版這一條寫「只多一行」、並說 `pending.html` 是「`??` 的新檔」——
+      **那已經過期了**。Phase 52〜64 已於 commit `e1d1d5e`／`f1a7e71` 進版控，
+      `git ls-files app/static/pending.html` 查得到它，所以改它一定會多一行 ` M`。
+      至於 65〜69 的變更在不在清單上，看那幾個 phase 屆時有沒有 commit——
+      **本條的判準是「相減之後只多這兩行」，不是清單長度**）
 - [ ] `pytest -q` 全綠、**0 skipped**，顆數 ＝ 開工基準 **＋3**
       （`test_folders_endpoint.py` 1 顆 ＋ `test_pending_chain.py` 2 顆）。
       開工前先把基準記下來，做完之後填進這裡：基準 ＿＿＿ → 完成 ＿＿＿
@@ -840,7 +899,8 @@ pytest tests/integration/test_folders_endpoint.py -v -k "摘要 or 建議"
       ＝ **無輸出**（三個窗自己的實作一行未動）
 - [ ] `git diff --stat app/api/routers/ app/services/ app/repositories/`
       ＝ **無輸出**（本 phase 是純前端＋測試，後端一行未動）
-- [ ] §4.6 瀏覽器實操 **13 項全部通過**，特別是第 3 項（實體窗有①）與第 8 項（空關不跳）
+- [ ] §4.6 瀏覽器實操 **13 項全部通過**（第 11 項依 §4.6 的校準框可為 N/A），
+      特別是第 3 項（實體窗有①）與第 8 項（空關不跳）
 - [ ] Console 全程沒有紅色錯誤；沒有任何 `alert`／`confirm`／`prompt`
 - [ ] **沒有 commit**（沿用產品負責人既有指示：改完先檢視；`unfinish/` → `finish/` 的歸檔隨 commit 執行）
 

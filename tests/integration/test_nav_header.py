@@ -43,19 +43,6 @@ STATIC = 專案根目錄 / "app" / "static"
 # aria-current），所以只比對「開頭標籤之後」的這一段——五頁逐字相同。
 待決定那一格的尾巴 = '待決定（<span id="nav-pending-count">…</span>）</a>'
 
-# 五頁各有一份、逐字相同的計數片段（Phase 67 由 progress_panel.js 接手時整組刪掉）
-計數片段的關鍵行 = [
-    'const 格子 = document.getElementById("nav-pending-count");',
-    'fetch("/folders").then(function (response) {',
-    "if (!response.ok) return null;",
-    "const inbox = folders.find(function (f) { return f.is_inbox; });",
-    "if (inbox) 格子.textContent = String(inbox.photo_count);",
-    "}).catch(function (error) {",
-]
-# ↑ 第三行與最後一行是 2026-08-25 審查後補釘的：分別承載「4xx/5xx 時維持「…」、
-#   不顯示猜的 0」與「服務連不上時安靜維持「…」、不噴 unhandled rejection」兩個
-#   §4.1 明文行為——原本四行釘不到它們，審查用變異測試證實刪掉仍七顆全綠。
-
 # 哪一頁該把哪一格標成當頁
 當頁對照 = {
     "upload.html": "/ui/upload.html",
@@ -94,18 +81,24 @@ def test_待決定那一格是固定形狀且帶計數欄位():
         assert 待決定那一格的尾巴 in 原始碼, f"{檔名} 的「待決定（N）」形狀不對"
 
 
-def test_五頁都有同一份待決定計數片段():
-    """階段甲的 N 來自既有 GET /folders 的收件箱 photo_count（design5.md §6.1）。
+def test_五頁的計數片段已交棒給進度面板():
+    """Phase 53 的過渡片段（各頁自己打 GET /folders 算 N）在 Phase 67 整組刪掉。
 
-    這顆同時擋住兩種走鐘：某一頁忘了貼、以及有人只改了其中一份。
+    改由 app/static/progress_panel.js 每 2 秒輪詢 GET /ingest-jobs 一次帶回
+    jobs 與 pending_count（design5.md §6.1：「不要四個 HTML 各寫一套 setInterval」）。
 
-    ⚠ 這顆有預告的死期：Phase 67 刪掉五份片段時，要把這顆**原地換成**
-    test_五頁的計數片段已交棒給進度面板（換名、不加顆）——不是刪掉。
+    頂欄那一格的 HTML（含 <span id="nav-pending-count">）**沒有變**，
+    由 test_待決定那一格是固定形狀且帶計數欄位 繼續守著。
     """
     for 檔名 in 有頂欄的五頁:
         原始碼 = 讀(檔名)
-        for 關鍵行 in 計數片段的關鍵行:
-            assert 關鍵行 in 原始碼, f"{檔名} 少了頂欄計數片段的這一行：{關鍵行}"
+        assert 'const 格子 = document.getElementById("nav-pending-count");' not in 原始碼, (
+            f"{檔名} 還留著 Phase 53 的過渡計數片段——Phase 67 起由 progress_panel.js 接手"
+        )
+        assert '<script src="/ui/progress_panel.js"></script>' in 原始碼
+
+    面板 = (專案根目錄 / "app" / "static" / "progress_panel.js").read_text(encoding="utf-8")
+    assert 'ppEl("nav-pending-count")' in 面板
 
 
 def test_每一頁只標自己那一格為當頁():
