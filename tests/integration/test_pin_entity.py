@@ -54,22 +54,20 @@ def test_釘現有實體回201(client, 已上傳的照片):
     photo_id = 已上傳的照片["id"]
     macbook = photo_repository.create_entity("我的 MacBook", "2023 年買的筆電")
 
-    response = client.post(
-        f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]}
-    )
+    response = client.post(f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]})
 
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["photo_id"] == photo_id
     assert body["entity"] == {
-        "id": macbook["id"], "name": "我的 MacBook", "description": "2023 年買的筆電"
+        "id": macbook["id"],
+        "name": "我的 MacBook",
+        "description": "2023 年買的筆電",
     }
     # entities＝自創之後可能變長的完整清單，讓彈窗直接換掉下拉選單
     assert [e["name"] for e in body["entities"]] == ["我的 MacBook"]
     # 連結真的寫進去了
-    assert [e["name"] for e in photo_repository.list_photo_entities(photo_id)] == [
-        "我的 MacBook"
-    ]
+    assert [e["name"] for e in photo_repository.list_photo_entities(photo_id)] == ["我的 MacBook"]
 
 
 def test_一張照片可以釘好幾個實體(client, 已上傳的照片):
@@ -79,12 +77,16 @@ def test_一張照片可以釘好幾個實體(client, 已上傳的照片):
     第二個 = photo_repository.create_entity("Project 2", "課程專案")
 
     for entity in (第一個, 第二個):
-        assert client.post(
-            f"/photos/{photo_id}/entities", json={"entity_id": entity["id"]}
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/photos/{photo_id}/entities", json={"entity_id": entity["id"]}
+            ).status_code
+            == 201
+        )
 
     assert [e["name"] for e in photo_repository.list_photo_entities(photo_id)] == [
-        "我的 MacBook", "Project 2"
+        "我的 MacBook",
+        "Project 2",
     ]
 
 
@@ -102,9 +104,7 @@ def test_自創實體回201且清單加一(client, 已上傳的照片):
     assert body["entity"]["name"] == "我的 MacBook"
     assert [e["name"] for e in body["entities"]] == ["我的 MacBook"]
     assert [e["name"] for e in photo_repository.list_entities()] == ["我的 MacBook"]
-    assert [e["name"] for e in photo_repository.list_photo_entities(photo_id)] == [
-        "我的 MacBook"
-    ]
+    assert [e["name"] for e in photo_repository.list_photo_entities(photo_id)] == ["我的 MacBook"]
 
 
 def test_自創名稱與現有實體重複回409(client, 已上傳的照片):
@@ -130,13 +130,12 @@ def test_自創名稱與現有實體重複回409(client, 已上傳的照片):
 def test_重複釘同一個實體回409(client, 已上傳的照片):
     photo_id = 已上傳的照片["id"]
     macbook = photo_repository.create_entity("我的 MacBook", "筆電")
-    assert client.post(
-        f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]}
-    ).status_code == 201
-
-    response = client.post(
-        f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]}
+    assert (
+        client.post(f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]}).status_code
+        == 201
     )
+
+    response = client.post(f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]})
 
     assert response.status_code == 409
     assert response.json()["detail"] == "這張照片已釘過這個實體"
@@ -154,9 +153,7 @@ def test_照片不存在回404(client):
 
 
 def test_實體不存在回404(client, 已上傳的照片):
-    response = client.post(
-        f"/photos/{已上傳的照片['id']}/entities", json={"entity_id": 999}
-    )
+    response = client.post(f"/photos/{已上傳的照片['id']}/entities", json={"entity_id": 999})
 
     assert response.status_code == 404
     assert response.json()["detail"] == "找不到實體"
@@ -165,9 +162,9 @@ def test_實體不存在回404(client, 已上傳的照片):
 @pytest.mark.parametrize(
     "body",
     [
-        {},                                      # 兩個都不給
+        {},  # 兩個都不給
         {"entity_id": 1, "name": "我的 MacBook"},  # 兩個都給
-        {"name": "   "},                         # name 只有空白
+        {"name": "   "},  # name 只有空白
     ],
 )
 def test_請求必須恰好給一個entity_id或name(client, 已上傳的照片, body):
@@ -182,13 +179,14 @@ def test_釘選不重算向量(client, 已上傳的照片):
     macbook = photo_repository.create_entity("我的 MacBook", "筆電")
     釘之前 = photo_repository.fetch_embedding(photo_id)
 
-    assert client.post(
-        f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]}
-    ).status_code == 201
+    assert (
+        client.post(f"/photos/{photo_id}/entities", json={"entity_id": macbook["id"]}).status_code
+        == 201
+    )
 
     assert photo_repository.fetch_embedding(photo_id) == 釘之前
     row = photo_repository.fetch_photo(photo_id)
-    assert row["category"] == "未分類"      # 抽屜也沒被動到
+    assert row["category"] == "未分類"  # 抽屜也沒被動到
 
 
 # ---------------- ② 再建議一個 ----------------
@@ -199,13 +197,13 @@ def test_再建議回登記的實體(client, 已上傳的照片):
     suggester = FakeEntitySuggester("我的 MacBook")
     app.dependency_overrides[get_entity_suggester] = lambda: suggester
 
-    response = client.post(
-        f"/photos/{已上傳的照片['id']}/entity-suggestion", json={"exclude": []}
-    )
+    response = client.post(f"/photos/{已上傳的照片['id']}/entity-suggestion", json={"exclude": []})
 
     assert response.status_code == 200, response.text
     assert response.json()["suggested_entity"] == {
-        "id": macbook["id"], "name": "我的 MacBook", "description": "筆電"
+        "id": macbook["id"],
+        "name": "我的 MacBook",
+        "description": "筆電",
     }
     assert suggester.calls == 1
 
@@ -233,9 +231,7 @@ def test_候選為空時回None且完全不呼叫模型(client, 已上傳的照�
     suggester = FakeEntitySuggester("我的 MacBook")
     app.dependency_overrides[get_entity_suggester] = lambda: suggester
 
-    response = client.post(
-        f"/photos/{已上傳的照片['id']}/entity-suggestion", json={}
-    )
+    response = client.post(f"/photos/{已上傳的照片['id']}/entity-suggestion", json={})
 
     assert response.status_code == 200, response.text
     assert response.json() == {"suggested_entity": None}
@@ -244,13 +240,9 @@ def test_候選為空時回None且完全不呼叫模型(client, 已上傳的照�
 
 def test_模型挑了候選外的名字一律夾成None(client, 已上傳的照片):
     photo_repository.create_entity("我的 MacBook", "筆電")
-    app.dependency_overrides[get_entity_suggester] = lambda: FakeEntitySuggester(
-        "我的 iPad"
-    )
+    app.dependency_overrides[get_entity_suggester] = lambda: FakeEntitySuggester("我的 iPad")
 
-    response = client.post(
-        f"/photos/{已上傳的照片['id']}/entity-suggestion", json={"exclude": []}
-    )
+    response = client.post(f"/photos/{已上傳的照片['id']}/entity-suggestion", json={"exclude": []})
 
     assert response.status_code == 200, response.text
     assert response.json() == {"suggested_entity": None}
@@ -310,9 +302,7 @@ def test_待辦建議隨入庫寫進照片那一列(client):
     所以「202 之後建議會蒸發、待辦窗從此沒有入口」這個坑不存在。
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(
-        超市照片.model_copy(
-            update={"task_title": "  交 Project 2  ", "task_due": "2026-09-18"}
-        )
+        超市照片.model_copy(update={"task_title": "  交 Project 2  ", "task_due": "2026-09-18"})
     )
 
     列 = 上傳一張並取回照片(client)

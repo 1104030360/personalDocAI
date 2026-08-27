@@ -64,7 +64,7 @@ class 分頁VLM:
     """
 
     def __init__(self, 看得懂的頁碼: set[int]) -> None:
-        self.看得懂的頁碼 = 看得懂的頁碼      # 1 起算，與 skipped_pages 同一套頁碼
+        self.看得懂的頁碼 = 看得懂的頁碼  # 1 起算，與 skipped_pages 同一套頁碼
         self.calls = 0
 
     def understand(
@@ -98,9 +98,7 @@ def _收下再跑完(client, caplog, *, payload: bytes, filename: str, content_t
       跑任務之前）：202 那一段會多印一行「已受理入庫任務」的 INFO，
       而本檔靠 `caplog.messages` 逐則比對，混進去會讓計數與訊息都對不上。
     """
-    response = client.post(
-        "/photos", files={"file": (filename, payload, content_type)}
-    )
+    response = client.post("/photos", files={"file": (filename, payload, content_type)})
     assert response.status_code == 202, response.text
 
     caplog.clear()
@@ -255,9 +253,7 @@ def test_歸類重算向量會打embed的log(client, caplog):
     # caplog 是整顆測試累積的：不清掉的話上傳那一組會混進下面的斷言
     caplog.clear()
 
-    response = client.patch(
-        f"/photos/{photo_id}/folder", json={"folder_id": 2}
-    )
+    response = client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 2})
 
     assert response.status_code == 200, response.text
     assert len(開始行(caplog, "embed")) == 1, caplog.messages

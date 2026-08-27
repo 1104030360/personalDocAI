@@ -44,9 +44,7 @@ def 看得懂的假VLM(wire_fake_ai):
 
 def 收下一個檔(client, filename: str = "a.png") -> str:
     """POST 一張圖，回它的 job_id（202 當下任務是 queued、照片還不存在）。"""
-    response = client.post(
-        "/photos", files={"file": (filename, make_png_bytes(), "image/png")}
-    )
+    response = client.post("/photos", files={"file": (filename, make_png_bytes(), "image/png")})
     assert response.status_code == 202, response.text
     return response.json()["job_id"]
 
@@ -85,8 +83,14 @@ def test_清單的每一列恰好八個鍵而且不外送內部狀態(client):
     列 = client.get("/ingest-jobs").json()["jobs"][0]
 
     assert set(列) == {
-        "job_id", "filename", "content_type", "status",
-        "attempt", "page_count", "pages_done", "error",
+        "job_id",
+        "filename",
+        "content_type",
+        "status",
+        "attempt",
+        "page_count",
+        "pages_done",
+        "error",
     }
 
 
@@ -103,9 +107,7 @@ def test_成功的任務不會出現在清單裡而待決定加一(client):
 
 def test_失敗的任務會留在清單上並帶著錯誤短句(client):
     """design5.md D9：失敗列留下，讓使用者知道有一張沒進去。"""
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
-        PhotoUnderstanding(understood=False)
-    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(PhotoUnderstanding(understood=False))
     job_id = 收下一個檔(client, "看不懂的.png")
 
     跑完任務(job_id)
@@ -151,9 +153,10 @@ def test_已定案的照片不算進待決定(client):
     photo_id = photo_repository.list_photos_in_folder(收件箱["id"])[0]["id"]
     收據 = photo_repository.find_folder_by_name("收據")
 
-    assert client.patch(
-        f"/photos/{photo_id}/folder", json={"folder_id": 收據["id"]}
-    ).status_code == 200
+    assert (
+        client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 收據["id"]}).status_code
+        == 200
+    )
 
     assert client.get("/ingest-jobs").json()["pending_count"] == 0
 
@@ -162,9 +165,7 @@ def test_已定案的照片不算進待決定(client):
 
 
 def test_關掉失敗的那一列回204且清單少一列(client):
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
-        PhotoUnderstanding(understood=False)
-    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(PhotoUnderstanding(understood=False))
     job_id = 收下一個檔(client)
     跑完任務(job_id)
     assert len(client.get("/ingest-jobs").json()["jobs"]) == 1
@@ -182,7 +183,7 @@ def test_關掉還在跑的任務回409(client):
 
     藏起來會讓人以為東西不見了，而它其實還在跑——之後照片突然冒出來更嚇人。
     """
-    job_id = 收下一個檔(client)          # 還是 queued，沒跑過
+    job_id = 收下一個檔(client)  # 還是 queued，沒跑過
 
     response = client.post(f"/ingest-jobs/{job_id}/dismiss")
 

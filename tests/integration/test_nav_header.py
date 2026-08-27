@@ -15,7 +15,7 @@ Phase 67 刪掉五頁的計數片段時，會把 test_五頁都有同一份待�
 
 from __future__ import annotations
 
-import re                      # ← 這一行是 Phase 55 加的
+import re  # ← 這一行是 Phase 55 加的
 from pathlib import Path
 
 專案根目錄 = Path(__file__).resolve().parents[2]
@@ -112,9 +112,7 @@ def test_每一頁只標自己那一格為當頁():
         assert f'href="{自己的網址}" aria-current="page"' in 原始碼, (
             f"{檔名} 沒有把自己那一格標成當頁"
         )
-        assert 原始碼.count('aria-current="page"') == 1, (
-            f"{檔名} 標了不只一格當頁"
-        )
+        assert 原始碼.count('aria-current="page"') == 1, f"{檔名} 標了不只一格當頁"
 
 
 def test_鏡頭桌面頁不標任何一格為當頁():
@@ -184,9 +182,7 @@ def test_瀏覽頁不再是待決定入口():
     assert re.search(r"\}\s*else\s*\{\s*await showFolderList\(\);", 原始碼), (
         "無 query 時的預設不是資料夾卡片"
     )
-    assert 'tabInUrl === "folders"' not in 原始碼, (
-        "?tab=folders 應該併進預設分支，不必再獨立一支"
-    )
+    assert 'tabInUrl === "folders"' not in 原始碼, "?tab=folders 應該併進預設分支，不必再獨立一支"
 
 
 def test_瀏覽頁的分頁列只剩資料夾與待辦():

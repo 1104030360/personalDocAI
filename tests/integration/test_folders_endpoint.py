@@ -70,9 +70,7 @@ def test_列出全部資料夾(client):
     folders = response.json()
     # 直接回陣列（不是 {"folders": [...]}），順序照 id
     assert [f["id"] for f in folders] == [1, 2, 3, 4, 5, 6]
-    assert [f["name"] for f in folders] == [
-        "未分類", "收據", "飲食", "風景", "文件", "其他"
-    ]
+    assert [f["name"] for f in folders] == ["未分類", "收據", "飲食", "風景", "文件", "其他"]
     # 只有「未分類」是收件箱（design1.md §5）
     assert folders[0]["is_inbox"] is True
     assert all(f["is_inbox"] is False for f in folders[1:])
@@ -118,9 +116,14 @@ def test_資料夾內容含照片摘要(client):
     # Phase 35 起由四鍵變五鍵（suggested_category），
     # Phase 61 起由五鍵變八鍵：上傳改 202 之後，建議只能從這裡讀（design5.md D16、§6.2）
     assert set(photo) == {
-        "id", "thumbnail_url", "text", "uploaded_at",
-        "suggested_category", "suggested_entity",
-        "suggested_task_title", "suggested_task_due",
+        "id",
+        "thumbnail_url",
+        "text",
+        "uploaded_at",
+        "suggested_category",
+        "suggested_entity",
+        "suggested_task_title",
+        "suggested_task_due",
     }
     assert photo["id"] == photo_id
     assert photo["text"] == "在 Target 購買可樂的收據"
@@ -184,7 +187,7 @@ def test_摘要帶著實體與待辦的建議(client):
     assert photos[0]["id"] == photo_id
     assert photos[0]["suggested_entity"] == "我的 MacBook"
     assert photos[0]["suggested_task_title"] == "繳交作業三"
-    assert photos[0]["suggested_task_due"] == "2026-08-21"   # JSON 是 ISO 字串
+    assert photos[0]["suggested_task_due"] == "2026-08-21"  # JSON 是 ISO 字串
 
 
 def test_沒有建議的舊照片三個欄位都是null(client):
@@ -214,7 +217,7 @@ def test_待決定的實體建議名字在實體清單裡逐字對得到(client)
     photo_repository.create_entity("我的 MacBook", "筆電")
     photo_id = _插入照片(
         "MacBook 的維修發票",
-        "未分類",                    # insert_photo 會依 category 掛到同名資料夾（Phase 15）
+        "未分類",  # insert_photo 會依 category 掛到同名資料夾（Phase 15）
         有縮圖=True,
         suggested_entity="我的 MacBook",
     )

@@ -29,8 +29,11 @@ def wire_ask_fakes(wire_fake_ai):
 
 def _一張Target收據() -> int:
     return photo_repository.insert_photo(
-        text="在 Target 購買可樂與洋芋片的收據", category="收據", location="Target",
-        items=["可樂", "洋芋片"], content_time=date(2026, 8, 10),
+        text="在 Target 購買可樂與洋芋片的收據",
+        category="收據",
+        location="Target",
+        items=["可樂", "洋芋片"],
+        content_time=date(2026, 8, 10),
         embedding=FakeEmbeddings().embed_query("在 Target 購買可樂與洋芋片的收據"),
         uploaded_at=NOW,
     )["id"]
@@ -52,9 +55,7 @@ def test_英文提問得到英文回答(client):
     """雙語：回答語言跟隨提問語言；照片內容維持原文（design.md §8.3 鐵律 3）。"""
     photo_id = _一張Target收據()
 
-    response = client.post(
-        "/ask", json={"question": "What drinks did I buy recently?"}
-    )
+    response = client.post("/ask", json={"question": "What drinks did I buy recently?"})
 
     assert response.status_code == 200
     body = response.json()

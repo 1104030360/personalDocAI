@@ -28,8 +28,10 @@ from tests.fakes import FakeEmbeddings, FakeVLM, make_jpeg_bytes, make_png_bytes
 TARGET_RECEIPT = PhotoUnderstanding(
     understood=True,
     text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
-    category="收據", location="Target",
-    items=["可樂", "洋芋片"], content_time="2026-08-10",
+    category="收據",
+    location="Target",
+    items=["可樂", "洋芋片"],
+    content_time="2026-08-10",
 )
 
 
@@ -43,9 +45,7 @@ def _upload(client, payload=None, content_type="image/png", filename="a.png"):
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(TARGET_RECEIPT)
     if payload is None:
         payload = make_png_bytes(1200, 600)
-    return 上傳一張並取回照片(
-        client, payload=payload, filename=filename, content_type=content_type
-    )
+    return 上傳一張並取回照片(client, payload=payload, filename=filename, content_type=content_type)
 
 
 def test_上傳後原圖與縮圖都寫進DATA_DIR(client):
@@ -70,9 +70,7 @@ def test_上傳後原圖與縮圖都寫進DATA_DIR(client):
 
 
 def test_jpeg上傳的副檔名是jpg(client):
-    列 = _upload(
-        client, payload=make_jpeg_bytes(), content_type="image/jpeg", filename="a.jpg"
-    )
+    列 = _upload(client, payload=make_jpeg_bytes(), content_type="image/jpeg", filename="a.jpg")
 
     assert 列["original_path"].endswith(".jpg")
     assert 列["thumbnail_path"].endswith(".jpg")
@@ -112,8 +110,11 @@ def test_舊式資料沒有路徑讀圖回404(client):
     這裡直接用 repository 插一列（不走上傳端點），模擬遷移後的舊資料。
     """
     photo_id = photo_repository.insert_photo(
-        text="遷移進來的舊照片", category="收據", location="Target",
-        items=["可樂"], content_time=None,
+        text="遷移進來的舊照片",
+        category="收據",
+        location="Target",
+        items=["可樂"],
+        content_time=None,
         embedding=FakeEmbeddings().embed_query("收據"),
     )["id"]
 
@@ -147,6 +148,7 @@ def test_寫檔失敗時檔案與資料列都不留(client, monkeypatch):
     ⚠ monkeypatch 一定要在 POST **之前**掛好也可以、在跑任務之前掛好也可以，
       但**不可以**在跑任務之後才掛——那時候檔案早就寫完了。
     """
+
     def 一定失敗(photo_id, image_bytes, content_type):
         raise RuntimeError("磁碟壞了")
 
@@ -175,6 +177,7 @@ def test_更新路徑失敗時檔案與資料列都不留(client, monkeypatch):
 
     與上一顆同一個手法：HTTP 202，失敗是 worker 那一側的結局（job=failed）。
     """
+
     def 一定失敗(photo_id, **kwargs):
         raise RuntimeError("資料庫斷線")
 
@@ -211,13 +214,9 @@ def test_看不懂的照片最後什麼檔案都不留(client):
     ⚠ 這一顆原本斷言 `not config.DATA_DIR.exists()`，改寫後**不能再這樣寫**——
       staging 在 202 當下就把 data/staging/ 建出來了。改成「裡面沒有任何檔案」。
     """
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
-        PhotoUnderstanding(understood=False)
-    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(PhotoUnderstanding(understood=False))
 
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
+    response = client.post("/photos", files={"file": ("a.png", make_png_bytes(), "image/png")})
     assert response.status_code == 202, response.text
 
     跑完任務(response.json()["job_id"])

@@ -16,7 +16,6 @@ from app.core import config
 from app.services.ask_workflow import RouteDecision
 from app.services.vlm_service import PhotoUnderstanding
 
-
 # ---------- 真的圖片位元組（Pillow 讀得開）----------
 # 為什麼需要它：從 Phase 17 起系統會真的用 Pillow 把上傳的 bytes 打開來做縮圖。
 # b"\x89PNG…" 這種手打的假位元組會讓 Pillow 直接拋 UnidentifiedImageError，
@@ -25,10 +24,8 @@ from app.services.vlm_service import PhotoUnderstanding
 
 def _image_bytes(width: int, height: int, image_format: str) -> bytes:
     """畫一張純色小圖並轉成該格式的位元組。"""
-    buffer = io.BytesIO()   # 假裝成檔案的一段記憶體，不必真的寫到磁碟
-    Image.new("RGB", (width, height), color=(200, 120, 60)).save(
-        buffer, format=image_format
-    )
+    buffer = io.BytesIO()  # 假裝成檔案的一段記憶體，不必真的寫到磁碟
+    Image.new("RGB", (width, height), color=(200, 120, 60)).save(buffer, format=image_format)
     return buffer.getvalue()
 
 
@@ -61,8 +58,7 @@ def make_pdf_bytes(pages: int = 1) -> bytes:
     save_all=True ＋ append_images=其餘頁 ＝ 把多張圖寫成多頁的同一份檔案。
     """
     first, *rest = [
-        Image.new("RGB", (40, 20), color=(30 + index * 40, 120, 60))
-        for index in range(pages)
+        Image.new("RGB", (40, 20), color=(30 + index * 40, 120, 60)) for index in range(pages)
     ]
     buffer = io.BytesIO()
     first.save(buffer, format="PDF", save_all=True, append_images=rest)
@@ -171,12 +167,31 @@ class FakeEntitySuggester:
 # 規格例子與雙語測試裡會出現的詞。假的向量只認得這些詞，因此結果完全可預期。
 VOCABULARY = [
     # 中文（規格 .feature 的例子用的詞）
-    "收據", "風景", "照片", "購買",
-    "Target", "Costco", "7-11", "海邊",
-    "可樂", "洋芋片", "咖啡", "牛奶", "衛生紙", "飲料",
+    "收據",
+    "風景",
+    "照片",
+    "購買",
+    "Target",
+    "Costco",
+    "7-11",
+    "海邊",
+    "可樂",
+    "洋芋片",
+    "咖啡",
+    "牛奶",
+    "衛生紙",
+    "飲料",
     # 英文（雙語測試用的詞）
-    "Receipt", "receipt", "Cola", "cola", "Chips", "chips",
-    "coffee", "milk", "drinks", "drink",
+    "Receipt",
+    "receipt",
+    "Cola",
+    "cola",
+    "Chips",
+    "chips",
+    "coffee",
+    "milk",
+    "drinks",
+    "drink",
 ]
 
 # 同義／跨語言對照：左邊的詞出現時，右邊的詞也會被算進向量。
@@ -280,12 +295,8 @@ DEFAULT_ROUTE_DECISIONS: dict[str, RouteDecision] = {
     # ---- Phase 34 詢問三路：實體路與待辦路（design3.md §6 的目標問句）----
     # entity_name 刻意兩種語言都填中文的「我的 MacBook」：實體名單有注入 prompt，
     # 所以模型該把問句對回**清單裡的原文**，而不是照抄問句寫法（ROUTE_PROMPT 的例外規則）。
-    "跟我 MacBook 有關的全部": RouteDecision(
-        mode="entity", entity_name="我的 MacBook"
-    ),
-    "Show me everything about my MacBook": RouteDecision(
-        mode="entity", entity_name="我的 MacBook"
-    ),
+    "跟我 MacBook 有關的全部": RouteDecision(mode="entity", entity_name="我的 MacBook"),
+    "Show me everything about my MacBook": RouteDecision(mode="entity", entity_name="我的 MacBook"),
     "這週要交什麼？": RouteDecision(mode="task", due_within_days=7),
     # 規格 自然語言詢問.feature「問到待辦或到期時」那條 Rule 的問句**沒有問號**。
     # 假路由是逐字查表的，差一個全形問號就查不到 → 丟例外 → fallback 成語意查詢，
@@ -310,9 +321,7 @@ class FakeRouter:
     """
 
     def __init__(self, decisions: dict[str, RouteDecision] | None = None) -> None:
-        self.decisions = (
-            DEFAULT_ROUTE_DECISIONS if decisions is None else decisions
-        )
+        self.decisions = DEFAULT_ROUTE_DECISIONS if decisions is None else decisions
         self.last_entity_names: list[str] | None = None
 
     def route(self, question: str, entity_names: list[str]) -> RouteDecision:

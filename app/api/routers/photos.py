@@ -16,10 +16,10 @@ from langchain_core.embeddings import Embeddings
 
 from app.core import config
 from app.dependencies import (
+    TaskDispatcher,
     get_embeddings,
     get_job_store,
     get_task_dispatcher,
-    TaskDispatcher,
 )
 from app.repositories import photo_repository
 from app.schemas.ingest_job import IngestAcceptedResponse
@@ -49,9 +49,7 @@ def _folder_out(folder: dict) -> FolderOut:
     repository 的 dict 還帶 is_inbox 與 photo_count，
     這裡明確只取三個，回應長什麼樣一眼看得出來。
     """
-    return FolderOut(
-        id=folder["id"], name=folder["name"], description=folder["description"]
-    )
+    return FolderOut(id=folder["id"], name=folder["name"], description=folder["description"])
 
 
 @router.post("/photos", status_code=202, response_model=IngestAcceptedResponse)
@@ -146,11 +144,13 @@ def _accept_upload(
 
     logger.info(
         "已受理入庫任務：job_id=%s filename=%s content_type=%s source=%s backend=%s",
-        job_id, filename, content_type, source, config.AI_BACKEND,
+        job_id,
+        filename,
+        content_type,
+        source,
+        config.AI_BACKEND,
     )
-    return IngestAcceptedResponse(
-        job_id=job_id, filename=filename, content_type=content_type
-    )
+    return IngestAcceptedResponse(job_id=job_id, filename=filename, content_type=content_type)
 
 
 def _send_photo_file(photo_id: int, path_column: str) -> FileResponse:
@@ -205,14 +205,10 @@ def get_photo_detail(photo_id: int) -> PhotoDetailOut:
             category=row["category"],
             location=row["location"],
             items=row["items"],
-            content_time=(
-                row["content_time"].isoformat() if row["content_time"] else None
-            ),
+            content_time=(row["content_time"].isoformat() if row["content_time"] else None),
         ),
         # 有存過檔才給網址；沒有就是 None → JSON null → 前端畫灰底占位
-        thumbnail_url=(
-            f"/photos/{photo_id}/thumbnail" if row["thumbnail_path"] else None
-        ),
+        thumbnail_url=(f"/photos/{photo_id}/thumbnail" if row["thumbnail_path"] else None),
         image_url=f"/photos/{photo_id}/image" if row["original_path"] else None,
         uploaded_at=row["uploaded_at"],
     )
@@ -301,9 +297,7 @@ def assign_folder(
         items=list(photo["items"]),
         content_time=content_time.isoformat() if content_time else None,
     )
-    with ai_timing.log_ai(
-        "embed", target=indexing_service.embedding_timing_target(embeddings)
-    ):
+    with ai_timing.log_ai("embed", target=indexing_service.embedding_timing_target(embeddings)):
         embedding = indexing_service.embed_document(embeddings, document)
 
     # ⑤ embedding 到手了，才開始動資料庫：自建那條路此時才真的建資料夾

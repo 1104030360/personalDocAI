@@ -180,7 +180,7 @@ def test_雲端實體建議的log是cloud且失敗標ok為false(caplog, monkeypa
 
     # ② 回條列＝解析不出來
     suggester, _ = _雲端建議("- entity：我的 MacBook")
-    assert suggester.pick(PHOTO, CANDIDATES) is None   # 語意一字未變
+    assert suggester.pick(PHOTO, CANDIDATES) is None  # 語意一字未變
     結束 = _計時行(caplog, "結束")
     assert len(結束) == 1, caplog.messages
     assert "ok=false" in 結束[0]

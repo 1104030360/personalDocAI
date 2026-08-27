@@ -1,0 +1,35 @@
+# ruff 設定（Phase 73）＝全專案唯一的 Python 格式與 lint 來源。
+#
+# 刻意「只有」這一段：不寫 [project]／[build-system]，因為本專案不是要發行的
+# 套件，這個檔案存在的唯一理由就是放 ruff 設定。pytest 的設定仍在 pytest.ini。
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+# src ＝「去哪裡找自家程式」，isort 靠它分辨 first-party 與第三方套件。
+# app／tests／scripts 三個資料夾都直接躺在專案根目錄，所以這裡要寫根目錄。
+# ⚠ 不要寫成 src = ["app", "tests", "scripts"]：那是叫 ruff 去 app/app、
+#   app/tests… 裡面找，結果 tests.* 會被當成第三方套件，於是每個測試檔的
+#   `from app...` 與 `from tests...` 中間都會被硬塞一行空行（實測會改到幾十個檔）。
+src = ["."]
+
+# 用 extend-exclude（不是 exclude）：exclude 會「整包取代」ruff 內建的排除清單，
+# 連 .git／.venv／__pycache__／.pytest_cache 都會跟著失去保護。
+extend-exclude = ["data", "certs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+# E501（行太長）刻意關掉，其餘 E 全開。三個理由：
+#   1. ruff 把中日韓文字算成寬度 2，所以 line-length = 100 其實只夠 50 個中文字。
+#      本專案的註解與 docstring 大量是中文，開著會天天紅。
+#   2. formatter 不重排註解、docstring 與字串，所以 E501 幾乎都是「修不掉」的那種；
+#      而 docstring 裡的行連 `# noqa: E501` 都寫不進去（會變成字串內容的一部分）。
+#   3. ruff 官方預設的規則集本來就不含 E501，理由正是「行寬交給 formatter 管」。
+# 程式碼本身的行寬仍然有人管——由上面的 line-length = 100 交給 formatter 執行。
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

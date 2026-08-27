@@ -105,9 +105,7 @@ def test_一次看得懂就入庫_照片進收件箱_staging消失_job被刪():
     job_id = 建一個job(store)
     vlm = FakeVLM(收據理解)
 
-    ingest_job.run_ingest_job(
-        job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW
-    )
+    ingest_job.run_ingest_job(job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW)
 
     # 照片真的進去了，而且掛在收件箱（design5 §4.2：落點與現在相同）
     assert photo_repository.count_photos() == 1
@@ -115,7 +113,7 @@ def test_一次看得懂就入庫_照片進收件箱_staging消失_job被刪():
     assert len(photos) == 1
     row = photo_repository.fetch_photo(photos[0]["id"])
     assert row["text"] == 收據理解.text
-    assert row["category"] == "未分類"          # 一律先進收件箱，建議不落庫成歸屬
+    assert row["category"] == "未分類"  # 一律先進收件箱，建議不落庫成歸屬
     assert row["suggested_category"] == "收據"  # 建議照舊存下來（Phase 35 行為不變）
     assert row["uploaded_at"].strftime("%Y-%m-%d %H:%M") == "2026-08-18 10:00"
 
@@ -138,9 +136,7 @@ def test_三次都看不懂_不留照片_staging不在_job標failed且attempt為
     job_id = 建一個job(store)
     vlm = ScriptedVLM([看不懂, 看不懂, 看不懂])
 
-    ingest_job.run_ingest_job(
-        job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW
-    )
+    ingest_job.run_ingest_job(job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW)
 
     assert vlm.calls == 3, "含第一次共 3 次（design5 D10）"
     assert photo_repository.count_photos() == 0, "看不懂就什麼都不存"
@@ -166,9 +162,7 @@ def test_呼叫失敗也算一次_三次例外同樣整筆失敗():
         ]
     )
 
-    ingest_job.run_ingest_job(
-        job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW
-    )
+    ingest_job.run_ingest_job(job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW)
 
     assert vlm.calls == 3
     assert photo_repository.count_photos() == 0
@@ -181,9 +175,7 @@ def test_空白描述也算看不懂():
     job_id = 建一個job(store)
     vlm = ScriptedVLM([空白描述, 空白描述, 空白描述])
 
-    ingest_job.run_ingest_job(
-        job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW
-    )
+    ingest_job.run_ingest_job(job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW)
 
     assert vlm.calls == 3
     assert photo_repository.count_photos() == 0
@@ -198,9 +190,7 @@ def test_第三次才成功_照樣只入庫一列():
     job_id = 建一個job(store)
     vlm = ScriptedVLM([看不懂, RuntimeError("Ollama 沒開"), 收據理解])
 
-    ingest_job.run_ingest_job(
-        job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW
-    )
+    ingest_job.run_ingest_job(job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW)
 
     assert vlm.calls == 3
     assert photo_repository.count_photos() == 1, "重試成功不可以變成三張照片"
@@ -217,9 +207,7 @@ def test_轉向量三次都失敗_不留照片_job標failed():
     job_id = 建一個job(store)
     vlm = ScriptedVLM([收據理解, 收據理解, 收據理解])
 
-    ingest_job.run_ingest_job(
-        job_id, store=store, vlm=vlm, embeddings=壞掉的Embeddings(), now=NOW
-    )
+    ingest_job.run_ingest_job(job_id, store=store, vlm=vlm, embeddings=壞掉的Embeddings(), now=NOW)
 
     assert vlm.calls == 3, "embedding 失敗也要重看一次圖（整個 attempt 重來）"
     assert photo_repository.count_photos() == 0
@@ -234,6 +222,7 @@ def test_轉向量三次都失敗_不留照片_job標failed():
 
 def test_寫檔失敗_不留照片也不留孤兒檔_job標failed(monkeypatch):
     """design5 §8 第 7 列：與現在 _ingest_image 相同，清掉半成品再標失敗。"""
+
     def 一定失敗(photo_id, image_bytes, content_type):
         raise RuntimeError("磁碟壞了")
 
@@ -281,7 +270,7 @@ def test_崩潰重送_job已有photo_ids再跑一次_列數仍為1():
         source="upload",
     )
     store.update(job_id, photo_ids=[photo_id])
-    第二次的vlm = ScriptedVLM([])   # 劇本是空的：只要被呼叫一次就 AssertionError
+    第二次的vlm = ScriptedVLM([])  # 劇本是空的：只要被呼叫一次就 AssertionError
 
     ingest_job.run_ingest_job(
         job_id, store=store, vlm=第二次的vlm, embeddings=FakeEmbeddings(), now=NOW
@@ -298,8 +287,11 @@ def test_job根本不存在時什麼都不做():
     store = InMemoryJobStore()
 
     ingest_job.run_ingest_job(
-        "沒有這筆", store=store, vlm=FakeVLM(收據理解),
-        embeddings=FakeEmbeddings(), now=NOW,
+        "沒有這筆",
+        store=store,
+        vlm=FakeVLM(收據理解),
+        embeddings=FakeEmbeddings(),
+        now=NOW,
     )
 
     assert photo_repository.count_photos() == 0
@@ -370,9 +362,7 @@ def 跑一次並取回那一列(vlm) -> dict:
     """建 job → 跑任務 → 把入庫的那一列撈回來。"""
     store = InMemoryJobStore()
     job_id = 建一個job(store)
-    ingest_job.run_ingest_job(
-        job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW
-    )
+    ingest_job.run_ingest_job(job_id, store=store, vlm=vlm, embeddings=FakeEmbeddings(), now=NOW)
     assert photo_repository.count_photos() == 1
     photo_id = photo_repository.list_photos_in_folder(收件箱id())[0]["id"]
     return photo_repository.fetch_photo(photo_id)
@@ -403,9 +393,7 @@ def test_實體清單是空的時候也落庫NULL():
 
 
 def test_待辦建議完整_標題與到期日都落庫():
-    row = 跑一次並取回那一列(
-        FakeVLM(帶建議的理解(task_title="繳交作業三", task_due="2026-08-21"))
-    )
+    row = 跑一次並取回那一列(FakeVLM(帶建議的理解(task_title="繳交作業三", task_due="2026-08-21")))
 
     assert row["suggested_task_title"] == "繳交作業三"
     assert row["suggested_task_due"] == date(2026, 8, 21)
@@ -413,9 +401,7 @@ def test_待辦建議完整_標題與到期日都落庫():
 
 def test_待辦建議只有標題沒有到期日_標題落庫日期NULL():
     """日期推不出來只是少一個日期，不可以害整張照片入不了庫（與 content_time 同一原則）。"""
-    row = 跑一次並取回那一列(
-        FakeVLM(帶建議的理解(task_title=" 繳電費 ", task_due="下週三"))
-    )
+    row = 跑一次並取回那一列(FakeVLM(帶建議的理解(task_title=" 繳電費 ", task_due="下週三")))
 
     assert row["suggested_task_title"] == "繳電費", "前後空白要去掉"
     assert row["suggested_task_due"] is None
@@ -433,8 +419,7 @@ def test_worker不會自己建實體_不會自己釘選_也不會自己建待辦
     """design5.md §4.2：建議永遠只是建議，人按確認才寫那三張表。"""
     photo_repository.create_entity("我的 MacBook", "工作用筆電")
     row = 跑一次並取回那一列(
-        FakeVLM(帶建議的理解(entity="我的 MacBook", task_title="繳交作業三",
-                             task_due="2026-08-21"))
+        FakeVLM(帶建議的理解(entity="我的 MacBook", task_title="繳交作業三", task_due="2026-08-21"))
     )
     photo_id = row["id"]
 

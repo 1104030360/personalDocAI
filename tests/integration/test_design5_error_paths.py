@@ -92,8 +92,9 @@ def data_dir底下的檔案() -> list[Path]:
     return [路徑 for 路徑 in config.DATA_DIR.rglob("*") if 路徑.is_file()]
 
 
-def 入列(client, *, filename="a.png", content_type="image/png",
-        payload: bytes | None = None) -> str:
+def 入列(
+    client, *, filename="a.png", content_type="image/png", payload: bytes | None = None
+) -> str:
     """走真的 HTTP 端點把一個檔案收下來，回傳 job_id。
 
     刻意不直接呼叫 staging_service／JobStore：入列這件事的順序
@@ -101,9 +102,7 @@ def 入列(client, *, filename="a.png", content_type="image/png",
     """
     if payload is None:
         payload = make_png_bytes()
-    response = client.post(
-        "/photos", files={"file": (filename, payload, content_type)}
-    )
+    response = client.post("/photos", files={"file": (filename, payload, content_type)})
     assert response.status_code == 202, response.text
     return response.json()["job_id"]
 
@@ -221,8 +220,11 @@ def test_第9列_三種進行中狀態都不准dismiss(client, job_store, 進行
     analyzing 與 retrying 是任務真的跑起來之後才會有的狀態，一樣不准藏。
     """
     job_store.create(
-        job_id="job-x", filename="a.png", content_type="image/png",
-        ai_backend="local", source="upload",
+        job_id="job-x",
+        filename="a.png",
+        content_type="image/png",
+        ai_backend="local",
+        source="upload",
     )
     job_store.update("job-x", status=進行中的狀態)
 
@@ -306,8 +308,7 @@ def test_QR的顯示尺寸不准改小():
     比對 = re.search(r"\.cd-qr svg \{[^}]*max-width:\s*([\d.]+)rem", 樣式)
     assert 比對, "找不到 .cd-qr svg 的 max-width（那一行是 QR 可掃性的唯一保證）"
     assert float(比對.group(1)) >= 20, (
-        f"QR 顯示尺寸不可以小於 20rem（現在是 {比對.group(1)}rem）——"
-        "小於這個值長網址的 QR 會掃不到"
+        f"QR 顯示尺寸不可以小於 20rem（現在是 {比對.group(1)}rem）——小於這個值長網址的 QR 會掃不到"
     )
 
 
@@ -317,14 +318,23 @@ def test_QR的顯示尺寸不准改小():
 # design5 §11 末句明文：「photo 表只加建議欄，不加處理狀態、不加 job_id
 # （冪等靠 JobStore 的 photo_ids）」。
 禁止出現在photo表的欄位 = {
-    "status", "state", "processing_status", "ingest_status",
-    "job_id", "ingest_job_id", "progress", "attempt", "retry_count",
+    "status",
+    "state",
+    "processing_status",
+    "ingest_status",
+    "job_id",
+    "ingest_job_id",
+    "progress",
+    "attempt",
+    "retry_count",
 }
 
 # design5 D16：建議隨入庫落庫，待決定開窗再讀（Phase 56 加的三欄＋Phase 35 那一欄）
 必須出現在photo表的欄位 = {
-    "suggested_category", "suggested_entity",
-    "suggested_task_title", "suggested_task_due",
+    "suggested_category",
+    "suggested_entity",
+    "suggested_task_title",
+    "suggested_task_due",
 }
 
 
@@ -380,9 +390,7 @@ def test_worker只開兩個子行程():
     本機看圖會把機器打掛（Phase 48 已經踩過：兩件事同時打，db container 被壓垮、
     postmaster 花 2 分鐘才殺得掉子行程）。
     """
-    assert "--concurrency=2" in compose原始碼(), (
-        "worker 的 concurrency 必須恰好是 2（design5 D6）"
-    )
+    assert "--concurrency=2" in compose原始碼(), "worker 的 concurrency 必須恰好是 2（design5 D6）"
     assert "--concurrency=3" not in compose原始碼()
     assert "--concurrency=4" not in compose原始碼()
 
@@ -411,17 +419,14 @@ def test_redis沒有發佈到區網():
     assert redis區塊, "compose.yaml 裡找不到 redis 服務"
 
     for 一行 in redis區塊.group(1).splitlines():
-        if re.match(r'\s*-\s*"?\d', 一行):        # 形如   - "6379:6379"
-            assert "127.0.0.1:" in 一行, (
-                f"Redis 只能綁本機，不可以發佈到區網：{一行.strip()}"
-            )
+        if re.match(r'\s*-\s*"?\d', 一行):  # 形如   - "6379:6379"
+            assert "127.0.0.1:" in 一行, f"Redis 只能綁本機，不可以發佈到區網：{一行.strip()}"
 
 
 def test_沒有背景任務框架的替代品也沒有雲端儲存():
     """§1.2 第 1／2 列＋§3 第 7 列。"""
     app目錄原始碼 = "".join(
-        檔案.read_text(encoding="utf-8")
-        for 檔案 in sorted((專案根目錄 / "app").rglob("*.py"))
+        檔案.read_text(encoding="utf-8") for 檔案 in sorted((專案根目錄 / "app").rglob("*.py"))
     )
     需求 = (專案根目錄 / "requirements.txt").read_text(encoding="utf-8").lower()
 
@@ -463,9 +468,7 @@ def test_任務本體只吃job_id不吃影像位元組():
 
     assert list(參數)[0] == "job_id", "第一個參數必須是 job_id"
     assert 註記文字(參數["job_id"]) == "str"
-    帶位元組的 = [
-        名稱 for 名稱, 參數值 in 參數.items() if "bytes" in 註記文字(參數值)
-    ]
+    帶位元組的 = [名稱 for 名稱, 參數值 in 參數.items() if "bytes" in 註記文字(參數值)]
     assert 帶位元組的 == [], f"任務不可以吃影像位元組：{帶位元組的}"
 
 
@@ -486,9 +489,7 @@ def test_PDF不是每頁一個任務():
     做法上就是「任務本體裡不准再丟任務」——所以 ingest_job.py 不該出現 .delay(。
     每頁一個任務的話，同一份檔會被兩個 worker 拆開跑，進度列也畫不出來。
     """
-    任務原始碼 = (
-        專案根目錄 / "app" / "services" / "ingest_job.py"
-    ).read_text(encoding="utf-8")
+    任務原始碼 = (專案根目錄 / "app" / "services" / "ingest_job.py").read_text(encoding="utf-8")
 
     assert ".delay(" not in 任務原始碼
     assert ".apply_async(" not in 任務原始碼
@@ -510,9 +511,7 @@ def test_SQL掃碼真的有看到增量五的新檔():
         "app/api/routers/ingest_jobs.py",
     ):
         assert (專案根目錄 / 新檔).exists(), f"增量五應該有這個檔：{新檔}"
-        assert 新檔 not in 可以碰資料庫的檔案, (
-            f"{新檔} 不可以被加進「可以寫 SQL」的豁免名單"
-        )
+        assert 新檔 not in 可以碰資料庫的檔案, f"{新檔} 不可以被加進「可以寫 SQL」的豁免名單"
 
 
 # ----【掃E-1】§5：端點恰 22、零 DELETE，而且是**這 22 支** ----
@@ -542,8 +541,8 @@ def test_SQL掃碼真的有看到增量五的新檔():
     ("/camera/session", "post"),
     ("/camera/{token}/photos", "post"),
     ("/camera/{token}/latest", "get"),
-    ("/ingest-jobs", "get"),                      # ★ Phase 64 新增
-    ("/ingest-jobs/{job_id}/dismiss", "post"),    # ★ Phase 64 新增
+    ("/ingest-jobs", "get"),  # ★ Phase 64 新增
+    ("/ingest-jobs/{job_id}/dismiss", "post"),  # ★ Phase 64 新增
 }
 
 
@@ -557,8 +556,7 @@ def test_端點恰好是這22支(client):
     實際 = {(路徑, 動詞) for 路徑, item in paths.items() for 動詞 in item}
 
     assert 實際 == 增量五之後的端點, (
-        f"多出來：{sorted(實際 - 增量五之後的端點)}；"
-        f"少掉了：{sorted(增量五之後的端點 - 實際)}"
+        f"多出來：{sorted(實際 - 增量五之後的端點)}；少掉了：{sorted(增量五之後的端點 - 實際)}"
     )
     assert len(實際) == 22
 

@@ -16,7 +16,7 @@ from app.services.vlm_service import PhotoUnderstanding
 from tests.conftest import 上傳一張並取回照片
 from tests.fakes import FakeVLM, make_png_bytes
 
-PNG_BYTES = make_png_bytes()   # Phase 19 已改成這樣，本 phase 沿用
+PNG_BYTES = make_png_bytes()  # Phase 19 已改成這樣，本 phase 沿用
 
 英文收據 = PhotoUnderstanding(
     understood=True,

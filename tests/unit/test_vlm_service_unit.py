@@ -48,8 +48,15 @@ def test_photo_understanding_只有九個欄位():
     # 清單外資訊沒有地方放（U3「清單外捨棄」在源頭的落實）。
     # Phase 30 從六欄變九欄：前六欄會落庫，後三欄（entity／task_*）只是建議。
     assert list(PhotoUnderstanding.model_fields) == [
-        "understood", "text", "category", "location", "items", "content_time",
-        "entity", "task_title", "task_due",
+        "understood",
+        "text",
+        "category",
+        "location",
+        "items",
+        "content_time",
+        "entity",
+        "task_title",
+        "task_due",
     ]
 
 
@@ -63,9 +70,14 @@ def test_build_vlm_prompt_含雙語規則():
 
 def test_build_vlm_prompt_含所有資料夾名稱與說明():
     """design1.md §8：清單是變數，使用者自建的資料夾也要出現在 prompt 裡。"""
-    prompt = build_vlm_prompt(FOLDERS + [
-        {"id": 7, "name": "專案X", "description": "跟課程作業有關的照片"},
-    ], ENTITIES, [])
+    prompt = build_vlm_prompt(
+        FOLDERS
+        + [
+            {"id": 7, "name": "專案X", "description": "跟課程作業有關的照片"},
+        ],
+        ENTITIES,
+        [],
+    )
 
     for folder in FOLDERS:
         assert folder["name"] in prompt
@@ -97,7 +109,9 @@ def test_build_vlm_prompt_注入糾錯例子():
     # build_vlm_prompt 只管照順序輸出，不能自己重排（CORRECTIONS[0] 要比 [1] 先出現）。
     索引_餐廳菜單 = prompt.index("「餐廳菜單的照片」你猜「收據」、正確是「飲食」")
     索引_說明書封面 = prompt.index("「說明書封面」你猜「文件」、正確是「其他」")
-    assert 索引_餐廳菜單 < 索引_說明書封面, "corrections[0]（新的）必須排在 corrections[1]（舊的）前面"
+    assert 索引_餐廳菜單 < 索引_說明書封面, (
+        "corrections[0]（新的）必須排在 corrections[1]（舊的）前面"
+    )
 
 
 def test_build_vlm_prompt_沒有糾錯時那一段整段不出現():
@@ -160,7 +174,7 @@ def test_clamp_category_大小寫混用也命中且回原文():
 def test_clamp_category_清單外一律變未分類():
     """design1.md §12：VLM 建議不在 list 內 → 後端改建議「未分類」。"""
     assert clamp_category("美食", FOLDERS) == "未分類"
-    assert clamp_category("Receipt", FOLDERS) == "未分類"   # 清單裡只有中文「收據」
+    assert clamp_category("Receipt", FOLDERS) == "未分類"  # 清單裡只有中文「收據」
     assert clamp_category("", FOLDERS) == "未分類"
 
 

@@ -49,9 +49,9 @@ from fastapi import (
 from app.api.routers import photos
 from app.core import config
 from app.dependencies import (
+    TaskDispatcher,
     get_job_store,
     get_task_dispatcher,
-    TaskDispatcher,
 )
 from app.schemas.camera import CameraSessionOut
 from app.schemas.ingest_job import IngestAcceptedResponse
@@ -82,8 +82,8 @@ OTHER_ROLE = {DESK: PHONE, PHONE: DESK}
 #   （亂 token／角色不對）依 ASGI 規格是在 HTTP 握手階段否決，瀏覽器看到的是
 #   **HTTP 403**、前端的 close 事件拿到的是 1006——不是 4404。前端因此不靠代碼
 #   分辨那一種，只有 4409（讓位）才需要分支。
-CLOSE_BAD_TOKEN = 4404      # 連上之後配對才失效（過期／桌面關頁）→ 請下線
-CLOSE_SUPERSEDED = 4409     # 同角色有新連線進來 → 舊的讓位
+CLOSE_BAD_TOKEN = 4404  # 連上之後配對才失效（過期／桌面關頁）→ 請下線
+CLOSE_SUPERSEDED = 4409  # 同角色有新連線進來 → 舊的讓位
 
 # 單則訊息的長度上限（字元）。SDP 最長也就幾 KB，ICE candidate 與遙控指令是幾十位元組，
 # 64K 綽綽有餘；超過的一律丟棄——這條水管是給信令用的，不是拿來傳檔案的。
@@ -148,9 +148,7 @@ def create_camera_session(request: Request) -> CameraSessionOut:
     # error="m" ＝中等容錯（約 15%）：手機拿歪一點、螢幕反光一點也掃得到。
     # svg_inline() 出來的字串沒有 XML 宣告，可以直接嵌進 HTML。
     qr_svg = segno.make(phone_url, error="m").svg_inline(scale=5)
-    return CameraSessionOut(
-        token=session.token, phone_url=phone_url, qr_svg=qr_svg
-    )
+    return CameraSessionOut(token=session.token, phone_url=phone_url, qr_svg=qr_svg)
 
 
 # ---------------- ② 信令與遙控（WebSocket） ----------------
@@ -169,9 +167,7 @@ async def _close_quietly(websocket: WebSocket, code: int) -> None:
 
 
 @router.websocket("/camera/{token}/signal")
-async def camera_signal(
-    websocket: WebSocket, token: str, role: str = Query(...)
-) -> None:
+async def camera_signal(websocket: WebSocket, token: str, role: str = Query(...)) -> None:
     """信令＋遙控的雙向水管。伺服器只轉發，不解讀內容（計畫校準 4）。
 
     兩端各開一條（`?role=desk` 與 `?role=phone`），任一端送進來的文字
@@ -217,11 +213,9 @@ async def camera_signal(
 
             text = message.get("text")
             if text is None:
-                continue                      # 二進位 frame：不是信令，丟掉
+                continue  # 二進位 frame：不是信令，丟掉
             if len(text) > MAX_MESSAGE_CHARS:
-                logger.warning(
-                    "無線鏡頭信令訊息過大（%d 字元）已丟棄，role=%s", len(text), role
-                )
+                logger.warning("無線鏡頭信令訊息過大（%d 字元）已丟棄，role=%s", len(text), role)
                 continue
 
             other = peers.get(OTHER_ROLE[role])
@@ -229,9 +223,7 @@ async def camera_signal(
                 await other.send_text(text)
                 # 只記前 60 字元：看得出 {"type":"uploading"} 這類開頭就夠診斷了，
                 # SDP 全文幾 KB 沒必要進 log。伺服器仍然不解讀內容（純轉發不變）。
-                logger.info(
-                    "信令轉發 %s→%s：%.60s", role, OTHER_ROLE[role], text
-                )
+                logger.info("信令轉發 %s→%s：%.60s", role, OTHER_ROLE[role], text)
             else:
                 # 對面還沒連上就把訊息丟掉——不排隊、不重送。
                 # 信令本來就是「現在講給現在在線的人聽」，補送舊的 SDP 只會更亂。

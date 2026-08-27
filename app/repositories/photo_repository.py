@@ -200,8 +200,7 @@ def reset_folders_and_photos() -> None:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "TRUNCATE photo, folder, entity, folder_correction "
-                "RESTART IDENTITY CASCADE;"
+                "TRUNCATE photo, folder, entity, folder_correction RESTART IDENTITY CASCADE;"
             )
             cur.executemany(
                 "INSERT INTO folder (name, description, is_inbox) VALUES (%s, %s, %s);",
@@ -293,7 +292,7 @@ def list_folders() -> list[dict[str, Any]]:
     （若寫成 count(*) 會變成 1，那是常見的坑）。
     GROUP BY 只寫 f.id 就夠——f.id 是主鍵，PostgreSQL 知道其他 f. 欄位由它唯一決定。
     """
-    sql = f"""
+    sql = """
         SELECT f.id, f.name, f.description, f.is_inbox, count(p.id) AS photo_count
         FROM folder f
         LEFT JOIN photo p ON p.folder_id = f.id
@@ -417,14 +416,10 @@ def search_by_metadata(
         params["location"] = location
     if item:
         # items 是陣列：unnest 把它攤成一列一個元素，逐一做 ILIKE 比對
-        conditions.append(
-            "EXISTS (SELECT 1 FROM unnest(items) AS i WHERE i ILIKE %(item)s)"
-        )
+        conditions.append("EXISTS (SELECT 1 FROM unnest(items) AS i WHERE i ILIKE %(item)s)")
         params["item"] = item
     if recent:
-        conditions.append(
-            "COALESCE(content_time, uploaded_at::date) >= %(since)s"
-        )
+        conditions.append("COALESCE(content_time, uploaded_at::date) >= %(since)s")
         params["since"] = today - timedelta(days=config.RECENT_DAYS)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -454,9 +449,7 @@ def search_by_vector(
     }
     conditions: list[str] = []
     if recent:
-        conditions.append(
-            "COALESCE(content_time, uploaded_at::date) >= %(since)s"
-        )
+        conditions.append("COALESCE(content_time, uploaded_at::date) >= %(since)s")
         params["since"] = today - timedelta(days=config.RECENT_DAYS)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -553,9 +546,7 @@ def pin_entity(photo_id: int, entity_id: int) -> None:
             )
 
 
-def create_and_pin_entity(
-    photo_id: int, *, name: str, description: str
-) -> dict[str, Any]:
+def create_and_pin_entity(photo_id: int, *, name: str, description: str) -> dict[str, Any]:
     """自創一個實體**並且**立刻釘到照片上，回傳新的那一列（Phase 37 收尾補的）。
 
     為什麼不是「呼叫 create_entity 再呼叫 pin_entity」就好？
@@ -670,9 +661,7 @@ def list_photos_with_entity(entity_id: int) -> list[dict[str, Any]]:
 # 沒有完成勾選、沒有刪除、不寫 Gmail／日曆。
 
 
-def create_task(
-    photo_id: int, *, title: str, due_date: date | None
-) -> dict[str, Any]:
+def create_task(photo_id: int, *, title: str, due_date: date | None) -> dict[str, Any]:
     """建立一筆待辦，回傳新的那一列。
 
     due_date 收的是 date 物件（字串怎麼來、格式錯了怎麼辦，是 router 那層

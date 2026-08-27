@@ -34,20 +34,39 @@ def _insert(text, category, location, items, content_time, uploaded_at):
 @pytest.fixture
 def 三張規格照片():
     """完全照 自然語言詢問.feature 的資料表建立。"""
-    id1 = _insert("在 Target 購買可樂的收據", "收據", "Target", ["可樂"],
-                  date(2026, 8, 10), datetime(2026, 8, 18, 10, 0))
-    id2 = _insert("在 Costco 購買牛奶的收據", "收據", "Costco", ["牛奶"],
-                  date(2026, 5, 1), datetime(2026, 8, 17, 9, 0))
-    id3 = _insert("在 7-11 購買咖啡的收據", "收據", "7-11", ["咖啡"],
-                  None, datetime(2026, 8, 15, 12, 0))
+    id1 = _insert(
+        "在 Target 購買可樂的收據",
+        "收據",
+        "Target",
+        ["可樂"],
+        date(2026, 8, 10),
+        datetime(2026, 8, 18, 10, 0),
+    )
+    id2 = _insert(
+        "在 Costco 購買牛奶的收據",
+        "收據",
+        "Costco",
+        ["牛奶"],
+        date(2026, 5, 1),
+        datetime(2026, 8, 17, 9, 0),
+    )
+    id3 = _insert(
+        "在 7-11 購買咖啡的收據", "收據", "7-11", ["咖啡"], None, datetime(2026, 8, 15, 12, 0)
+    )
     return id1, id2, id3
 
 
 @pytest.fixture
 def 一張英文收據():
     """欄位值是英文、而且是大寫開頭——用來驗 ILIKE 的大小寫不敏感。"""
-    return _insert("Receipt from Target with Cola and Chips", "Receipt", "Target",
-                   ["Cola", "Chips"], date(2026, 8, 10), datetime(2026, 8, 18, 10, 0))
+    return _insert(
+        "Receipt from Target with Cola and Chips",
+        "Receipt",
+        "Target",
+        ["Cola", "Chips"],
+        date(2026, 8, 10),
+        datetime(2026, 8, 18, 10, 0),
+    )
 
 
 def _ids(documents):
@@ -58,8 +77,10 @@ def test_時間過濾以內容時間優先缺漏時用上傳時間(三張規格�
     id1, id2, id3 = 三張規格照片
 
     documents = vector_search(
-        "我最近買過什麼飲料？", FakeEmbeddings(),
-        QueryFilters(recent=True), TODAY,
+        "我最近買過什麼飲料？",
+        FakeEmbeddings(),
+        QueryFilters(recent=True),
+        TODAY,
     )
 
     # 1 號的內容時間 2026-08-10 在 30 天內 → 保留
@@ -69,18 +90,14 @@ def test_時間過濾以內容時間優先缺漏時用上傳時間(三張規格�
     assert _ids(documents) == sorted([id1, id3])
 
     # 條件查詢也套用同一條時間過濾（兩路共用），結果必須一致
-    metadata_documents = metadata_search(
-        QueryFilters(category="收據", recent=True), TODAY
-    )
+    metadata_documents = metadata_search(QueryFilters(category="收據", recent=True), TODAY)
     assert _ids(metadata_documents) == sorted([id1, id3])
 
 
 def test_沒有時間條件時不做時間過濾(三張規格照片):
     id1, id2, id3 = 三張規格照片
 
-    documents = vector_search(
-        "買過什麼？", FakeEmbeddings(), QueryFilters(recent=False), TODAY
-    )
+    documents = vector_search("買過什麼？", FakeEmbeddings(), QueryFilters(recent=False), TODAY)
 
     assert _ids(documents) == sorted([id1, id2, id3])
 
@@ -92,8 +109,14 @@ def test_沒有時間條件時不做時間過濾(三張規格照片):
     [(29, True), (30, True), (31, False)],
 )
 def test_三十天邊界(天數, 應該被找到):
-    photo_id = _insert("在 Target 購買可樂的收據", "收據", "Target", ["可樂"],
-                       TODAY - timedelta(days=天數), datetime(2026, 8, 18, 10, 0))
+    photo_id = _insert(
+        "在 Target 購買可樂的收據",
+        "收據",
+        "Target",
+        ["可樂"],
+        TODAY - timedelta(days=天數),
+        datetime(2026, 8, 18, 10, 0),
+    )
 
     documents = vector_search(
         "我最近買過什麼飲料？", FakeEmbeddings(), QueryFilters(recent=True), TODAY
@@ -105,9 +128,7 @@ def test_三十天邊界(天數, 應該被找到):
 def test_條件查詢用欄位過濾(三張規格照片):
     id1, _, _ = 三張規格照片
 
-    documents = metadata_search(
-        QueryFilters(category="收據", location="Target"), TODAY
-    )
+    documents = metadata_search(QueryFilters(category="收據", location="Target"), TODAY)
 
     assert _ids(documents) == [id1]
 
@@ -137,20 +158,24 @@ def test_物品比對不分大小寫(一張英文收據):
 def test_自訂retriever兩種模式都能用(三張規格照片):
     id1, _, _ = 三張規格照片
 
-    metadata_result = photo_retriever.invoke({
-        "question": "有哪些在 Target 拍的收據？",
-        "mode": "metadata",
-        "filters": QueryFilters(category="收據", location="Target"),
-        "today": TODAY,
-        "embeddings": FakeEmbeddings(),
-    })
-    vector_result = photo_retriever.invoke({
-        "question": "我最近買過什麼飲料？",
-        "mode": "vector",
-        "filters": QueryFilters(recent=True),
-        "today": TODAY,
-        "embeddings": FakeEmbeddings(),
-    })
+    metadata_result = photo_retriever.invoke(
+        {
+            "question": "有哪些在 Target 拍的收據？",
+            "mode": "metadata",
+            "filters": QueryFilters(category="收據", location="Target"),
+            "today": TODAY,
+            "embeddings": FakeEmbeddings(),
+        }
+    )
+    vector_result = photo_retriever.invoke(
+        {
+            "question": "我最近買過什麼飲料？",
+            "mode": "vector",
+            "filters": QueryFilters(recent=True),
+            "today": TODAY,
+            "embeddings": FakeEmbeddings(),
+        }
+    )
 
     assert _ids(metadata_result) == [id1]
     assert len(vector_result) >= 1
@@ -160,8 +185,7 @@ def test_自訂retriever兩種模式都能用(三張規格照片):
 
 def test_條件查詢依category過濾():
     """守住 search_by_metadata 的 category ILIKE——P11/P12 輪變異測試揭露此前無人守護。"""
-    收據id = _insert("在 Target 購買可樂的收據", "收據", "Target",
-                     ["可樂"], date(2026, 8, 10), NOW)
+    收據id = _insert("在 Target 購買可樂的收據", "收據", "Target", ["可樂"], date(2026, 8, 10), NOW)
     _insert("海邊的風景照", "風景", "海邊", [], None, NOW)
 
     documents = metadata_search(QueryFilters(category="收據"), TODAY)

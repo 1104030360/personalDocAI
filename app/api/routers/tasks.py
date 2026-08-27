@@ -27,9 +27,7 @@ def _task_out(task: dict, thumbnail_path: str | None) -> TaskOut:
         title=task["title"],
         # 資料庫給的是 date 物件，外送成 ISO 字串；沒到期日 → None → JSON null
         due_date=task["due_date"].isoformat() if task["due_date"] else None,
-        thumbnail_url=(
-            f"/photos/{task['photo_id']}/thumbnail" if thumbnail_path else None
-        ),
+        thumbnail_url=(f"/photos/{task['photo_id']}/thumbnail" if thumbnail_path else None),
     )
 
 
@@ -52,9 +50,7 @@ def create_task(photo_id: int, payload: CreateTaskRequest) -> TaskOut:
 
     # 格式已由 CreateTaskRequest 驗過（錯的早就 422 了），這裡不會炸
     due_date = date.fromisoformat(payload.due_date) if payload.due_date else None
-    task = photo_repository.create_task(
-        photo_id, title=payload.title, due_date=due_date
-    )
+    task = photo_repository.create_task(photo_id, title=payload.title, due_date=due_date)
     # 縮圖用上面已經撈到的那一列算，不為了同一張照片再查一次資料庫
     return _task_out(task, photo["thumbnail_path"])
 
@@ -65,6 +61,4 @@ def list_tasks() -> list[TaskOut]:
 
     不分頁、也沒有「只看未完成」——本增量沒有完成狀態這回事（design3.md §7）。
     """
-    return [
-        _task_out(row, row["thumbnail_path"]) for row in photo_repository.list_tasks()
-    ]
+    return [_task_out(row, row["thumbnail_path"]) for row in photo_repository.list_tasks()]

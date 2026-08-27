@@ -36,10 +36,10 @@ class RouteDecision(BaseModel):
     """
 
     mode: Literal["metadata", "vector", "entity", "task"]
-    category: str | None = None   # 例：收據 / Receipt
-    location: str | None = None   # 例：Target
-    item: str | None = None       # 例：可樂 / Cola
-    recent: bool = False          # 問題是否含「最近／recently」這類時間條件
+    category: str | None = None  # 例：收據 / Receipt
+    location: str | None = None  # 例：Target
+    item: str | None = None  # 例：可樂 / Cola
+    recent: bool = False  # 問題是否含「最近／recently」這類時間條件
     # entity 路：問句指名的那件東西，必須是「現有實體清單」裡的名稱原文
     entity_name: str | None = None
     # task 路：「這週」＝7、「這個月」＝30；null ＝沒講期限，列出全部待辦。
@@ -114,9 +114,7 @@ def format_entity_names(entity_names: list[str]) -> str:
 
 def build_route_prompt(question: str, entity_names: list[str]) -> str:
     """組出路由 prompt 的最終字串（本機與雲端共用，兩邊逐字相同）。"""
-    return ROUTE_PROMPT.format(
-        entities=format_entity_names(entity_names), question=question
-    )
+    return ROUTE_PROMPT.format(entities=format_entity_names(entity_names), question=question)
 
 
 class RouterClient(Protocol):
@@ -127,8 +125,7 @@ class RouterClient(Protocol):
     否則它只能亂猜（design3.md §6「不靠碰運氣搜字」）。
     """
 
-    def route(self, question: str, entity_names: list[str]) -> RouteDecision:
-        ...
+    def route(self, question: str, entity_names: list[str]) -> RouteDecision: ...
 
 
 class OllamaRouter:
@@ -140,9 +137,7 @@ class OllamaRouter:
 
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
         model_name = model or config.LLM_MODEL
-        self._timing_target = ai_timing.AiTarget(
-            backend="local", model=model_name
-        )
+        self._timing_target = ai_timing.AiTarget(backend="local", model=model_name)
         self._model = ChatOllama(
             model=model_name,
             base_url=base_url or config.OLLAMA_BASE_URL,
@@ -180,9 +175,7 @@ class OllamaCloudRouter:
 
     def __init__(self, model: str | None = None) -> None:
         self._model_name = model or config.OLLAMA_CLOUD_LLM_MODEL
-        self._timing_target = ai_timing.AiTarget(
-            backend="cloud", model=self._model_name
-        )
+        self._timing_target = ai_timing.AiTarget(backend="cloud", model=self._model_name)
         self._client = ollama_cloud.build_client()
 
     @property
@@ -241,8 +234,7 @@ def build_answer_prompt(question: str, documents: list[Document]) -> str:
 class AnswerClient(Protocol):
     """產生回答的介面。正式用 OllamaAnswerer，測試用 FakeAnswerLLM。"""
 
-    def answer(self, question: str, documents: list[Document]) -> str:
-        ...
+    def answer(self, question: str, documents: list[Document]) -> str: ...
 
 
 class OllamaAnswerer:
@@ -250,9 +242,7 @@ class OllamaAnswerer:
 
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
         model_name = model or config.LLM_MODEL
-        self._timing_target = ai_timing.AiTarget(
-            backend="local", model=model_name
-        )
+        self._timing_target = ai_timing.AiTarget(backend="local", model=model_name)
         self._model = ChatOllama(
             model=model_name,
             base_url=base_url or config.OLLAMA_BASE_URL,
@@ -277,9 +267,7 @@ class OllamaCloudAnswerer:
 
     def __init__(self, model: str | None = None) -> None:
         self._model_name = model or config.OLLAMA_CLOUD_LLM_MODEL
-        self._timing_target = ai_timing.AiTarget(
-            backend="cloud", model=self._model_name
-        )
+        self._timing_target = ai_timing.AiTarget(backend="cloud", model=self._model_name)
         self._client = ollama_cloud.build_client()
 
     @property
@@ -289,9 +277,7 @@ class OllamaCloudAnswerer:
     def answer(self, question: str, documents: list[Document]) -> str:
         response = self._client.chat(
             model=self._model_name,
-            messages=[
-                {"role": "user", "content": build_answer_prompt(question, documents)}
-            ],
+            messages=[{"role": "user", "content": build_answer_prompt(question, documents)}],
             options={"temperature": 0},
         )
         return response.message.content or ""
@@ -302,9 +288,9 @@ class AskState(TypedDict):
     """在流程圖裡一路傳下去的資料。"""
 
     question: str
-    mode: str                    # "metadata" | "vector" | "entity" | "task"
-    filters: QueryFilters        # 六個條件皆可空，哪一路讀哪幾個見 QueryFilters
-    retrieved: list[Document]    # 每份 Document 帶 id（metadata）＋內容
+    mode: str  # "metadata" | "vector" | "entity" | "task"
+    filters: QueryFilters  # 六個條件皆可空，哪一路讀哪幾個見 QueryFilters
+    retrieved: list[Document]  # 每份 Document 帶 id（metadata）＋內容
     answer: str
 
 
@@ -315,7 +301,7 @@ class AskDeps:
     router: RouterClient
     answerer: AnswerClient
     embeddings: Embeddings
-    today: date                  # 詢問當下的日期，供 30 天過濾使用
+    today: date  # 詢問當下的日期，供 30 天過濾使用
     # 現有實體名稱，注入路由 prompt 讓模型對得到名字（Phase 34）。
     # 預設空清單＝「一個實體都還沒建」的自然狀態，也是本專案剛裝好時的樣子；
     # 端點一定會把資料庫裡的真名單傳進來（見 api/routers/ask.py）。
@@ -340,9 +326,7 @@ def build_workflow(deps: AskDeps):
         try:
             # 計時包在 try 裡面：例外要先穿過 log_ai（打 ok=false）再被下面接住，
             # 「失敗就 fallback 成語意查詢」的語意一個字都沒變（design4.md §9 第 5 列）
-            with ai_timing.log_ai(
-                "route", target=getattr(deps.router, "timing_target", None)
-            ):
+            with ai_timing.log_ai("route", target=getattr(deps.router, "timing_target", None)):
                 decision = deps.router.route(state["question"], deps.entity_names)
                 if not isinstance(decision, RouteDecision):
                     raise _InvalidRouteDecisionError(type(decision).__name__)
@@ -404,12 +388,8 @@ def build_workflow(deps: AskDeps):
         刻意**不加** try/except：回答失敗仍然 500 不吞錯（design.md 錯誤處理總表的
         既有決定）。log_ai 打完 ok=false 之後例外要繼續往外飛。
         """
-        with ai_timing.log_ai(
-            "answer", target=getattr(deps.answerer, "timing_target", None)
-        ):
-            return {
-                "answer": deps.answerer.answer(state["question"], state["retrieved"])
-            }
+        with ai_timing.log_ai("answer", target=getattr(deps.answerer, "timing_target", None)):
+            return {"answer": deps.answerer.answer(state["question"], state["retrieved"])}
 
     graph = StateGraph(AskState)
     graph.add_node("route", route_node)

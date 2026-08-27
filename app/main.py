@@ -32,6 +32,7 @@ if not _app_logger.handlers:
     _app_logger.addHandler(_handler)
     _app_logger.setLevel(logging.INFO)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """服務啟動／關閉時要做的事（增量五 design5.md §4.1）。

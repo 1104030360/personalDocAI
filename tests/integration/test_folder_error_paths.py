@@ -98,13 +98,9 @@ def test_VLM看不懂時不寫庫不留檔也不建資料夾(client):
     ⚠ 「不留檔」現在多守一樣東西：收檔時寫進 data/staging/ 的暫存檔，
       整筆失敗時也必須被刪掉（design5.md §4.1、D10），不然它會變成沒人會撿的垃圾。
     """
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
-        PhotoUnderstanding(understood=False)
-    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(PhotoUnderstanding(understood=False))
 
-    response = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
+    response = client.post("/photos", files={"file": ("a.png", make_png_bytes(), "image/png")})
     assert response.status_code == 202, response.text
 
     job_id = response.json()["job_id"]
@@ -128,7 +124,7 @@ def test_VLM推薦清單外名稱時建議改成未分類(client):
         PhotoUnderstanding(
             understood=True,
             text="A Costco receipt for cola",
-            category="Receipts from Costco",   # 六個預設資料夾裡沒有這個名字
+            category="Receipts from Costco",  # 六個預設資料夾裡沒有這個名字
             location="Costco",
             items=["cola"],
             content_time="2026-08-11",
@@ -168,9 +164,7 @@ def test_VLM直接推薦未分類時照樣回201(client):
 
     assert 列["suggested_category"] is None
     未分類 = photo_repository.find_folder_by_name("未分類")
-    assert 列["folder_id"] == 未分類["id"], (
-        "建議與實際歸屬都是未分類時，照片就該待在那一筆資料夾裡"
-    )
+    assert 列["folder_id"] == 未分類["id"], "建議與實際歸屬都是未分類時，照片就該待在那一筆資料夾裡"
 
 
 # ---- ④ 自建重名（大小寫不同）→ 409，不新增也不覆蓋 ----
@@ -280,9 +274,7 @@ def test_沒有任何刪除端點():
     """design1 §12 最後一列：本增量不做刪除 API。沒有刪除端點，就不可能刪掉未分類。"""
     專案根目錄 = Path(__file__).resolve().parents[2]
     routers目錄 = 專案根目錄 / "app" / "api" / "routers"
-    原始碼 = "".join(
-        檔案.read_text(encoding="utf-8") for 檔案 in sorted(routers目錄.glob("*.py"))
-    )
+    原始碼 = "".join(檔案.read_text(encoding="utf-8") for 檔案 in sorted(routers目錄.glob("*.py")))
     原始碼 += (專案根目錄 / "app" / "main.py").read_text(encoding="utf-8")
 
     for 關鍵字 in ("@router.delete", "@app.delete"):

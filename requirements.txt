@@ -29,3 +29,11 @@ python-dotenv>=1.0        # 讀 .env 檔裡的環境變數
 pytest>=8.0               # 測試框架
 pytest-bdd>=8.1           # 讓 pytest 能直接執行 .feature 規格檔（Rule/Example 需要這個版本以上）
 httpx>=0.27               # 測試時用來呼叫自己的 API
+
+# --- 格式與 lint（Phase 73）---
+# ⚠ 下限刻意寫 0.16 而不是 0.12：整庫的格式基線是用 0.16.5 跑出來的，
+#   而 formatter 的輸出會隨版本演進。裝到更舊的 ruff 會把格式「反著改回去」，
+#   於是每個人 commit 都在互相覆蓋。要調的話，要跟 .pre-commit-config.yaml
+#   的 rev 一起調（那邊是 pre-commit 自己抓的 ruff，不是這裡這顆）。
+ruff>=0.16                # Python 的 linter + formatter（一把抵 black／flake8／isort）
+pre-commit>=4.0           # git commit hook 管理器；每人 clone 後要跑一次 pre-commit install

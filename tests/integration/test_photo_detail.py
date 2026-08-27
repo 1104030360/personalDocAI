@@ -96,9 +96,7 @@ def test_metadata恰四鍵且值正確(client):
 
     詳情 = client.get(f"/photos/{列['id']}").json()
 
-    assert set(詳情["metadata"]) == {
-        "category", "location", "items", "content_time"
-    }
+    assert set(詳情["metadata"]) == {"category", "location", "items", "content_time"}
     assert 詳情["metadata"] == {
         "category": 列["category"],
         "location": 列["location"],
@@ -106,9 +104,7 @@ def test_metadata恰四鍵且值正確(client):
         # 資料庫回的是 date 物件，外送前會轉成 ISO 字串
         "content_time": 列["content_time"].isoformat(),
     }
-    assert 詳情["metadata"]["content_time"] == "2026-08-10", (
-        "content_time 要外送 ISO 日期字串"
-    )
+    assert 詳情["metadata"]["content_time"] == "2026-08-10", "content_time 要外送 ISO 日期字串"
 
 
 # ---- ② design4 §9 第 1 列：沒這列 → 404 ----

@@ -52,8 +52,7 @@ ENTITY_PICK_PROMPT = """你要從「候選實體」裡挑出最能代表這張�
 class EntitySuggesterClient(Protocol):
     """再建議一個實體的介面。正式用 OllamaEntitySuggester，測試用 FakeEntitySuggester。"""
 
-    def pick(self, photo: dict, candidates: list[dict]) -> str | None:
-        ...
+    def pick(self, photo: dict, candidates: list[dict]) -> str | None: ...
 
 
 def _build_pick_prompt(photo: dict, candidates: list[dict]) -> str:
@@ -61,9 +60,7 @@ def _build_pick_prompt(photo: dict, candidates: list[dict]) -> str:
     candidate_lines = "\n".join(
         f"- {entity['name']}：{entity['description']}" for entity in candidates
     )
-    return ENTITY_PICK_PROMPT.format(
-        photo=_describe_photo(photo), candidates=candidate_lines
-    )
+    return ENTITY_PICK_PROMPT.format(photo=_describe_photo(photo), candidates=candidate_lines)
 
 
 def _describe_photo(photo: dict) -> str:
@@ -84,9 +81,7 @@ class OllamaEntitySuggester:
 
     def __init__(self, model: str | None = None, base_url: str | None = None) -> None:
         model_name = model or config.LLM_MODEL
-        self._timing_target = ai_timing.AiTarget(
-            backend="local", model=model_name
-        )
+        self._timing_target = ai_timing.AiTarget(backend="local", model=model_name)
         self._model = ChatOllama(
             model=model_name,
             base_url=base_url or config.OLLAMA_BASE_URL,
@@ -107,9 +102,7 @@ class OllamaEntitySuggester:
         """
         message = HumanMessage(content=_build_pick_prompt(photo, candidates))
         try:
-            with ai_timing.log_ai(
-                "entity_suggest", target=self.timing_target
-            ):
+            with ai_timing.log_ai("entity_suggest", target=self.timing_target):
                 result = self._model.invoke([message])
                 if not isinstance(result, EntityPick):
                     raise _InvalidEntityPickError(type(result).__name__)
@@ -143,9 +136,7 @@ class OllamaCloudEntitySuggester:
 
     def __init__(self, model: str | None = None) -> None:
         self._model_name = model or config.OLLAMA_CLOUD_LLM_MODEL
-        self._timing_target = ai_timing.AiTarget(
-            backend="cloud", model=self._model_name
-        )
+        self._timing_target = ai_timing.AiTarget(backend="cloud", model=self._model_name)
         self._client = ollama_cloud.build_client()
 
     @property
@@ -156,10 +147,8 @@ class OllamaCloudEntitySuggester:
         prompt = _build_pick_prompt(photo, candidates) + CLOUD_PICK_JSON_INSTRUCTION
         try:
             # 解析也包進計時裡：雲端回了解析不出來的東西，對這次呼叫來說就是失敗
-            #（與看圖那邊「看不懂 → ok=false」的處理一致）
-            with ai_timing.log_ai(
-                "entity_suggest", target=self.timing_target
-            ):
+            # （與看圖那邊「看不懂 → ok=false」的處理一致）
+            with ai_timing.log_ai("entity_suggest", target=self.timing_target):
                 response = self._client.chat(
                     model=self._model_name,
                     messages=[{"role": "user", "content": prompt}],

@@ -29,9 +29,7 @@ def test_非圖片格式不會呼叫看圖(client):
     fake = FakeVLM()
     app.dependency_overrides[get_vlm] = lambda: fake
 
-    response = client.post(
-        "/photos", files={"file": ("a.txt", b"hello", "text/plain")}
-    )
+    response = client.post("/photos", files={"file": ("a.txt", b"hello", "text/plain")})
 
     assert response.status_code == 415
     assert fake.calls == 0  # 415 之後不會呼叫 understand()
@@ -47,9 +45,7 @@ def test_理解結果text全空白最後整筆失敗(client):
         PhotoUnderstanding(understood=True, text="   ")
     )
 
-    response = client.post(
-        "/photos", files={"file": ("a.png", PNG_BYTES, "image/png")}
-    )
+    response = client.post("/photos", files={"file": ("a.png", PNG_BYTES, "image/png")})
     assert response.status_code == 202, response.text
 
     job_id = response.json()["job_id"]
@@ -114,8 +110,12 @@ def test_上傳時把現有資料夾清單傳給看圖(client):
     """
     fake = FakeVLM(
         PhotoUnderstanding(
-            understood=True, text="在 Target 購買可樂的收據", category="收據",
-            location="Target", items=["可樂"], content_time="2026-08-10",
+            understood=True,
+            text="在 Target 購買可樂的收據",
+            category="收據",
+            location="Target",
+            items=["可樂"],
+            content_time="2026-08-10",
         )
     )
     app.dependency_overrides[get_vlm] = lambda: fake

@@ -23,7 +23,7 @@ from tests.fakes import FakeEmbeddings, FakeVLM
 超市照片 = PhotoUnderstanding(
     understood=True,
     text="超市購物的照片",
-    category="收據",          # VLM 的建議（不當成歸屬，只存進 suggested_category 那一欄）
+    category="收據",  # VLM 的建議（不當成歸屬，只存進 suggested_category 那一欄）
     location="Costco",
     items=["咖啡", "牛奶"],
     content_time=None,
@@ -133,9 +133,7 @@ def test_照片不存在回404(client, 已上傳的照片):
 
 
 def test_資料夾不存在回404(client, 已上傳的照片):
-    response = client.patch(
-        f"/photos/{已上傳的照片['id']}/folder", json={"folder_id": 999}
-    )
+    response = client.patch(f"/photos/{已上傳的照片['id']}/folder", json={"folder_id": 999})
 
     assert response.status_code == 404
     assert response.json()["detail"] == "找不到資料夾"
@@ -167,9 +165,9 @@ def test_自建名稱與現有資料夾重複回409(client, 已上傳的照片):
 @pytest.mark.parametrize(
     "body",
     [
-        {},                                 # 兩個都不給
-        {"folder_id": 1, "name": "專案X"},   # 兩個都給
-        {"name": "   "},                    # name 只有空白
+        {},  # 兩個都不給
+        {"folder_id": 1, "name": "專案X"},  # 兩個都給
+        {"name": "   "},  # name 只有空白
     ],
 )
 def test_請求必須恰好給一個folder_id或name(client, 已上傳的照片, body):
@@ -203,9 +201,7 @@ def test_已定案後自建路徑也回409且不建資料夾(client, 已上傳�
     """定案檢查排在重名檢查與 create_folder 之前——自建那條路也進不去。"""
     photo_id = 已上傳的照片["id"]
     收據id = photo_repository.find_folder_by_name("收據")["id"]
-    assert client.patch(
-        f"/photos/{photo_id}/folder", json={"folder_id": 收據id}
-    ).status_code == 200
+    assert client.patch(f"/photos/{photo_id}/folder", json={"folder_id": 收據id}).status_code == 200
     定案後資料夾數 = len(photo_repository.list_folders())
 
     response = client.patch(

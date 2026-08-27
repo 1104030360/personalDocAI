@@ -107,8 +107,7 @@ def 照片文字描述為(context, text):
 
 def _已存的照片(context) -> dict:
     assert context["photo_ids"], (
-        "任務跑完了卻沒有任何照片進收件箱——"
-        "檢查 When 步驟有沒有呼叫 跑完任務()"
+        "任務跑完了卻沒有任何照片進收件箱——檢查 When 步驟有沒有呼叫 跑完任務()"
     )
     row = photo_repository.fetch_photo(context["photo_ids"][0])
     assert row is not None, "資料庫裡找不到剛剛拍的照片"

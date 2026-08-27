@@ -18,7 +18,7 @@ class FolderWithCount(BaseModel):
     id: int
     name: str
     description: str
-    is_inbox: bool          # 只有系統收件箱「未分類」是 true
+    is_inbox: bool  # 只有系統收件箱「未分類」是 true
     photo_count: int
 
 
@@ -42,11 +42,11 @@ class PhotoSummary(BaseModel):
     id: int
     thumbnail_url: str | None
     text: str
-    uploaded_at: datetime   # 轉成 JSON 時是 ISO 字串，例如 2026-08-18T10:00:00+08:00
+    uploaded_at: datetime  # 轉成 JSON 時是 ISO 字串，例如 2026-08-18T10:00:00+08:00
     suggested_category: str | None
-    suggested_entity: str | None        # clamp 後的實體**名稱**，清單外＝None
-    suggested_task_title: str | None    # 沒有可辦的事＝None（待辦窗就不開）
-    suggested_task_due: date | None     # 轉成 JSON 時是 "2026-08-21" 這種字串
+    suggested_entity: str | None  # clamp 後的實體**名稱**，清單外＝None
+    suggested_task_title: str | None  # 沒有可辦的事＝None（待辦窗就不開）
+    suggested_task_due: date | None  # 轉成 JSON 時是 "2026-08-21" 這種字串
 
 
 class FolderDetailResponse(BaseModel):

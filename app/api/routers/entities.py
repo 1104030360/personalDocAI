@@ -33,9 +33,7 @@ def list_entities() -> list[EntityOut]:
     return [_entity_out(row) for row in photo_repository.list_entities()]
 
 
-@router.post(
-    "/photos/{photo_id}/entities", status_code=201, response_model=PinEntityResponse
-)
+@router.post("/photos/{photo_id}/entities", status_code=201, response_model=PinEntityResponse)
 def pin_entity(photo_id: int, payload: PinEntityRequest) -> PinEntityResponse:
     """把一個實體釘到照片上：釘現有的，或當場自創一個（design3.md D12）。
 
@@ -55,11 +53,7 @@ def pin_entity(photo_id: int, payload: PinEntityRequest) -> PinEntityResponse:
         # 實體清單很短（只在使用者按「自創」時才 +1），
         # 用現成的 list_entities() 挑出那一筆就好，不必為此多寫一條 SQL。
         entity = next(
-            (
-                row
-                for row in photo_repository.list_entities()
-                if row["id"] == payload.entity_id
-            ),
+            (row for row in photo_repository.list_entities() if row["id"] == payload.entity_id),
             None,
         )
         if entity is None:
@@ -90,15 +84,11 @@ def pin_entity(photo_id: int, payload: PinEntityRequest) -> PinEntityResponse:
     )
 
 
-@router.post(
-    "/photos/{photo_id}/entity-suggestion", response_model=EntitySuggestionResponse
-)
+@router.post("/photos/{photo_id}/entity-suggestion", response_model=EntitySuggestionResponse)
 def suggest_entity(
     photo_id: int,
     payload: EntitySuggestionRequest,
-    suggester: entity_suggestion_service.EntitySuggesterClient = Depends(
-        get_entity_suggester
-    ),
+    suggester: entity_suggestion_service.EntitySuggesterClient = Depends(get_entity_suggester),
 ) -> EntitySuggestionResponse:
     """再建議一個實體：從「還沒看過的」候選裡挑一個（design3.md D12）。
 
@@ -110,15 +100,11 @@ def suggest_entity(
         raise HTTPException(status_code=404, detail="找不到照片")
 
     excluded = set(payload.exclude)
-    candidates = [
-        row for row in photo_repository.list_entities() if row["id"] not in excluded
-    ]
+    candidates = [row for row in photo_repository.list_entities() if row["id"] not in excluded]
     if not candidates:
         # 沒有東西可挑就不必問 LLM——省一次推論，也不會有幻覺可以夾
         return EntitySuggestionResponse(suggested_entity=None)
 
     # 模型只能挑候選清單裡的，所以夾也是夾**候選**（被 exclude 掉的不可能回來）
     picked = vlm_service.clamp_entity(suggester.pick(photo, candidates), candidates)
-    return EntitySuggestionResponse(
-        suggested_entity=_entity_out(picked) if picked else None
-    )
+    return EntitySuggestionResponse(suggested_entity=_entity_out(picked) if picked else None)

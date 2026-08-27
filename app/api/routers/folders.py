@@ -30,9 +30,7 @@ def get_folder(folder_id: int) -> FolderDetailResponse:
         PhotoSummary(
             id=row["id"],
             # 有存過縮圖檔才給網址；舊資料沒有路徑 → None → JSON null
-            thumbnail_url=(
-                f"/photos/{row['id']}/thumbnail" if row["thumbnail_path"] else None
-            ),
+            thumbnail_url=(f"/photos/{row['id']}/thumbnail" if row["thumbnail_path"] else None),
             text=row["text"],
             uploaded_at=row["uploaded_at"],
             # 上傳當下的三個建議（Phase 35 的資料夾 ＋ Phase 61 的實體與待辦）：

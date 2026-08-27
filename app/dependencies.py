@@ -131,9 +131,7 @@ def _ollama_entity_suggester() -> entity_suggestion_service.OllamaEntitySuggeste
 
 
 @lru_cache(maxsize=1)
-def _ollama_cloud_entity_suggester() -> (
-    entity_suggestion_service.OllamaCloudEntitySuggester
-):
+def _ollama_cloud_entity_suggester() -> entity_suggestion_service.OllamaCloudEntitySuggester:
     return entity_suggestion_service.OllamaCloudEntitySuggester()
 
 

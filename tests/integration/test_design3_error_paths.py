@@ -227,8 +227,11 @@ def test_再建議時模型爆炸只回None並留下警告(caplog):
     suggester = _建一個不連線的建議器()
     suggester._model = 會爆炸的模型()
     photo = {
-        "text": "MacBook 的維修發票", "category": "收據", "location": "Apple",
-        "items": ["筆電"], "content_time": date(2026, 8, 10),
+        "text": "MacBook 的維修發票",
+        "category": "收據",
+        "location": "Apple",
+        "items": ["筆電"],
+        "content_time": date(2026, 8, 10),
     }
 
     with caplog.at_level(logging.WARNING):
@@ -243,8 +246,11 @@ def test_再建議時模型回傳非結構化結果也只回None(caplog):
     suggester = _建一個不連線的建議器()
     suggester._model = 回垃圾的模型()
     photo = {
-        "text": "MacBook 的維修發票", "category": "收據", "location": None,
-        "items": [], "content_time": None,
+        "text": "MacBook 的維修發票",
+        "category": "收據",
+        "location": None,
+        "items": [],
+        "content_time": None,
     }
 
     with caplog.at_level(logging.WARNING):
@@ -261,9 +267,7 @@ def test_建議器整條掛掉時端點照樣回200與null(client):
     # FakeEntitySuggester 預設誰都不挑，正好等於「模型失敗後回 None」的下場
     app.dependency_overrides[get_entity_suggester] = lambda: FakeEntitySuggester(None)
 
-    response = client.post(
-        f"/photos/{body['id']}/entity-suggestion", json={"exclude": []}
-    )
+    response = client.post(f"/photos/{body['id']}/entity-suggestion", json={"exclude": []})
 
     assert response.status_code == 200, response.text
     assert response.json() == {"suggested_entity": None}
@@ -337,9 +341,7 @@ def test_待辦寫入失敗回500且沒有半筆待辦(不擲出例外的client,
     photo_id = body["id"]
     monkeypatch.setattr(photo_repository, "create_task", _讓它爆炸)
 
-    response = 不擲出例外的client.post(
-        f"/photos/{photo_id}/task", json={"title": "交 Project 2"}
-    )
+    response = 不擲出例外的client.post(f"/photos/{photo_id}/task", json={"title": "交 Project 2"})
 
     assert response.status_code == 500, "寫入失敗不可以被吞掉"
     assert photo_repository.get_task_by_photo(photo_id) is None
@@ -356,12 +358,10 @@ def test_待辦問句但一筆待辦都沒有時查無不虛構():
     由 generate 節點交給 LLM 說「查無」（design.md 鐵律：查無不虛構）。
     """
     photo_repository.create_task(_一張照片(), title="這筆待會被清掉", due_date=None)
-    photo_repository.reset_folders_and_photos()   # 照片沒了，待辦被 CASCADE 一起帶走
+    photo_repository.reset_folders_and_photos()  # 照片沒了，待辦被 CASCADE 一起帶走
 
     deps = AskDeps(
-        router=FakeRouter(
-            {"這週要交什麼？": RouteDecision(mode="task", due_within_days=7)}
-        ),
+        router=FakeRouter({"這週要交什麼？": RouteDecision(mode="task", due_within_days=7)}),
         answerer=FakeAnswerLLM(),
         embeddings=FakeEmbeddings(),
         today=date(2026, 8, 18),
@@ -432,8 +432,8 @@ def test_openapi裡沒有任何DELETE動詞(client):
 
 # 唯二可以碰資料庫連線／SQL 的檔案（design.md 分層：repository 是唯一寫 SQL 的地方）
 可以碰資料庫的檔案 = {
-    "app/repositories/photo_repository.py",   # 全系統唯一寫 SQL 的地方
-    "app/db/session.py",                      # 全系統唯一呼叫 psycopg.connect 的地方
+    "app/repositories/photo_repository.py",  # 全系統唯一寫 SQL 的地方
+    "app/db/session.py",  # 全系統唯一呼叫 psycopg.connect 的地方
 }
 
 # 只要出現這些字，就代表這個檔案自己在開連線或送 SQL
@@ -473,9 +473,9 @@ def test_SQL只出現在repository與db層():
 def test_只有db層session呼叫psycopg_connect():
     """再收一層：連線字串只在一個地方讀，測試才有辦法整組導向測試庫。"""
     session原始碼 = (專案根目錄 / "app/db/session.py").read_text(encoding="utf-8")
-    repository原始碼 = (
-        專案根目錄 / "app/repositories/photo_repository.py"
-    ).read_text(encoding="utf-8")
+    repository原始碼 = (專案根目錄 / "app/repositories/photo_repository.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "psycopg.connect(" in session原始碼
     assert "psycopg.connect(" not in repository原始碼

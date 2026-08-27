@@ -57,9 +57,7 @@ def _pending_count() -> int:
     （folder_one_inbox 這個部分唯一索引保證全系統至多一個）。
     """
     return next(
-        folder["photo_count"]
-        for folder in photo_repository.list_folders()
-        if folder["is_inbox"]
+        folder["photo_count"] for folder in photo_repository.list_folders() if folder["is_inbox"]
     )
 
 
@@ -80,9 +78,7 @@ def list_ingest_jobs(store: JobStore = Depends(get_job_store)) -> IngestJobListO
 
 
 @router.post("/ingest-jobs/{job_id}/dismiss", status_code=204)
-def dismiss_ingest_job(
-    job_id: str, store: JobStore = Depends(get_job_store)
-) -> Response:
+def dismiss_ingest_job(job_id: str, store: JobStore = Depends(get_job_store)) -> Response:
     """把一列**失敗**的任務從清單上關掉（design5.md §4.3、§8 第 9 列）。
 
     ★ 順序鐵律：**先 404（有沒有這筆）再 409（狀態對不對）**。

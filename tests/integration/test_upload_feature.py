@@ -22,9 +22,9 @@ from app.repositories import photo_repository
 from app.services import storage_service
 from app.services.vlm_service import PhotoUnderstanding
 from tests.conftest import (
+    _收件箱照片ids,
     first_row,
     split_items,
-    _收件箱照片ids,
     目前的任務清單,
     跑完任務,
 )
@@ -53,8 +53,8 @@ def context() -> dict:
         "now": DEFAULT_NOW,
         "understanding": PhotoUnderstanding(understood=False),
         "response": None,
-        "photo_ids": [],     # 這次任務跑完之後新進收件箱的照片
-        "job": None,         # 跑完之後的任務狀態（成功時是 None＝已被刪掉）
+        "photo_ids": [],  # 這次任務跑完之後新進收件箱的照片
+        "job": None,  # 跑完之後的任務狀態（成功時是 None＝已被刪掉）
     }
 
 
@@ -69,8 +69,7 @@ def wire_feature_clock(wire_fake_ai, context):
     yield
 
 
-def _upload(context, client, filename="photo.png", content_type="image/png",
-            payload=PNG_BYTES):
+def _upload(context, client, filename="photo.png", content_type="image/png", payload=PNG_BYTES):
     """When 步驟：收下檔案（202）**並且把那個任務跑完**。
 
     增量五把上傳拆成兩段：HTTP 只收下（202），worker 才真的入庫。
@@ -86,12 +85,10 @@ def _upload(context, client, filename="photo.png", content_type="image/png",
     context["photo_ids"] = []
     context["job"] = None
     照片數_收檔前 = photo_repository.count_photos()
-    response = client.post(
-        "/photos", files={"file": (filename, payload, content_type)}
-    )
+    response = client.post("/photos", files={"file": (filename, payload, content_type)})
     context["response"] = response
     if response.status_code != 202:
-        return                      # 格式不對（415）：Then「操作失敗」會驗它
+        return  # 格式不對（415）：Then「操作失敗」會驗它
 
     # design5.md §9 的第 2 步：202 只是「收下了」，這一刻 photo 表一列都沒有多
     assert photo_repository.count_photos() == 照片數_收檔前
@@ -106,10 +103,7 @@ def _upload(context, client, filename="photo.png", content_type="image/png",
 def _photo_id(context) -> int:
     """這個例子剛剛存進去的那一張照片 id（規格的例子都是單圖或 PDF 的第一頁）。"""
     assert context["response"].status_code == 202, context["response"].text
-    assert context["photo_ids"], (
-        "任務跑完了卻沒有任何照片進收件箱——"
-        f"job 狀態：{context['job']}"
-    )
+    assert context["photo_ids"], f"任務跑完了卻沒有任何照片進收件箱——job 狀態：{context['job']}"
     return context["photo_ids"][0]
 
 
@@ -151,8 +145,13 @@ def 建立實體(datatable):
 # ------------------------------- When ------------------------------
 @when("使用者上傳一個非圖片格式的檔案")
 def 上傳非圖片檔(context, client):
-    _upload(context, client, filename="note.txt",
-            content_type="text/plain", payload="這不是圖片".encode())
+    _upload(
+        context,
+        client,
+        filename="note.txt",
+        content_type="text/plain",
+        payload="這不是圖片".encode(),
+    )
 
 
 @when(parsers.parse('使用者上傳一張照片，VLM 理解其內容為 "{text}"'))
@@ -186,9 +185,7 @@ def 上傳照片並指定建議實體(context, client, name):
     _upload(context, client)
 
 
-@when(parsers.parse(
-    '使用者上傳一張照片，VLM 建議的待辦標題為 "{title}"，到期日為 "{due}"'
-))
+@when(parsers.parse('使用者上傳一張照片，VLM 建議的待辦標題為 "{title}"，到期日為 "{due}"'))
 def 上傳照片並指定建議待辦(context, client, title, due):
     context["understanding"] = understanding_for_text(_TARGET_TEXT).model_copy(
         update={"task_title": title, "task_due": due}
@@ -201,14 +198,17 @@ def 上傳照片(context, client):
     _upload(context, client)
 
 
-@when(parsers.parse(
-    '使用者上傳一份 {pages:d} 頁的 PDF 檔案，VLM 理解每一頁的內容為 "{text}"'
-))
+@when(parsers.parse('使用者上傳一份 {pages:d} 頁的 PDF 檔案，VLM 理解每一頁的內容為 "{text}"'))
 def 上傳PDF並指定每頁理解內容(context, client, pages, text):
     """PDF 一頁一張照片（design3.md D7）：假 VLM 對每一頁都回同一個理解結果。"""
     context["understanding"] = understanding_for_text(text)
-    _upload(context, client, filename="scan.pdf",
-            content_type="application/pdf", payload=make_pdf_bytes(pages))
+    _upload(
+        context,
+        client,
+        filename="scan.pdf",
+        content_type="application/pdf",
+        payload=make_pdf_bytes(pages),
+    )
 
 
 # ------------------------------- Then ------------------------------
@@ -384,9 +384,7 @@ def 回應建議待辦為(context, datatable):
     row = _stored_photo(context)
     assert row["suggested_task_title"] is not None, "照片沒有落庫任何待辦建議"
     assert row["suggested_task_title"] == expected["title"]
-    stored_due = (
-        row["suggested_task_due"].isoformat() if row["suggested_task_due"] else ""
-    )
+    stored_due = row["suggested_task_due"].isoformat() if row["suggested_task_due"] else ""
     assert stored_due == expected["due"].strip()
 
 

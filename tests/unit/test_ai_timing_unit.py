@@ -108,9 +108,7 @@ def test_vlm跟著開關切換backend與model(caplog, monkeypatch):
     monkeypatch.setattr(config, "AI_BACKEND", "cloud")
     with log_ai("vlm"):
         pass
-    assert (
-        f"backend=cloud model={config.OLLAMA_CLOUD_VLM_MODEL}" in _結束行(caplog)
-    )
+    assert f"backend=cloud model={config.OLLAMA_CLOUD_VLM_MODEL}" in _結束行(caplog)
 
 
 def test_三種文字用途都用LLM模型名(caplog, monkeypatch):
@@ -122,19 +120,13 @@ def test_三種文字用途都用LLM模型名(caplog, monkeypatch):
         monkeypatch.setattr(config, "AI_BACKEND", "local")
         with log_ai(kind):
             pass
-        assert (
-            f"kind={kind} backend=local model={config.LLM_MODEL}"
-            in _結束行(caplog)
-        )
+        assert f"kind={kind} backend=local model={config.LLM_MODEL}" in _結束行(caplog)
 
         caplog.clear()
         monkeypatch.setattr(config, "AI_BACKEND", "cloud")
         with log_ai(kind):
             pass
-        assert (
-            f"kind={kind} backend=cloud model={config.OLLAMA_CLOUD_LLM_MODEL}"
-            in _結束行(caplog)
-        )
+        assert f"kind={kind} backend=cloud model={config.OLLAMA_CLOUD_LLM_MODEL}" in _結束行(caplog)
 
 
 def test_備註接在結束行後面且五個欄位仍在(caplog, monkeypatch):
@@ -152,9 +144,7 @@ def test_備註接在結束行後面且五個欄位仍在(caplog, monkeypatch):
     assert "ok=true" in 結束
 
 
-def test_model與備註含換行ANSI和控制字元時每筆log仍只有一個實體行(
-    caplog, monkeypatch
-):
+def test_model與備註含換行ANSI和控制字元時每筆log仍只有一個實體行(caplog, monkeypatch):
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(config, "AI_BACKEND", "local")
     monkeypatch.setattr(
@@ -172,9 +162,7 @@ def test_model與備註含換行ANSI和控制字元時每筆log仍只有一個�
         assert all(字元.isprintable() for 字元 in 訊息)
 
 
-def test_過長model與備註會截斷且結束行仍保留五個必要欄位(
-    caplog, monkeypatch
-):
+def test_過長model與備註會截斷且結束行仍保留五個必要欄位(caplog, monkeypatch):
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(config, "AI_BACKEND", "local")
     monkeypatch.setattr(config, "VLM_MODEL", "x" * 10_000)
@@ -190,9 +178,7 @@ def test_過長model與備註會截斷且結束行仍保留五個必要欄位(
         assert 欄位 in 結束, f"結束行少了 {欄位}：{結束}"
 
 
-def test_本機VLM的不可變目標可固定一次request實際使用的模型(
-    caplog, monkeypatch
-):
+def test_本機VLM的不可變目標可固定一次request實際使用的模型(caplog, monkeypatch):
     caplog.set_level(logging.INFO)
     vlm = vlm_service.OllamaVLM(model="request-local-vlm")
     目標 = vlm.timing_target

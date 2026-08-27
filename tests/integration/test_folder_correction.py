@@ -178,9 +178,7 @@ def test_改選其他現有資料夾就記一筆糾錯(client, 假看圖):
     """已釐清 D：②改選現有且名稱 ≠ 建議 ＝ 糾錯。"""
     body = 上傳一張(client)
 
-    response = client.patch(
-        f"/photos/{body['id']}/folder", json={"folder_id": 資料夾id("飲食")}
-    )
+    response = client.patch(f"/photos/{body['id']}/folder", json={"folder_id": 資料夾id("飲食")})
 
     assert response.status_code == 200, response.text
     corrections = photo_repository.recent_corrections()
@@ -212,9 +210,7 @@ def test_採用建議不記糾錯(client, 假看圖):
     """已釐清 D：①採用建議＝猜對了，沒有東西要學。"""
     body = 上傳一張(client)
 
-    response = client.patch(
-        f"/photos/{body['id']}/folder", json={"folder_id": 資料夾id("收據")}
-    )
+    response = client.patch(f"/photos/{body['id']}/folder", json={"folder_id": 資料夾id("收據")})
 
     assert response.status_code == 200, response.text
     assert photo_repository.recent_corrections() == []
@@ -225,9 +221,7 @@ def test_沒有建議的照片不記糾錯(client, wire_fake_ai):
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(清單外建議的照片)
     body = 上傳一張(client)
 
-    response = client.patch(
-        f"/photos/{body['id']}/folder", json={"folder_id": 資料夾id("飲食")}
-    )
+    response = client.patch(f"/photos/{body['id']}/folder", json={"folder_id": 資料夾id("飲食")})
 
     assert response.status_code == 200, response.text
     assert photo_repository.recent_corrections() == []
@@ -278,7 +272,11 @@ def test_上傳看圖時帶入最近五筆糾錯(client, 假看圖):
     上傳一張(client)
 
     assert [c["chosen"] for c in 假看圖.last_corrections] == [
-        "夾5", "夾4", "夾3", "夾2", "夾1",
+        "夾5",
+        "夾4",
+        "夾3",
+        "夾2",
+        "夾1",
     ]
 
 

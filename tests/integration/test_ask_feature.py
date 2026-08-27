@@ -29,7 +29,7 @@ DEFAULT_NOW = datetime(2026, 8, 18, 10, 0)
 def context() -> dict:
     return {
         "now": DEFAULT_NOW,
-        "id_map": {},        # 規格表格裡的 id → 資料庫實際的 id
+        "id_map": {},  # 規格表格裡的 id → 資料庫實際的 id
         "response": None,
     }
 

@@ -51,7 +51,7 @@ class 分頁VLM:
     """
 
     def __init__(self, 看得懂的頁碼: set[int], *, 每頁上限: int = 3) -> None:
-        self.看得懂的頁碼 = 看得懂的頁碼      # 1 起算，與使用者在 PDF 閱讀器上看到的一致
+        self.看得懂的頁碼 = 看得懂的頁碼  # 1 起算，與使用者在 PDF 閱讀器上看到的一致
         self.每頁上限 = 每頁上限
         self.calls = 0
         self.目前頁 = 1
@@ -205,12 +205,8 @@ def test_單圖與PDF的202回應形狀相同(client):
 
     這一顆刻意**不跑任務**——它驗的是 HTTP 收下那一刻的回應，與看圖無關。
     """
-    單圖 = client.post(
-        "/photos", files={"file": ("a.png", make_png_bytes(), "image/png")}
-    )
-    PDF = client.post(
-        "/photos", files={"file": ("scan.pdf", make_pdf_bytes(1), "application/pdf")}
-    )
+    單圖 = client.post("/photos", files={"file": ("a.png", make_png_bytes(), "image/png")})
+    PDF = client.post("/photos", files={"file": ("scan.pdf", make_pdf_bytes(1), "application/pdf")})
 
     assert 單圖.status_code == 202, 單圖.text
     assert PDF.status_code == 202, PDF.text

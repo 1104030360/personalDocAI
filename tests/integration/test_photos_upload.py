@@ -16,7 +16,7 @@ from app.main import app
 from app.repositories import photo_repository as repo
 from app.services import staging_service
 from app.services.vlm_service import PhotoUnderstanding
-from tests.conftest import 目前的任務清單, 上傳並跑完任務
+from tests.conftest import 上傳並跑完任務, 目前的任務清單
 from tests.fakes import FakeVLM, make_jpeg_bytes
 
 client = TestClient(app)
@@ -84,9 +84,7 @@ def test_上傳PNG受理回202且只回三個欄位():
 def test_上傳JPEG也受理回202():
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(看得懂的收據)
 
-    resp = client.post(
-        "/photos", files={"file": ("sample.jpg", make_jpeg_bytes(), "image/jpeg")}
-    )
+    resp = client.post("/photos", files={"file": ("sample.jpg", make_jpeg_bytes(), "image/jpeg")})
 
     assert resp.status_code == 202, resp.text
     assert resp.json()["content_type"] == "image/jpeg"
@@ -110,9 +108,9 @@ def test_202當下staging檔在而任務是queued():
     """三件事都要做到：檔案落地、任務記下來、AI 開關快照存好（design5.md D14）。"""
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(看得懂的收據)
 
-    job_id = client.post(
-        "/photos", files={"file": ("sample.png", PNG_BYTES, "image/png")}
-    ).json()["job_id"]
+    job_id = client.post("/photos", files={"file": ("sample.png", PNG_BYTES, "image/png")}).json()[
+        "job_id"
+    ]
 
     assert staging_service.staging_path(job_id, "image/png").is_file()
     job = 目前的任務清單().get(job_id)
@@ -120,7 +118,7 @@ def test_202當下staging檔在而任務是queued():
     assert job["filename"] == "sample.png"
     assert job["content_type"] == "image/png"
     assert job["source"] == "upload"
-    assert job["ai_backend"] == "local"      # 入列當下的快照，不是 worker 跑的時候才讀
+    assert job["ai_backend"] == "local"  # 入列當下的快照，不是 worker 跑的時候才讀
 
 
 def test_跑完任務之後照片才進收件箱():
@@ -175,6 +173,7 @@ def test_入列失敗時回500而且staging與任務都不留():
     順序鐵律的證明題：先寫 staging 再入列，所以入列炸掉時 staging 已經在磁碟上了，
     失敗路徑必須自己把它刪掉——不刪的話，24 小時掃把清掉之前那個檔案就是垃圾。
     """
+
     class 一定壞掉的入列器:
         def dispatch(self, job_id: str) -> None:
             raise RuntimeError("Redis 沒有回應")
@@ -190,9 +189,7 @@ def test_入列失敗時回500而且staging與任務都不留():
     assert resp.status_code == 500
     assert 目前的任務清單().list_open() == [], "入列失敗的 job 不可以留在清單裡變幽靈"
     留下的檔案 = (
-        [p for p in config.DATA_DIR.rglob("*") if p.is_file()]
-        if config.DATA_DIR.exists()
-        else []
+        [p for p in config.DATA_DIR.rglob("*") if p.is_file()] if config.DATA_DIR.exists() else []
     )
     assert 留下的檔案 == [], f"入列失敗不可以留下 staging 檔：{留下的檔案}"
 

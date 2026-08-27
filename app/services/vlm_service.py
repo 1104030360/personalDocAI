@@ -28,15 +28,15 @@ class PhotoUnderstanding(BaseModel):
     （design3.md D3「人確認才落庫」、D8「仍是同一個 gemma4 看一次」）。
     """
 
-    understood: bool                                 # 看不懂 → False
-    text: str = ""                                   # 文字描述（照片主要語言）
-    category: str | None = None                      # 類別，例如「收據」或 "Receipt"
-    location: str | None = None                      # 地點／商家，例如「Target」
-    items: list[str] = Field(default_factory=list)   # 物品清單
-    content_time: str | None = None                  # ISO 日期字串，推不出來 → None
-    entity: str | None = None       # 從「現有實體清單」挑一個最相關的；清單空或都不像 → None
-    task_title: str | None = None   # 照片含可辦事項（繳交、繳費、預約…）才填；沒有 → None
-    task_due: str | None = None     # 到期日 YYYY-MM-DD；推不出來 → None
+    understood: bool  # 看不懂 → False
+    text: str = ""  # 文字描述（照片主要語言）
+    category: str | None = None  # 類別，例如「收據」或 "Receipt"
+    location: str | None = None  # 地點／商家，例如「Target」
+    items: list[str] = Field(default_factory=list)  # 物品清單
+    content_time: str | None = None  # ISO 日期字串，推不出來 → None
+    entity: str | None = None  # 從「現有實體清單」挑一個最相關的；清單空或都不像 → None
+    task_title: str | None = None  # 照片含可辦事項（繳交、繳費、預約…）才填；沒有 → None
+    task_due: str | None = None  # 到期日 YYYY-MM-DD；推不出來 → None
 
 
 # 系統收件箱資料夾的名稱。與 photo_repository.DEFAULT_FOLDERS 的第一筆一致
@@ -64,9 +64,7 @@ def _excerpt(text: str) -> str:
     return text[:CORRECTION_TEXT_LIMIT] + "…"
 
 
-def build_vlm_prompt(
-    folders: list[dict], entities: list[dict], corrections: list[dict]
-) -> str:
+def build_vlm_prompt(folders: list[dict], entities: list[dict], corrections: list[dict]) -> str:
     """組出看圖用的 prompt，把三份清單當變數注入：資料夾、實體、最近的人工糾錯。
 
     folders 來自 photo_repository.list_folders()、entities 來自 list_entities()，
@@ -84,9 +82,7 @@ def build_vlm_prompt(
     D11 是糾錯 few-shot——仍然只有這一次看圖呼叫，多的只是「建議」欄位與幾個例子，
     不是第二個分類模型、更不是微調（§1.2 已否決）。
     """
-    folder_lines = "\n".join(
-        f"- {folder['name']}：{folder['description']}" for folder in folders
-    )
+    folder_lines = "\n".join(f"- {folder['name']}：{folder['description']}" for folder in folders)
     # 糾錯那一段：有例子才長出來。開頭的 "\n" 是為了與上一段隔一個空行——
     # 空清單時整個變數是空字串，接縫處剛好還原成原本的「一個空行」。
     correction_section = ""
@@ -197,8 +193,7 @@ class VLMClient(Protocol):
         folders: list[dict],
         entities: list[dict],
         corrections: list[dict],
-    ) -> PhotoUnderstanding:
-        ...
+    ) -> PhotoUnderstanding: ...
 
 
 class OllamaVLM:
@@ -316,8 +311,7 @@ class OllamaCloudVLM:
         message = {
             "role": "user",
             # 共用 prompt 之後接雲端專用的「只准回 JSON」指令（理由見常數註解）
-            "content": build_vlm_prompt(folders, entities, corrections)
-            + CLOUD_JSON_INSTRUCTION,
+            "content": build_vlm_prompt(folders, entities, corrections) + CLOUD_JSON_INSTRUCTION,
             "images": [image_bytes],
         }
         # 失敗就再試一次；仍失敗一律視為「看不懂」（與 OllamaVLM 同一套節奏）

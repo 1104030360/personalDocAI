@@ -28,7 +28,9 @@ def test_建立後依id排序列出且只有三個欄位(client):
     # 順序照 id（先建的在前），前端下拉選單才每次長得一樣
     assert [e["id"] for e in body] == [macbook["id"], project["id"]]
     assert body[0] == {
-        "id": macbook["id"], "name": "我的 MacBook", "description": "2023 年買的筆電"
+        "id": macbook["id"],
+        "name": "我的 MacBook",
+        "description": "2023 年買的筆電",
     }
     # created_at 之類的內部欄位不外送
     assert all(set(e) == {"id", "name", "description"} for e in body)

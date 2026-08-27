@@ -27,7 +27,9 @@ def deps() -> AskDeps:
 def 一張Target收據():
     return photo_repository.insert_photo(
         text="在 Target 購買可樂與洋芋片的收據",
-        category="收據", location="Target", items=["可樂", "洋芋片"],
+        category="收據",
+        location="Target",
+        items=["可樂", "洋芋片"],
         content_time=date(2026, 8, 10),
         embedding=FakeEmbeddings().embed_query("在 Target 購買可樂與洋芋片的收據"),
         uploaded_at=datetime(2026, 8, 18, 10, 0),
@@ -75,7 +77,7 @@ def test_路由回傳格式不對也走語意查詢(一張Target收據):
         # 簽名跟著 RouterClient 協定走（Phase 34 加了 entity_names）——
         # 少收一個參數會變成 TypeError，那就測不到「回傳格式不符」這件事了
         def route(self, question, entity_names):
-            return {"mode": "metadata"}      # 不是 RouteDecision，格式不符
+            return {"mode": "metadata"}  # 不是 RouteDecision，格式不符
 
     deps = AskDeps(
         router=壞掉的Router(),

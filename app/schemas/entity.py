@@ -57,7 +57,7 @@ class PinEntityResponse(BaseModel):
     """
 
     photo_id: int
-    entity: EntityOut          # 這次釘上去的那一個
+    entity: EntityOut  # 這次釘上去的那一個
     entities: list[EntityOut]  # 完整實體清單（彈窗②下拉）
 
 

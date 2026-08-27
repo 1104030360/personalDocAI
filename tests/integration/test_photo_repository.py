@@ -126,7 +126,7 @@ def test_category_對不到資料夾時掛在未分類():
     """
     row = _insert_sample(category="Receipt")
 
-    assert row["folder_id"] == 1        # 1 ＝未分類（收件箱）
+    assert row["folder_id"] == 1  # 1 ＝未分類（收件箱）
     assert row["category"] == "Receipt"  # 值本身不動
 
 
@@ -144,7 +144,7 @@ def test_fetch_photo_會回傳資料夾與檔案路徑欄位():
 
     row = repo.fetch_photo(inserted["id"])
 
-    assert row["folder_id"] == 2          # 2 ＝收據
+    assert row["folder_id"] == 2  # 2 ＝收據
     assert row["original_path"] is None
     assert row["thumbnail_path"] is None
     assert row["content_type"] is None

@@ -112,9 +112,9 @@ def test_建立待辦可以沒有到期日(client, 已上傳的照片):
 def test_同一張照片第二筆待辦回409(client, 已上傳的照片):
     """photo_id UNIQUE＝一張照片至多一筆待辦（design3.md §7 MVP）。"""
     photo_id = 已上傳的照片["id"]
-    assert client.post(
-        f"/photos/{photo_id}/task", json={"title": "交 Project 2"}
-    ).status_code == 201
+    assert (
+        client.post(f"/photos/{photo_id}/task", json={"title": "交 Project 2"}).status_code == 201
+    )
 
     response = client.post(f"/photos/{photo_id}/task", json={"title": "改成別的"})
 
@@ -135,9 +135,7 @@ def test_照片不存在回404(client):
 
 @pytest.mark.parametrize("title", ["", "   "])
 def test_標題空白回422(client, 已上傳的照片, title):
-    response = client.post(
-        f"/photos/{已上傳的照片['id']}/task", json={"title": title}
-    )
+    response = client.post(f"/photos/{已上傳的照片['id']}/task", json={"title": title})
 
     assert response.status_code == 422
     assert "待辦標題不可為空白" in response.text
@@ -174,19 +172,18 @@ def test_list依到期日排序_無到期日在最後(client):
         ("沒有期限", None),
     ]:
         photo_id = 直接寫一列照片(text=title)["id"]
-        assert client.post(
-            f"/photos/{photo_id}/task", json={"title": title, "due_date": due_date}
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/photos/{photo_id}/task", json={"title": title, "due_date": due_date}
+            ).status_code
+            == 201
+        )
 
     response = client.get("/tasks")
 
     assert response.status_code == 200
-    assert [t["title"] for t in response.json()] == [
-        "八月廿五到期", "九月一號到期", "沒有期限"
-    ]
-    assert [t["due_date"] for t in response.json()] == [
-        "2026-08-25", "2026-09-01", None
-    ]
+    assert [t["title"] for t in response.json()] == ["八月廿五到期", "九月一號到期", "沒有期限"]
+    assert [t["due_date"] for t in response.json()] == ["2026-08-25", "2026-09-01", None]
 
 
 def test_list的thumbnail_url有縮圖給網址_沒縮圖給null(client, 已上傳的照片):
@@ -194,16 +191,18 @@ def test_list的thumbnail_url有縮圖給網址_沒縮圖給null(client, 已上�
     有縮圖 = 已上傳的照片["id"]
     沒縮圖 = 直接寫一列照片()["id"]
     for photo_id in (有縮圖, 沒縮圖):
-        assert client.post(
-            f"/photos/{photo_id}/task", json={"title": f"照片 {photo_id} 的待辦"}
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/photos/{photo_id}/task", json={"title": f"照片 {photo_id} 的待辦"}
+            ).status_code
+            == 201
+        )
 
     response = client.get("/tasks")
 
     assert response.status_code == 200
     tasks = response.json()
-    assert all(set(t) == {"id", "photo_id", "title", "due_date", "thumbnail_url"}
-               for t in tasks)
+    assert all(set(t) == {"id", "photo_id", "title", "due_date", "thumbnail_url"} for t in tasks)
     網址 = {t["photo_id"]: t["thumbnail_url"] for t in tasks}
     assert 網址 == {有縮圖: f"/photos/{有縮圖}/thumbnail", 沒縮圖: None}
     # 硬碟路徑（data/thumbs/…）一個字都不能出現在回應裡

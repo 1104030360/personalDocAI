@@ -24,15 +24,13 @@ def test_沒有設定result_backend():
 
 def test_任務名稱逐字等於契約寫的那一個():
     assert ingest_task.name == "personaldocai.ingest"
-    assert "personaldocai.ingest" in celery_app.tasks   # 真的登記進任務表，worker 才找得到
+    assert "personaldocai.ingest" in celery_app.tasks  # 真的登記進任務表，worker 才找得到
 
 
 def test_快照決定用哪一種看圖物件(monkeypatch):
     # HTTP header 不吃中文，假 key 一律 ASCII（2026-08-22 踩過）
     monkeypatch.setattr(config, "OLLAMA_API_KEY", "fake-key-for-test")
-    assert isinstance(
-        dependencies.build_vlm_for_backend("cloud"), vlm_service.OllamaCloudVLM
-    )
+    assert isinstance(dependencies.build_vlm_for_backend("cloud"), vlm_service.OllamaCloudVLM)
     assert isinstance(dependencies.build_vlm_for_backend("local"), vlm_service.OllamaVLM)
 
 
@@ -46,6 +44,4 @@ def test_快照贏過開關(monkeypatch):
     monkeypatch.setattr(config, "AI_BACKEND", "cloud")
     assert isinstance(dependencies.build_vlm_for_backend("local"), vlm_service.OllamaVLM)
     monkeypatch.setattr(config, "AI_BACKEND", "local")
-    assert isinstance(
-        dependencies.build_vlm_for_backend("cloud"), vlm_service.OllamaCloudVLM
-    )
+    assert isinstance(dependencies.build_vlm_for_backend("cloud"), vlm_service.OllamaCloudVLM)

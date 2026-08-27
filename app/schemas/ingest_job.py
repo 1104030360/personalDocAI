@@ -50,11 +50,11 @@ class IngestJobOut(BaseModel):
     job_id: str
     filename: str
     content_type: str
-    status: str                    # queued / analyzing / retrying / failed
-    attempt: int                   # 這張／這頁目前第幾次 VLM，1〜3
+    status: str  # queued / analyzing / retrying / failed
+    attempt: int  # 這張／這頁目前第幾次 VLM，1〜3
     page_count: int | None = None  # PDF 才有；還沒拆頁前是 None
-    pages_done: int = 0            # PDF 已處理頁數（含跳過的）
-    error: str | None = None       # 失敗時給人看的短句（**不要**把 stack 丟給瀏覽器）
+    pages_done: int = 0  # PDF 已處理頁數（含跳過的）
+    error: str | None = None  # 失敗時給人看的短句（**不要**把 stack 丟給瀏覽器）
 
 
 class IngestJobListOut(BaseModel):

@@ -85,7 +85,7 @@ def make_thumbnail(photo_id: int, image_bytes: bytes, content_type: str) -> str:
 
     # BytesIO＝把手上的 bytes 包成「假裝是檔案」的物件，直接餵給 Pillow
     with Image.open(io.BytesIO(image_bytes)) as image:
-        thumbnail = image.copy()   # 複製一份，離開 with 之後才還能繼續用
+        thumbnail = image.copy()  # 複製一份，離開 with 之後才還能繼續用
 
     thumbnail.thumbnail((THUMBNAIL_MAX_SIDE, THUMBNAIL_MAX_SIDE))
 

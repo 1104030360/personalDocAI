@@ -154,11 +154,11 @@ def sweep_stale_staging(store: JobStore, *, now: datetime | None = None) -> int:
     # sorted() ＝順序固定，log 看起來才穩定（iterdir 本身不保證順序）
     for path in sorted(directory.iterdir()):
         if not path.is_file():
-            continue                       # staging 底下不該有子資料夾；有就跳過，不遞迴刪
+            continue  # staging 底下不該有子資料夾；有就跳過，不遞迴刪
         if path.stat().st_mtime >= cutoff:
-            continue                       # 還很新
+            continue  # 還很新
         if store.get(path.stem) is not None:
-            continue                       # JobStore 還記得它（path.stem ＝去掉副檔名的檔名＝job_id）
+            continue  # JobStore 還記得它（path.stem ＝去掉副檔名的檔名＝job_id）
         path.unlink(missing_ok=True)
         removed += 1
     return removed

@@ -124,8 +124,14 @@ def test_列出資料夾內的照片新的在前():
     # ★ 這是 repository 這一層的鍵；GET /folders/{id} 的回應仍是五鍵，
     #   PhotoSummary 只挑它要的那幾個——router 改成八鍵是 Phase 61 的事。
     assert set(photos[0]) == {
-        "id", "text", "uploaded_at", "thumbnail_path", "suggested_category",
-        "suggested_entity", "suggested_task_title", "suggested_task_due",
+        "id",
+        "text",
+        "uploaded_at",
+        "thumbnail_path",
+        "suggested_category",
+        "suggested_entity",
+        "suggested_task_title",
+        "suggested_task_due",
     }
 
 
@@ -144,7 +150,7 @@ def test_資料夾內照片摘要帶得出三個建議欄():
         location=None,
         items=[],
         content_time=None,
-        embedding=_vec(),          # 檔案上方既有的小工具，回一條 1024 維的假向量
+        embedding=_vec(),  # 檔案上方既有的小工具，回一條 1024 維的假向量
         suggested_entity="我的 MacBook",
         suggested_task_title="繳交 Project 2 報告",
         suggested_task_due=date(2026, 8, 21),

@@ -68,12 +68,12 @@ def _目標(kind: str) -> AiTarget:
             model=config.OLLAMA_CLOUD_LLM_MODEL if 是雲端 else config.LLM_MODEL,
         )
     # 打錯 kind 的 log 會變成 grep 不到的孤兒，寧可當場炸給實作者看
-    raise ValueError(  # noqa: GENERIC_ERR_OK - 維持既有 unknown-kind API
+    raise ValueError(  # GENERIC_ERR_OK - 維持既有 unknown-kind API
         f"未知的 AI 呼叫種類：{kind}"
     )
 
 
-@dataclass(slots=True)  # noqa: MUTABLE_OK - with 區塊內由呼叫端填 note
+@dataclass(slots=True)  # MUTABLE_OK - with 區塊內由呼叫端填 note
 class AiCall:
     """交給 with 區塊的小物件，目前只有一個用途：讓呼叫端補一句人類看的摘要。
 
@@ -105,11 +105,11 @@ def log_ai(kind: str, *, target: AiTarget | None = None) -> Iterator[AiCall]:
     logger.info("AI 開始 %s", 抬頭)
 
     這次 = AiCall()
-    起點 = time.monotonic()      # 只會往前走的時鐘，量時間差要用它
+    起點 = time.monotonic()  # 只會往前走的時鐘，量時間差要用它
     成功 = True
     try:
         yield 這次
-    except BaseException:  # noqa: BROAD_EXCEPT_OK - 記錄後原樣重拋，含關機訊號
+    except BaseException:  # BROAD_EXCEPT_OK - 記錄後原樣重拋，含關機訊號
         # 不做任何處理，只記下「這次失敗了」，然後原封不動往外丟。
         # 抓最寬的 BaseException 是因為 Ctrl+C 與 uvicorn 關機丟的不是
         # Exception 的子類，用窄的那個會漏掉結束行。

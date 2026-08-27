@@ -39,9 +39,14 @@ NOW = datetime(2026, 8, 18, 10, 0)
 TODAY = NOW.date()
 
 
-def _insert(text: str, *, category: str = "文件", location: str | None = None,
-            items: list[str] | None = None,
-            content_time: date | None = None) -> int:
+def _insert(
+    text: str,
+    *,
+    category: str = "文件",
+    location: str | None = None,
+    items: list[str] | None = None,
+    content_time: date | None = None,
+) -> int:
     """直接寫一列照片（不走上傳流程，本檔不關心存檔），回傳 id。"""
     return photo_repository.insert_photo(
         text=text,
@@ -90,7 +95,7 @@ def test_list_photos_with_entity_只回釘著的那些照片(MacBook三張照片
 
     rows = photo_repository.list_photos_with_entity(entity["id"])
 
-    assert [row["id"] for row in rows] == 釘住的   # ORDER BY p.id
+    assert [row["id"] for row in rows] == 釘住的  # ORDER BY p.id
 
 
 def test_list_photos_with_entity_欄位剛好餵得進檢索層(MacBook三張照片):
@@ -103,9 +108,7 @@ def test_list_photos_with_entity_欄位剛好餵得進檢索層(MacBook三張照
 
     rows = photo_repository.list_photos_with_entity(entity["id"])
 
-    assert set(rows[0]) == {
-        "id", "text", "category", "location", "items", "content_time"
-    }
+    assert set(rows[0]) == {"id", "text", "category", "location", "items", "content_time"}
 
 
 def test_list_photos_with_entity_沒有任何別針回空清單():
@@ -217,8 +220,7 @@ def test_task_search_內容含標題到期日與來源照片描述(三筆待辦)
     documents = task_search(None, TODAY)
 
     assert documents[0].page_content == (
-        "待辦：交 Project 2（到期 2026-08-20）\n"
-        "來源照片：課本上寫著 Project 2 的截止日"
+        "待辦：交 Project 2（到期 2026-08-20）\n來源照片：課本上寫著 Project 2 的截止日"
     )
     # 沒有到期日的那筆要寫「無」，不能印出 None
     assert documents[-1].page_content.startswith("待辦：約師傅修水管（到期 無）")
@@ -254,20 +256,24 @@ def test_自訂retriever也認得新的兩種模式(MacBook三張照片, 三筆�
     _entity, 釘住的, _沒釘 = MacBook三張照片
     近的, _遠的, _沒期限的 = 三筆待辦
 
-    entity_result = photo_retriever.invoke({
-        "question": "跟我 MacBook 有關的全部",
-        "mode": "entity",
-        "filters": QueryFilters(entity_name="我的 MacBook"),
-        "today": TODAY,
-        "embeddings": FakeEmbeddings(),
-    })
-    task_result = photo_retriever.invoke({
-        "question": "這週要交什麼？",
-        "mode": "task",
-        "filters": QueryFilters(due_within_days=7),
-        "today": TODAY,
-        "embeddings": FakeEmbeddings(),
-    })
+    entity_result = photo_retriever.invoke(
+        {
+            "question": "跟我 MacBook 有關的全部",
+            "mode": "entity",
+            "filters": QueryFilters(entity_name="我的 MacBook"),
+            "today": TODAY,
+            "embeddings": FakeEmbeddings(),
+        }
+    )
+    task_result = photo_retriever.invoke(
+        {
+            "question": "這週要交什麼？",
+            "mode": "task",
+            "filters": QueryFilters(due_within_days=7),
+            "today": TODAY,
+            "embeddings": FakeEmbeddings(),
+        }
+    )
 
     assert [doc.metadata["id"] for doc in entity_result] == 釘住的
     assert [doc.metadata["id"] for doc in task_result] == [近的]
@@ -356,9 +362,9 @@ def test_路由拿得到現有實體名單(deps, MacBook三張照片):
 def test_實體對不到時查無不虛構(MacBook三張照片):
     """路由挑了一個資料庫裡沒有的名字：回空、由 LLM 說查無，不改走語意查詢。"""
     deps = AskDeps(
-        router=FakeRouter({
-            "跟我 iPad 有關的全部": RouteDecision(mode="entity", entity_name="我的 iPad")
-        }),
+        router=FakeRouter(
+            {"跟我 iPad 有關的全部": RouteDecision(mode="entity", entity_name="我的 iPad")}
+        ),
         answerer=FakeAnswerLLM(),
         embeddings=FakeEmbeddings(),
         today=TODAY,

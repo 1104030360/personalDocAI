@@ -49,14 +49,14 @@ class IngestJob(TypedDict, total=False):
     job_id: str
     filename: str
     content_type: str
-    status: str          # JOB_STATUSES 之一
-    attempt: int         # 這張／這頁目前第幾次 VLM，1〜3（剛建立時是 0 ＝還沒送過）
-    page_count: int | None   # PDF 拆頁後才知道幾頁；圖片永遠是 None
-    pages_done: int      # PDF 已處理頁數（含跳過的失敗頁）；崩潰重送靠它續跑
-    photo_ids: list[int]     # 已經 INSERT 的照片 id；崩潰重送靠它避免插兩次
-    error: str | None    # 失敗時給人看的**短句**，不要把 stack trace 丟給瀏覽器
-    ai_backend: str      # 入列當下 config.AI_BACKEND 的快照："local" / "cloud"（D14）
-    source: str          # "upload"（電腦選檔）/ "camera"（無線鏡頭快門）
+    status: str  # JOB_STATUSES 之一
+    attempt: int  # 這張／這頁目前第幾次 VLM，1〜3（剛建立時是 0 ＝還沒送過）
+    page_count: int | None  # PDF 拆頁後才知道幾頁；圖片永遠是 None
+    pages_done: int  # PDF 已處理頁數（含跳過的失敗頁）；崩潰重送靠它續跑
+    photo_ids: list[int]  # 已經 INSERT 的照片 id；崩潰重送靠它避免插兩次
+    error: str | None  # 失敗時給人看的**短句**，不要把 stack trace 丟給瀏覽器
+    ai_backend: str  # 入列當下 config.AI_BACKEND 的快照："local" / "cloud"（D14）
+    source: str  # "upload"（電腦選檔）/ "camera"（無線鏡頭快門）
 
 
 class JobStore(Protocol):
@@ -80,8 +80,9 @@ class JobStore(Protocol):
       所以下面的 InMemoryJobStore 五個方法一個都不能少。
     """
 
-    def create(self, *, job_id: str, filename: str, content_type: str,
-               ai_backend: str, source: str) -> IngestJob: ...
+    def create(
+        self, *, job_id: str, filename: str, content_type: str, ai_backend: str, source: str
+    ) -> IngestJob: ...
 
     def get(self, job_id: str) -> IngestJob | None: ...
 
@@ -89,7 +90,7 @@ class JobStore(Protocol):
 
     def delete(self, job_id: str) -> None: ...
 
-    def list_open(self) -> list[IngestJob]: ...   # 不含成功（成功＝已 delete）
+    def list_open(self) -> list[IngestJob]: ...  # 不含成功（成功＝已 delete）
 
 
 def _copy(job: IngestJob) -> IngestJob:
@@ -140,8 +141,8 @@ class InMemoryJobStore:
             "filename": filename,
             "content_type": content_type,
             "status": "queued",
-            "attempt": 0,          # 0 ＝還沒送過 VLM；第一次送出時才變 1
-            "page_count": None,    # PDF 拆頁後才填，圖片永遠是 None
+            "attempt": 0,  # 0 ＝還沒送過 VLM；第一次送出時才變 1
+            "page_count": None,  # PDF 拆頁後才填，圖片永遠是 None
             "pages_done": 0,
             "photo_ids": [],
             "error": None,
@@ -184,11 +185,7 @@ class InMemoryJobStore:
         另外用 JOB_STATUSES 再濾一次是防禦性的：萬一日後有人手滑寫進一個
         沒定義過的狀態，它不會莫名其妙出現在使用者的進度面板上。
         """
-        return [
-            _copy(job)
-            for job in self._jobs.values()
-            if job.get("status") in JOB_STATUSES
-        ]
+        return [_copy(job) for job in self._jobs.values() if job.get("status") in JOB_STATUSES]
 
     # ---------- 以下是**測試專用**，不屬於 JobStore 契約 ----------
 
@@ -203,7 +200,7 @@ class InMemoryJobStore:
 
 # ---------- Phase 65 追加：正式用的 Redis 實作 ----------
 
-import json  # 搬去檔頭 import 區也行；寫在這裡是讓整段可以一刀貼上
+import json  # noqa: E402  （搬去檔頭 import 區也行；寫在這裡是讓整段可以一刀貼上）
 
 # key 的長相：
 #   ingest:{job_id}  一筆 job 的 JSON

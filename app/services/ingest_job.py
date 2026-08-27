@@ -57,7 +57,7 @@ ERROR_VLM_FAILED = "AI 看不懂這張照片（已試 {attempts} 次）"
 ERROR_WRITE_FAILED = "照片存檔失敗，這張沒有留下資料"
 
 # PDF 的每一頁渲染出來都是 PNG，之後就完全是一次普通的單圖入庫
-#（原圖存成 .png、讀圖端點零改動，不必為 PDF 另開一條路）
+# （原圖存成 .png、讀圖端點零改動，不必為 PDF 另開一條路）
 PDF_PAGE_CONTENT_TYPE = "image/png"
 
 ERROR_PDF_UNREADABLE = "這份 PDF 讀不開或沒有內容"
@@ -176,7 +176,7 @@ def _run_image_job(
             embedding,
             inbox_name=inbox["name"],
             folders=folders,
-            entities=entities,          # ← Phase 61 新增
+            entities=entities,  # ← Phase 61 新增
             uploaded_at=now(),
         )
     except Exception:
@@ -237,7 +237,7 @@ def _run_pdf_job(
     store.update(job_id, page_count=len(page_images))
 
     # ③ 清單在迴圈**外面**讀一次：整份 PDF 的每一頁共用同一份注入 prompt
-    #（與現在 photos.py 的 upload_photo 讀一次、傳給每頁的作法一致）
+    # （與現在 photos.py 的 upload_photo 讀一次、傳給每頁的作法一致）
     folders = photo_repository.list_folders()
     entities = photo_repository.list_entities()
     corrections = photo_repository.recent_corrections(limit=FEW_SHOT_CORRECTIONS)
@@ -256,9 +256,7 @@ def _run_pdf_job(
         )
 
     # enumerate 的 start 讓頁碼從「下一頁」開始算，1 起算（與 skipped_pages 同一套）
-    for page_number, page_bytes in enumerate(
-        page_images[already_done:], start=already_done + 1
-    ):
+    for page_number, page_bytes in enumerate(page_images[already_done:], start=already_done + 1):
         photo_id: int | None = None
         result = _understand_and_embed(
             job_id,
@@ -289,7 +287,7 @@ def _run_pdf_job(
                     embedding,
                     inbox_name=inbox["name"],
                     folders=folders,
-                    entities=entities,          # ← Phase 61 新增
+                    entities=entities,  # ← Phase 61 新增
                     uploaded_at=now(),
                 )
             except Exception:
@@ -366,17 +364,13 @@ def _understand_and_embed(
             # target 從 vlm 物件身上拿：正式的 OllamaVLM／OllamaCloudVLM 建構時
             # 就把 backend 與 model 記在 timing_target 上，所以 worker 只要
             # 「用任務裡的 ai_backend 快照建對客戶端」，log 的 backend= 自然就對
-            #（design5.md D14）。假件沒有這個屬性，會退回讀 config，不影響測試。
-            with ai_timing.log_ai(
-                "vlm", target=vlm_service.vlm_timing_target(vlm)
-            ) as 計時:
+            # （design5.md D14）。假件沒有這個屬性，會退回讀 config，不影響測試。
+            with ai_timing.log_ai("vlm", target=vlm_service.vlm_timing_target(vlm)) as 計時:
                 understanding = vlm.understand(
                     image_bytes, content_type, folders, entities, corrections
                 )
                 if not understanding.understood or not understanding.text.strip():
-                    計時.note = (
-                        f"understood=false text_chars={len(understanding.text)}"
-                    )
+                    計時.note = f"understood=false text_chars={len(understanding.text)}"
                     raise _NotUnderstood()
                 計時.note = (
                     f"understood=true text_chars={len(understanding.text)} "
@@ -391,13 +385,11 @@ def _understand_and_embed(
         except Exception:
             # Ollama 沒開、雲端 401／404、逾時、結構化輸出驗證不過……全算一次失敗。
             # exc_info=True 讓 traceback 進伺服器 log；它**不會**進 job["error"]。
-            logger.warning(
-                "job %s：第 %d 次看圖呼叫失敗", job_id, attempt, exc_info=True
-            )
+            logger.warning("job %s：第 %d 次看圖呼叫失敗", job_id, attempt, exc_info=True)
             continue
 
         # 合併與轉向量一律用收件箱名稱——上傳當下的向量就是未分類版本
-        #（design1.md §2；歸類後 PATCH 會整條重算）
+        # （design1.md §2；歸類後 PATCH 會整條重算）
         content_time = vlm_service.parse_content_time(understanding.content_time)
         document = indexing_service.build_document(
             text=understanding.text,
@@ -413,9 +405,7 @@ def _understand_and_embed(
             ):
                 embedding = indexing_service.embed_document(embeddings, document)
         except Exception:
-            logger.warning(
-                "job %s：第 %d 次轉向量失敗", job_id, attempt, exc_info=True
-            )
+            logger.warning("job %s：第 %d 次轉向量失敗", job_id, attempt, exc_info=True)
             continue
 
         return understanding, embedding
@@ -449,7 +439,7 @@ def _insert_photo_with_files(
     # 這裡寫的是「AI 當下猜了什麼」，不是「這張照片屬於什麼」。
     # 照片的實際歸屬永遠是收件箱（category／folder_id 都是「未分類」）；
     # 實體與待辦更是**一列都不寫**——那三張表要等人在待決定的彈窗按下去才有資料
-    #（design5.md §4.2、design3.md D3「人確認才落庫」）。
+    # （design5.md §4.2、design3.md D3「人確認才落庫」）。
     #
     # 為什麼非存不可：上傳改 202 之後（Phase 62），建議不會再出現在任何回應裡。
     # 不存下來的話，使用者幾分鐘後到待決定頁點開那張照片時，
@@ -493,12 +483,8 @@ def _insert_photo_with_files(
     original_path: str | None = None
     thumbnail_path: str | None = None
     try:
-        original_path = storage_service.save_original(
-            photo_id, image_bytes, content_type
-        )
-        thumbnail_path = storage_service.make_thumbnail(
-            photo_id, image_bytes, content_type
-        )
+        original_path = storage_service.save_original(photo_id, image_bytes, content_type)
+        thumbnail_path = storage_service.make_thumbnail(photo_id, image_bytes, content_type)
         photo_repository.update_photo_paths(
             photo_id,
             original_path=original_path,

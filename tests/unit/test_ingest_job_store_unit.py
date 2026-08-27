@@ -48,10 +48,10 @@ def test_create之後是queued而且計數全部歸零():
     job = _create(store)
 
     assert job["status"] == "queued"
-    assert job["attempt"] == 0          # 還沒送過 VLM
+    assert job["attempt"] == 0  # 還沒送過 VLM
     assert job["pages_done"] == 0
-    assert job["photo_ids"] == []       # 還沒有任何照片入庫
-    assert job["page_count"] is None    # PDF 拆頁後才知道幾頁；圖片永遠是 None
+    assert job["photo_ids"] == []  # 還沒有任何照片入庫
+    assert job["page_count"] is None  # PDF 拆頁後才知道幾頁；圖片永遠是 None
     assert job["error"] is None
 
 
@@ -263,8 +263,11 @@ def _建一個store(job_id="j1", content_type="image/png"):
     client = FakeRedisClient()
     store = ingest_job_store.RedisJobStore(client)
     store.create(
-        job_id=job_id, filename=f"{job_id}.png", content_type=content_type,
-        ai_backend="local", source="upload",
+        job_id=job_id,
+        filename=f"{job_id}.png",
+        content_type=content_type,
+        ai_backend="local",
+        source="upload",
     )
     return client, store
 
@@ -273,8 +276,11 @@ def test_create把job寫成JSON並登記進open集合():
     client = FakeRedisClient()
     store = ingest_job_store.RedisJobStore(client)
     job = store.create(
-        job_id="j1", filename="收據.jpg", content_type="image/jpeg",
-        ai_backend="cloud", source="upload",
+        job_id="j1",
+        filename="收據.jpg",
+        content_type="image/jpeg",
+        ai_backend="cloud",
+        source="upload",
     )
     # 初始值逐字照契約 §3.1
     assert job["status"] == "queued"
@@ -300,8 +306,8 @@ def test_update只改指定欄位其餘保留():
     改完 = store.update("j1", status="analyzing", attempt=1)
     assert 改完["status"] == "analyzing"
     assert 改完["attempt"] == 1
-    assert 改完["filename"] == "j1.png"                 # 沒動到的還在
-    assert store.get("j1")["status"] == "analyzing"     # 真的寫回去了
+    assert 改完["filename"] == "j1.png"  # 沒動到的還在
+    assert store.get("j1")["status"] == "analyzing"  # 真的寫回去了
 
 
 def test_update不存在的job回None且不寫任何東西():
@@ -337,10 +343,13 @@ def test_list_open只回還沒刪掉的job():
     store = ingest_job_store.RedisJobStore(client)
     for job_id in ("j1", "j2", "j3"):
         store.create(
-            job_id=job_id, filename=f"{job_id}.png", content_type="image/png",
-            ai_backend="local", source="upload",
+            job_id=job_id,
+            filename=f"{job_id}.png",
+            content_type="image/png",
+            ai_backend="local",
+            source="upload",
         )
-    store.delete("j2")                     # 成功＝delete（design5 §4.3）
+    store.delete("j2")  # 成功＝delete（design5 §4.3）
     assert [job["job_id"] for job in store.list_open()] == ["j1", "j3"]
 
 
@@ -350,7 +359,7 @@ def test_list_open遇到集合有id但資料不見時自己修好():
     list_open() 要跳過它、順手 SREM 掉，不可以炸掉整個進度面板。
     """
     client, store = _建一個store()
-    client.sadd("ingest:open", "孤兒")      # 只有集合有，沒有對應 JSON
+    client.sadd("ingest:open", "孤兒")  # 只有集合有，沒有對應 JSON
     assert [job["job_id"] for job in store.list_open()] == ["j1"]
     assert client.smembers("ingest:open") == {"j1"}
 

@@ -59,9 +59,7 @@ def _now() -> float:
 def create_session() -> CameraSession:
     """建立一組新的配對，並**汰掉舊的**（同時只有一個）。"""
     global _session
-    _session = CameraSession(
-        token=secrets.token_urlsafe(TOKEN_BYTES), created_at=_now()
-    )
+    _session = CameraSession(token=secrets.token_urlsafe(TOKEN_BYTES), created_at=_now())
     return _session
 
 
@@ -72,7 +70,7 @@ def get_session(token: str) -> CameraSession | None:
     「亂 token」與「過期 token」對外是同一件事，不必分兩種錯誤。
     """
     global _session
-    session = _session                       # 先抓成區域變數，下面全程對同一個物件判斷
+    session = _session  # 先抓成區域變數，下面全程對同一個物件判斷
     if session is None or session.token != token:
         return None
     # 滿 10 分鐘即失效（>= 不留模糊地帶），順手把過期的清掉。

@@ -1,10 +1,10 @@
 """pytest 共用設定：把資料庫指到測試庫，並套上四道 autouse 安全網。
 
-  reset_tables          每測清空四張表＋重播六筆資料夾種子（絕不動正式庫）
-  wire_fake_ai          六個 AI 注入點全換假件＋固定時鐘（絕不打真 Ollama）
-  isolated_data_dir     DATA_DIR 指到 tmp_path（絕不寫專案的 data/）
-  wire_memory_job_store JobStore 指到每測獨立的記憶體實作（Depends 與直接
-                        呼叫兩條路都攔；絕不連真 Redis）
+reset_tables          每測清空四張表＋重播六筆資料夾種子（絕不動正式庫）
+wire_fake_ai          六個 AI 注入點全換假件＋固定時鐘（絕不打真 Ollama）
+isolated_data_dir     DATA_DIR 指到 tmp_path（絕不寫專案的 data/）
+wire_memory_job_store JobStore 指到每測獨立的記憶體實作（Depends 與直接
+                      呼叫兩條路都攔；絕不連真 Redis）
 """
 
 import os
@@ -184,7 +184,7 @@ def split_items(cell: str) -> list[str]:
 # worker 才真的入庫。測試沒有 worker，所以測試自己扮演 worker：
 # 拿 202 給的 job_id，直接呼叫 run_ingest_job（design5.md §9、D15）。
 # 這幾個工具把那串動作包起來，讓既有測試的改寫變成機械式的一行替換。
-#（get_job_store 檔頭已 import，這裡不重覆。）
+# （get_job_store 檔頭已 import，這裡不重覆。）
 
 from app.repositories import photo_repository as _repo  # noqa: E402
 from app.services.ingest_job import run_ingest_job  # noqa: E402
@@ -270,9 +270,7 @@ def 上傳並跑完任務(
         payload = make_png_bytes()
 
     前 = set(_收件箱照片ids())
-    response = client.post(
-        "/photos", files={"file": (filename, payload, content_type)}
-    )
+    response = client.post("/photos", files={"file": (filename, payload, content_type)})
     assert response.status_code == 202, response.text
     job_id = response.json()["job_id"]
 
@@ -296,7 +294,6 @@ def 上傳一張並取回照片(client, **kwargs) -> dict:
     """
     結果 = 上傳並跑完任務(client, **kwargs)
     assert len(結果["photo_ids"]) == 1, (
-        f"這個捷徑只給單圖用，這次進了 {len(結果['photo_ids'])} 張——"
-        "PDF 請改用 上傳並跑完任務()"
+        f"這個捷徑只給單圖用，這次進了 {len(結果['photo_ids'])} 張——PDF 請改用 上傳並跑完任務()"
     )
     return _repo.fetch_photo(結果["photo_ids"][0])

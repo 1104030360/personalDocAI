@@ -66,9 +66,7 @@ def 拍一張(client, token: str, understanding=看得懂的收據, **kwargs):
     把任務跑完（用 tests/conftest.py 的 跑完任務()）。
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM(understanding)
-    files = kwargs.pop(
-        "files", {"file": ("shot.jpg", make_jpeg_bytes(), "image/jpeg")}
-    )
+    files = kwargs.pop("files", {"file": ("shot.jpg", make_jpeg_bytes(), "image/jpeg")})
     return client.post(f"/camera/{token}/photos", files=files)
 
 
@@ -139,9 +137,9 @@ def test_用localhost開頁時改用區網ip(client, monkeypatch):
     """
     monkeypatch.setattr(camera, "_lan_host", lambda: "10.0.0.34")
 
-    phone_url = client.post(
-        "/camera/session", headers={"host": "localhost:8000"}
-    ).json()["phone_url"]
+    phone_url = client.post("/camera/session", headers={"host": "localhost:8000"}).json()[
+        "phone_url"
+    ]
 
     assert phone_url.startswith("http://10.0.0.34:8000/ui/camera-phone.html")
 
@@ -261,7 +259,7 @@ def test_二進位frame不會弄斷連線(client, 配對):
     """
     with client.websocket_connect(f"/camera/{配對}/signal?role=desk") as desk:
         with client.websocket_connect(f"/camera/{配對}/signal?role=phone") as phone:
-            phone.send_bytes(b"\x00\x01\x02")       # 不是文字，應該被忽略
+            phone.send_bytes(b"\x00\x01\x02")  # 不是文字，應該被忽略
 
             phone.send_text('{"type":"offer","sdp":"v=0"}')
             assert desk.receive_text() == '{"type":"offer","sdp":"v=0"}'
@@ -284,9 +282,7 @@ def test_連上之後才過期就停止轉發並關閉兩端(client, 配對, mon
     with client.websocket_connect(f"/camera/{配對}/signal?role=desk") as desk:
         with client.websocket_connect(f"/camera/{配對}/signal?role=phone") as phone:
             現在 = sessions._now()
-            monkeypatch.setattr(
-                sessions, "_now", lambda: 現在 + sessions.TOKEN_TTL_SECONDS + 1
-            )
+            monkeypatch.setattr(sessions, "_now", lambda: 現在 + sessions.TOKEN_TTL_SECONDS + 1)
 
             desk.send_text('{"type":"capture"}')
 
@@ -308,7 +304,7 @@ def test_手機拍的照片走的是既有受理流程(client, 配對):
     assert set(body) == {"job_id", "filename", "content_type"}
     assert body["filename"] == "shot.jpg"
     assert body["content_type"] == "image/jpeg"
-    assert len(body["job_id"]) == 32               # uuid4().hex
+    assert len(body["job_id"]) == 32  # uuid4().hex
 
 
 def test_快門當下資料庫還沒有那一列而staging檔在(client, 配對):
@@ -321,7 +317,7 @@ def test_快門當下資料庫還沒有那一列而staging檔在(client, 配對)
     assert job["status"] == "queued"
     # 來源要標成 camera：進度面板之後要分得出「電腦上傳的」與「手機拍的」
     assert job["source"] == "camera"
-    assert job["ai_backend"] == "local"            # 入列當下的快照（D14）
+    assert job["ai_backend"] == "local"  # 入列當下的快照（D14）
 
 
 def test_好token可以立刻再拍第二張(client, 配對):
@@ -375,9 +371,7 @@ def test_亂token不能上傳照片(client):
 
 def test_亂token加上非法格式回404不是415(client):
     """檢查順序是刻意的：token 先驗——陌生人連「你檔案格式不對」都不該聽到。"""
-    response = 拍一張(
-        client, "亂打的token", files={"file": ("note.txt", b"x", "text/plain")}
-    )
+    response = 拍一張(client, "亂打的token", files={"file": ("note.txt", b"x", "text/plain")})
 
     assert response.status_code == 404
 
@@ -400,9 +394,7 @@ def test_過期token不能上傳照片(client, 配對, monkeypatch):
 
 def test_非圖片格式回415什麼都不存(client, 配對):
     """415 的語意與 POST /photos 一字不變（design5.md §8 第 1 列）。"""
-    response = 拍一張(
-        client, 配對, files={"file": ("note.txt", b"x", "text/plain")}
-    )
+    response = 拍一張(client, 配對, files={"file": ("note.txt", b"x", "text/plain")})
 
     assert response.status_code == 415
     assert photo_repository.count_photos() == 0
@@ -426,9 +418,7 @@ def test_看不懂的照片是任務失敗不是HTTP失敗(client, 配對):
     對外的最終結果一字不變（design5.md D10）：什麼都不存。
     變的只是「使用者什麼時候知道」——從當場 422 變成進度面板上出現一列失敗。
     """
-    結果 = 拍一張並跑完任務(
-        client, 配對, understanding=PhotoUnderstanding(understood=False)
-    )
+    結果 = 拍一張並跑完任務(client, 配對, understanding=PhotoUnderstanding(understood=False))
 
     assert 結果["response"].status_code == 202, "HTTP 這一層不判斷看不看得懂"
     assert 結果["job"]["status"] == "failed"
@@ -438,9 +428,7 @@ def test_看不懂的照片是任務失敗不是HTTP失敗(client, 配對):
 
 def test_png也收(client, 配對):
     """快門擷的是 JPEG，但格式檢查沿用既有清單，PNG 一樣通過。"""
-    response = 拍一張(
-        client, 配對, files={"file": ("shot.png", make_png_bytes(), "image/png")}
-    )
+    response = 拍一張(client, 配對, files={"file": ("shot.png", make_png_bytes(), "image/png")})
 
     assert response.status_code == 202
 

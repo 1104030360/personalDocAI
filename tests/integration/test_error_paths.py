@@ -25,8 +25,10 @@ from tests.fakes import FakeVLM, make_large_png_bytes
 TARGET_RECEIPT = PhotoUnderstanding(
     understood=True,
     text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
-    category="收據", location="Target",
-    items=["可樂", "洋芋片"], content_time="2026-08-10",
+    category="收據",
+    location="Target",
+    items=["可樂", "洋芋片"],
+    content_time="2026-08-10",
 )
 
 
@@ -67,9 +69,7 @@ def test_vlm看不懂最後整筆失敗且不寫入(client):
     收檔那一刻還沒有人看過圖，所以 202 是誠實的；試滿 VLM_MAX_ATTEMPTS 次
     仍看不懂才整筆失敗（design5.md §8 第 3 列），資料庫一列都不留。
     """
-    app.dependency_overrides[get_vlm] = lambda: FakeVLM(
-        PhotoUnderstanding(understood=False)
-    )
+    app.dependency_overrides[get_vlm] = lambda: FakeVLM(PhotoUnderstanding(understood=False))
 
     response = client.post("/photos", files={"file": ("a.png", b"\x89PNG", "image/png")})
     assert response.status_code == 202, response.text
@@ -84,7 +84,7 @@ def test_vlm看不懂最後整筆失敗且不寫入(client):
 
 # ---- 沒有「檔案太大」這個錯誤路徑 ----
 def test_大檔案照樣可以上傳(client):
-    大檔案 = make_large_png_bytes()   # 真的圖、真的大（隨機雜訊壓不掉）
+    大檔案 = make_large_png_bytes()  # 真的圖、真的大（隨機雜訊壓不掉）
     assert len(大檔案) > 3 * 1024 * 1024, "這個測試要用真的大檔才有意義"
 
     response = client.post("/photos", files={"file": ("big.png", 大檔案, "image/png")})
@@ -96,10 +96,9 @@ def test_程式碼裡沒有任何檔案大小上限檢查():
     # 用「這個測試檔的位置」推回專案根目錄（tests/integration/ → 上兩層），
     # 跑測試時不管人在哪個目錄都找得到檔案
     專案根目錄 = Path(__file__).resolve().parents[2]
-    source = (
-        (專案根目錄 / "app" / "api" / "routers" / "photos.py").read_text(encoding="utf-8")
-        + (專案根目錄 / "app" / "services" / "vlm_service.py").read_text(encoding="utf-8")
-    )
+    source = (專案根目錄 / "app" / "api" / "routers" / "photos.py").read_text(encoding="utf-8") + (
+        專案根目錄 / "app" / "services" / "vlm_service.py"
+    ).read_text(encoding="utf-8")
     for 關鍵字 in ("max_size", "MAX_SIZE", "413", "too large"):
         assert 關鍵字 not in source, f"不該出現大小限制相關程式碼：{關鍵字}"
 
@@ -140,9 +139,7 @@ def test_查無照片回200且不編造(client):
 
 def test_英文提問查無照片時用英文回覆(client):
     """雙語：查無結果的回覆語言也要跟隨提問語言。"""
-    response = client.post(
-        "/ask", json={"question": "What drinks did I buy recently?"}
-    )
+    response = client.post("/ask", json={"question": "What drinks did I buy recently?"})
 
     body = response.json()
     assert response.status_code == 200
@@ -159,6 +156,7 @@ def test_embedding一直失敗最後整筆失敗(client):
     次用完 → job 標成 failed、資料庫一列都不留（不吞錯這條原則沒變，
     只是「不吞錯」的表現從 500 換成 job["status"] == "failed"）。
     """
+
     class 壞掉的Embeddings:
         def embed_query(self, text):
             raise RuntimeError("Ollama 沒有回應")
@@ -168,9 +166,7 @@ def test_embedding一直失敗最後整筆失敗(client):
 
     app.dependency_overrides[get_embeddings] = lambda: 壞掉的Embeddings()
 
-    response = client.post(
-        "/photos", files={"file": ("a.png", b"\x89PNG", "image/png")}
-    )
+    response = client.post("/photos", files={"file": ("a.png", b"\x89PNG", "image/png")})
     assert response.status_code == 202, response.text
 
     job_id = response.json()["job_id"]
@@ -186,9 +182,7 @@ def test_資料庫掛掉回500(不擲出例外的client, monkeypatch):
     # monkeypatch：pytest 內建 fixture，暫時改掉某個屬性，測試結束會自動還原。
     # db/session.py 每次連線都重新讀 config.DATABASE_URL（Phase 3 的寫法），
     # 所以這裡改了就會生效。
-    monkeypatch.setattr(
-        config, "DATABASE_URL", "postgresql://localhost:5433/根本不存在的資料庫"
-    )
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://localhost:5433/根本不存在的資料庫")
 
     response = 不擲出例外的client.post("/ask", json={"question": "隨便問"})
 

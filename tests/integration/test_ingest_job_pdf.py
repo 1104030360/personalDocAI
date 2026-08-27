@@ -42,7 +42,7 @@ class 分頁VLM:
     """
 
     def __init__(self, 看得懂的頁碼: set[int], *, 每頁上限: int = 3) -> None:
-        self.看得懂的頁碼 = 看得懂的頁碼      # 1 起算
+        self.看得懂的頁碼 = 看得懂的頁碼  # 1 起算
         self.每頁上限 = 每頁上限
         self.calls = 0
         self.目前頁 = 1
@@ -291,7 +291,7 @@ def test_重送從pages_done續跑_已成功的頁不重看也不重插():
     assert photo_repository.count_photos() == 1
 
     # 佇列把同一個任務再發一次
-    續跑的vlm = 分頁VLM(看得懂的頁碼={1, 2, 3})   # 這個假件自己從第 1 頁數起
+    續跑的vlm = 分頁VLM(看得懂的頁碼={1, 2, 3})  # 這個假件自己從第 1 頁數起
     跑(job_id, store, 續跑的vlm)
 
     assert 續跑的vlm.calls == 2, "只該看第 2、3 頁，第 1 頁不重看"

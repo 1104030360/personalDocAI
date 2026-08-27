@@ -68,21 +68,15 @@ def test_本機路由用function_calling強制結構化輸出(monkeypatch):
     )
 
 
-def test_詢問計時沿用請求已選client而非重讀全域開關(
-    caplog, monkeypatch
-):
+def test_詢問計時沿用請求已選client而非重讀全域開關(caplog, monkeypatch):
     class 已選本機Router:
-        timing_target = ask_workflow.ai_timing.AiTarget(
-            backend="local", model="frozen-router"
-        )
+        timing_target = ask_workflow.ai_timing.AiTarget(backend="local", model="frozen-router")
 
         def route(self, question, entity_names):
             return ask_workflow.RouteDecision(mode="metadata")
 
     class 已選本機Answerer:
-        timing_target = ask_workflow.ai_timing.AiTarget(
-            backend="local", model="frozen-answerer"
-        )
+        timing_target = ask_workflow.ai_timing.AiTarget(backend="local", model="frozen-answerer")
 
         def answer(self, question, documents):
             return "查無相關照片"
@@ -93,9 +87,7 @@ def test_詢問計時沿用請求已選client而非重讀全域開關(
 
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(config, "AI_BACKEND", "cloud")
-    monkeypatch.setattr(
-        ask_workflow.retrieval_service, "photo_retriever", 空檢索器()
-    )
+    monkeypatch.setattr(ask_workflow.retrieval_service, "photo_retriever", 空檢索器())
     deps = ask_workflow.AskDeps(
         router=已選本機Router(),
         answerer=已選本機Answerer(),
@@ -105,12 +97,10 @@ def test_詢問計時沿用請求已選client而非重讀全域開關(
 
     assert ask_workflow.run_ask("幫我找照片", deps)["answer"] == "查無相關照片"
     assert any(
-        "kind=route backend=local model=frozen-router" in message
-        for message in caplog.messages
+        "kind=route backend=local model=frozen-router" in message for message in caplog.messages
     )
     assert any(
-        "kind=answer backend=local model=frozen-answerer" in message
-        for message in caplog.messages
+        "kind=answer backend=local model=frozen-answerer" in message for message in caplog.messages
     )
 
 
@@ -126,9 +116,7 @@ def test_路由回傳None時route計時標ok為false(caplog, monkeypatch):
     # Given：任意 RouterClient 違反契約，回傳 None；其餘相依皆為本機假件。
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(config, "AI_BACKEND", "local")
-    monkeypatch.setattr(
-        ask_workflow.retrieval_service, "photo_retriever", 空檢索器()
-    )
+    monkeypatch.setattr(ask_workflow.retrieval_service, "photo_retriever", 空檢索器())
     deps = ask_workflow.AskDeps(
         router=回傳None的Router(),
         answerer=FakeAnswerLLM(),
@@ -141,11 +129,7 @@ def test_路由回傳None時route計時標ok為false(caplog, monkeypatch):
 
     # Then：對外仍 fallback 成 vector，但這次 route 呼叫必須被計為失敗。
     assert state["mode"] == "vector"
-    結束 = [
-        message
-        for message in caplog.messages
-        if message.startswith("AI 結束 kind=route ")
-    ]
+    結束 = [message for message in caplog.messages if message.startswith("AI 結束 kind=route ")]
     assert len(結束) == 1, caplog.messages
     assert "ok=false" in 結束[0]
 
@@ -180,8 +164,7 @@ def test_雲端路由_回覆包著圍欄也解析得出來():
     # 送出去的內容＝共用的路由 prompt＋雲端的「只准回 JSON」指令（共用段逐字不動）
     content = fake.calls[0]["messages"][0]["content"]
     assert content == (
-        build_route_prompt("這週要交什麼？", ["我的 MacBook"])
-        + CLOUD_ROUTE_JSON_INSTRUCTION
+        build_route_prompt("這週要交什麼？", ["我的 MacBook"]) + CLOUD_ROUTE_JSON_INSTRUCTION
     )
 
 
@@ -201,9 +184,7 @@ def test_雲端回答_回文字並用共用prompt():
 
     assert answerer.answer("我買過什麼？", documents) == "你買過可樂。"
     # 回答是純文字：prompt 與本機逐字相同、不帶 JSON 指令
-    assert fake.calls[0]["messages"][0]["content"] == build_answer_prompt(
-        "我買過什麼？", documents
-    )
+    assert fake.calls[0]["messages"][0]["content"] == build_answer_prompt("我買過什麼？", documents)
 
 
 def test_build_answer_prompt_空結果時明講沒找到():

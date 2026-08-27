@@ -77,8 +77,12 @@ def test_進度面板的契約常數與命名():
     assert "const PP_POLL_MS = 2000;" in 面板
     assert 'panel.id = "pp-panel";' in 面板
     assert '"pp-job-" + job.job_id' in 面板
-    for 函式 in ["function ppStart()", "function ppStop()",
-                 "function ppRender(jobs)", "async function ppDismiss(jobId)"]:
+    for 函式 in [
+        "function ppStart()",
+        "function ppStop()",
+        "function ppRender(jobs)",
+        "async function ppDismiss(jobId)",
+    ]:
         assert 函式 in 面板, f"少了對外函式 {函式}"
 
 
@@ -144,7 +148,7 @@ def test_上傳頁可以一次選多個檔():
     上傳頁 = 讀("upload.html")
 
     assert re.search(r'<input type="file"[^>]*\bmultiple\b', 上傳頁, re.S), (
-        "upload.html 的 <input type=\"file\"> 少了 multiple——D3 要求一次可選多檔"
+        'upload.html 的 <input type="file"> 少了 multiple——D3 要求一次可選多檔'
     )
     # PDF 仍可混在同一次選檔裡（§6.4 末句）
     assert "application/pdf" in 上傳頁
@@ -177,7 +181,7 @@ def test_上傳頁是順序送不是一次全發():
 
     assert "for (const file of files)" in 上傳頁
     assert "Promise.all" not in 上傳頁
-    assert "ppStart()" in 上傳頁          # 送完要把進度面板叫起來
+    assert "ppStart()" in 上傳頁  # 送完要把進度面板叫起來
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -196,8 +200,8 @@ def test_手機端202就放行下一拍():
 
     assert "response.status === 202" in 手機頁
     assert "201" not in 手機頁
-    assert 'id="cp-bar"' in 手機頁                 # §6.5 的窄條
-    assert "progress_panel.js" not in 手機頁       # 手機不掛全站面板（Phase 67 §4.7）
+    assert 'id="cp-bar"' in 手機頁  # §6.5 的窄條
+    assert "progress_panel.js" not in 手機頁  # 手機不掛全站面板（Phase 67 §4.7）
     # 防連按的真本事是旗標，不是 disabled（電腦按的快門不經過按鈕）
     assert "if (!cpStream || cp上傳中) { return; }" in 手機頁
 
@@ -230,7 +234,7 @@ def test_鏡頭的核心功能一個字都沒動():
     樣式 = 讀("style.css")
 
     for 片語 in [
-        "new RTCPeerConnection({ iceServers: [] })",        # 零 STUN／TURN
+        "new RTCPeerConnection({ iceServers: [] })",  # 零 STUN／TURN
         'document.getElementById("cd-qr").innerHTML = body.qr_svg;',
         '送({ type: "capture" });',
         '送({ type: "torch", on: cd閃光開著 });',
@@ -242,7 +246,7 @@ def test_鏡頭的核心功能一個字都沒動():
         "facingMode: { ideal: cp鏡頭 }",
         'canvas.toBlob(resolve, "image/jpeg", 0.92);',
         "applyConstraints({ advanced: [{ torch: !!要開 }] })",
-        "settings.torch !== true",                          # iOS 靜默成功的復驗
+        "settings.torch !== true",  # iOS 靜默成功的復驗
     ]:
         assert 片語 in 手機頁, f"camera-phone.html 少了不該動的一行：{片語}"
 

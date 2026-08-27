@@ -111,7 +111,7 @@ def test_remove_staging對不存在的檔不炸():
 
     路徑 = staging_service.save_staging("job-1", "image/png", b"whatever")
     staging_service.remove_staging("job-1", "image/png")
-    staging_service.remove_staging("job-1", "image/png")   # 第二次
+    staging_service.remove_staging("job-1", "image/png")  # 第二次
     assert not 路徑.exists()
 
 

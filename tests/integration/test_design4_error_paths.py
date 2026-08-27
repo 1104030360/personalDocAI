@@ -99,9 +99,9 @@ def test_詳情彈窗是唯讀的():
     刻意用 read_text() 直接讀、不先判 exists()：路徑打錯要當場炸
     FileNotFoundError，不能默默變成綠的。
     """
-    彈窗原始碼 = (
-        專案根目錄 / "app" / "static" / "photo_detail_modal.js"
-    ).read_text(encoding="utf-8")
+    彈窗原始碼 = (專案根目錄 / "app" / "static" / "photo_detail_modal.js").read_text(
+        encoding="utf-8"
+    )
 
     assert "PATCH" not in 彈窗原始碼
     assert "POST" not in 彈窗原始碼
@@ -110,18 +110,12 @@ def test_詳情彈窗是唯讀的():
 
 
 def test_手機版遺失縮圖與中文斷行都有保護():
-    瀏覽頁原始碼 = (
-        專案根目錄 / "app" / "static" / "browse.html"
-    ).read_text(encoding="utf-8")
-    分類彈窗原始碼 = (
-        專案根目錄 / "app" / "static" / "folder_modal.js"
-    ).read_text(encoding="utf-8")
-    詳情彈窗原始碼 = (
-        專案根目錄 / "app" / "static" / "photo_detail_modal.js"
-    ).read_text(encoding="utf-8")
-    樣式原始碼 = (
-        專案根目錄 / "app" / "static" / "style.css"
-    ).read_text(encoding="utf-8")
+    瀏覽頁原始碼 = (專案根目錄 / "app" / "static" / "browse.html").read_text(encoding="utf-8")
+    分類彈窗原始碼 = (專案根目錄 / "app" / "static" / "folder_modal.js").read_text(encoding="utf-8")
+    詳情彈窗原始碼 = (專案根目錄 / "app" / "static" / "photo_detail_modal.js").read_text(
+        encoding="utf-8"
+    )
+    樣式原始碼 = (專案根目錄 / "app" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert 瀏覽頁原始碼.count('image.addEventListener("error"') == 2
     assert 'image.replaceWith(el("div", "placeholder", "無縮圖"))' in 瀏覽頁原始碼
@@ -138,7 +132,7 @@ def test_手機版遺失縮圖與中文斷行都有保護():
     assert 'replace(/(\\d)\\s+(年|月|日|元)/g, "$1\\u00a0$2")' in 瀏覽頁原始碼
     assert 'const 片語 = "待決定分頁的";' in 瀏覽頁原始碼
     assert 'el("span", "caption-nowrap", 片語)' in 瀏覽頁原始碼
-    assert '.caption-nowrap { white-space: nowrap; }' in 樣式原始碼
+    assert ".caption-nowrap { white-space: nowrap; }" in 樣式原始碼
     assert "function pd保護數字單位(text)" in 詳情彈窗原始碼
     assert 'pdEl("pd-task-due").textContent = pd保護數字單位(' in 詳情彈窗原始碼
     assert 'pd造("dd", null, null, pd保護數字單位(pd值或無(一欄[1])))' in 詳情彈窗原始碼
@@ -150,12 +144,8 @@ def test_手機版遺失縮圖與中文斷行都有保護():
 
 
 def test_前台錯誤不洩漏原始例外或開發伺服器名稱():
-    瀏覽頁原始碼 = (
-        專案根目錄 / "app" / "static" / "browse.html"
-    ).read_text(encoding="utf-8")
-    分類彈窗原始碼 = (
-        專案根目錄 / "app" / "static" / "folder_modal.js"
-    ).read_text(encoding="utf-8")
+    瀏覽頁原始碼 = (專案根目錄 / "app" / "static" / "browse.html").read_text(encoding="utf-8")
+    分類彈窗原始碼 = (專案根目錄 / "app" / "static" / "folder_modal.js").read_text(encoding="utf-8")
 
     assert '"載入失敗：" + error' not in 瀏覽頁原始碼
     assert '"請求失敗：" + error' not in 分類彈窗原始碼
@@ -166,9 +156,7 @@ def test_前台錯誤不洩漏原始例外或開發伺服器名稱():
 
 
 def test_詳情彈窗忽略過期回應且JSON失敗留在窗內():
-    原始碼 = (
-        專案根目錄 / "app" / "static" / "photo_detail_modal.js"
-    ).read_text(encoding="utf-8")
+    原始碼 = (專案根目錄 / "app" / "static" / "photo_detail_modal.js").read_text(encoding="utf-8")
     關窗實作 = 原始碼[原始碼.index("function pdClose()") : 原始碼.index("function pdInstall()")]
     畫圖實作 = 原始碼[原始碼.index("function pd畫圖(") : 原始碼.index("// D4：四欄")]
     開窗實作 = 原始碼[原始碼.index("async function openPhotoDetailModal") :]
@@ -192,14 +180,11 @@ def test_詳情彈窗忽略過期回應且JSON失敗留在窗內():
 
 
 def test_詳情彈窗會困住鍵盤焦點並封鎖背景():
-    原始碼 = (
-        專案根目錄 / "app" / "static" / "photo_detail_modal.js"
-    ).read_text(encoding="utf-8")
+    原始碼 = (專案根目錄 / "app" / "static" / "photo_detail_modal.js").read_text(encoding="utf-8")
     開窗實作 = 原始碼[原始碼.index("function pdOpen()") : 原始碼.index("// 關窗")]
     關窗實作 = 原始碼[原始碼.index("function pdClose()") : 原始碼.index("function pdInstall()")]
     鍵盤實作 = 原始碼[
-        原始碼.index('document.addEventListener("keydown"') :
-        原始碼.index("// 關閉方式③")
+        原始碼.index('document.addEventListener("keydown"') : 原始碼.index("// 關閉方式③")
     ]
 
     assert "let pdBackgroundInert = [];" in 原始碼

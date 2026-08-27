@@ -61,15 +61,10 @@ def test_待決定頁的空關不跳與兩個資料形狀轉換都還在():
     assert "if (!標題) {" in 原始碼
 
     # ② 實體建議是**名字字串**，要照名字對回實體清單才拿得到 id
-    assert (
-        "全部實體.find(function (e) { return e.name === photo.suggested_entity; })"
-        in 原始碼
-    )
+    assert "全部實體.find(function (e) { return e.name === photo.suggested_entity; })" in 原始碼
 
     # ③ 待辦窗讀的鍵叫 due（不是 due_date），值是 "YYYY-MM-DD" 或空字串
-    assert (
-        'suggestion: { title: 標題, due: photo.suggested_task_due || "" },' in 原始碼
-    )
+    assert 'suggestion: { title: 標題, due: photo.suggested_task_due || "" },' in 原始碼
 
     # ④ 不准為了畫①而再看一次圖：待決定頁不該打「再建議一個」那支端點
     #    （窗裡那顆按鈕是 entity_modal.js 自己打的，不在本頁原始碼裡）

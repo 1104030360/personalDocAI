@@ -85,15 +85,19 @@ def test_原圖與縮圖各自一個資料夾不會互相覆蓋():
     assert original == "data/photos/9.png"
     assert thumbnail == "data/thumbs/9.png"
     # 同一個 id、兩個檔案，內容不同（縮圖被縮小了）
-    assert storage_service.absolute_path(original).read_bytes() != \
-        storage_service.absolute_path(thumbnail).read_bytes()
+    assert (
+        storage_service.absolute_path(original).read_bytes()
+        != storage_service.absolute_path(thumbnail).read_bytes()
+    )
 
 
 def test_absolute_path把開頭的data換成DATA_DIR():
-    assert storage_service.absolute_path("data/photos/1.png") == \
-        config.DATA_DIR / "photos" / "1.png"
-    assert storage_service.absolute_path("data/thumbs/1.png") == \
-        config.DATA_DIR / "thumbs" / "1.png"
+    assert (
+        storage_service.absolute_path("data/photos/1.png") == config.DATA_DIR / "photos" / "1.png"
+    )
+    assert (
+        storage_service.absolute_path("data/thumbs/1.png") == config.DATA_DIR / "thumbs" / "1.png"
+    )
 
 
 def test_remove_if_exists刪得掉也吃得下None與不存在的路徑():
