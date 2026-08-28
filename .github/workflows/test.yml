@@ -1,0 +1,82 @@
+# GitHub Actions：push 與 PR 各跑一次「格式 → lint → 測試」（Phase 73）。
+#
+# 這個檔案是給 GitHub 的一台乾淨 Ubuntu 虛擬機看的，不是給你的 Mac 看的。
+# 它跟本機 pre-commit 的關係：
+#   pre-commit  會改檔，只看 staged 的 .py，跑在你的機器上
+#   CI          不准改檔（--check），看全部的 app/tests/scripts，跑在 GitHub 上
+# 兩邊都用 ruff，但**是兩顆不同的執行檔**：這裡是 pip 從 requirements.txt 裝的，
+# pre-commit 那顆是它自己照 .pre-commit-config.yaml 的 rev 下載的。版本要對齊。
+#
+# 刻意不做（phase-73 §3）：不裝 Node／eslint、不起 Redis／Celery worker／Ollama、
+# 不建 app 映像、不簽 HTTPS 憑證、不跑 pre-commit run --all-files、無 coverage 門檻。
+# 測試不需要那些——tests/conftest.py 的四道 autouse 安全網已經把外部依賴全擋掉了
+# （不連 Redis、不啟動 Celery、不打 Ollama、不寫專案 data/），CI 只需要一個 Postgres。
+
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      # 唯一的附屬容器。映像跟本機 compose.yaml 的 db 同一個，才不會有
+      # 「本機 pgvector 有、CI 沒有」這種只在遠端出現的錯。
+      db:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          # 直接把資料庫名字設成測試庫，所以**不需要**跑 db/docker-init/。
+          # 那支是本機 compose 用來「在正式庫之外再建一個測試庫」的，CI 沒有正式庫。
+          # 大小寫混雜沒問題：官方映像建庫用的是 CREATE DATABASE :"db"（帶引號的
+          # 識別字），大小寫會原樣保留，跟 conftest 連的名字逐字相同。
+          POSTGRES_DB: PersonalDocAI_test
+          # 不設密碼。這台 Postgres 只活在這次 job 裡、只有本機連得到，
+          # 而 conftest 的連線字串本來就沒有密碼（postgres@127.0.0.1）。
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          # 左邊 5433 是 runner 上看到的埠，要跟 tests/conftest.py 對齊。
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d PersonalDocAI_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip # 照 requirements.txt 的雜湊快取下載的套件
+
+      - run: pip install -r requirements.txt
+
+      # 順序：先兩個秒級的檢查，再跑要一分鐘的測試。
+      # 格式沒過就不必等 pytest 了（一個 step 紅了，後面的不會跑）。
+      - name: format check
+        run: ruff format --check app tests scripts
+
+      - name: lint
+        run: ruff check app tests scripts
+
+      - name: schema
+        # 這台 Postgres 是全新的空庫，表要自己建。schema.sql 開頭是 DROP TABLE，
+        # 只能拿來打測試庫——這裡剛好就是（正式庫在你家的 Docker volume 裡，CI 碰不到）。
+        # psql 明確裝一次：runner 映像有沒有預裝、預裝哪一版都不保證，
+        # 與其賭不如花 20 秒。psql 的大版比伺服器舊不影響跑 DDL。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          psql -h 127.0.0.1 -p 5433 -U postgres -d PersonalDocAI_test -f db/schema.sql
+
+      - name: tests
+        # 沒有 .env（那個檔不入版控），所以 app/core/config.py 全部走預設值。
+        # 已在本機用「把環境變數先設成 CI 的預設值」實測過 543 passed，
+        # 因為每個會受 .env 影響的測試都自己 monkeypatch 了。
+        run: pytest -q

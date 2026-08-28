@@ -198,22 +198,49 @@ pre-commit install
 #   ruff check --fix  → 能修的直接修（import 排序等）；修不掉的（例如 E402）擋下 commit
 #   ruff format       → 重排空白、換行、引號
 # hook 改過檔之後那次 commit 會失敗，這是正常的：`git add` 再 commit 一次就過。
-# 沒跑 pre-commit install 的人照樣 commit 得了——目前沒有第二道關卡（CI 尚未建置）。
+# 沒跑 pre-commit install 的人照樣 commit 得了，那時就靠 push 之後的 CI 紅燈擋。
 #
-# 手動跑（不經 git，等同 hook 的「只檢查、不改檔」版本）：
+# 手動跑（不經 git，等同 hook 的「只檢查、不改檔」版本，也等同 CI 跑的那兩句）：
 ruff format --check app tests scripts && ruff check app tests scripts
 # 真的要改檔：把 --check 拿掉、check 加 --fix
 #
-# ⚠ 升級 ruff 要「兩個檔一起改」：requirements.txt 的 `ruff>=` 與
-#   .pre-commit-config.yaml 的 `rev:`。pre-commit 自己下載 rev 那版的 ruff 跑，
-#   **不是**用 .venv 裡那顆；兩邊不一致就會「這台過、那台紅」而且訊息看不出原因。
-#   改完重跑一次 `ruff format app tests scripts` 確認沒有新的格式差異。
+# ⚠ 這台機器上有**兩顆 ruff**，別搞混：
+#     .venv/bin/ruff                        ← 你手動打指令、以及 CI 用的（pip 裝的）
+#     ~/.cache/pre-commit/repo*/py_env-*/bin/ruff  ← git commit 時 hook 用的
+#   hook 那顆是 pre-commit 照 .pre-commit-config.yaml 的 `rev` 自己從 GitHub 下載的，
+#   **跟 .venv 完全無關**（所以沒 activate venv 也 commit 得動，實測過）。
+#   升級 ruff 要「三個地方一起動」：requirements.txt 的 `ruff>=0.16,<0.17`、
+#   .pre-commit-config.yaml 的 `rev:`，然後重跑 `ruff format app tests scripts`
+#   收下新版帶來的格式差異。少動一個就會「這台過、那台紅」而且訊息看不出原因。
 #   目前釘的是 0.16.5（整庫格式基線就是它跑出來的）。
+#
+# ⚠ 砍掉重建 .venv 之後要重跑 `pre-commit install`：
+#   .git/hooks/pre-commit 裡把 .venv/bin/python3 的**絕對路徑**寫死了。
+#   好消息是它壞掉時會 exit 1 擋下 commit（大聲壞，不是安靜放行）。
 #
 # ⚠ .pre-commit-config.yaml 的兩個 hook 都寫死 `types_or: [python, pyi]`，不要拿掉：
 #   上游 ruff-format 的預設含 markdown，會連 .md 裡的 ```python 區塊一起重排
 #   （實測本 repo 有 39 份會被改到，包含 docs/design/design.md 與整批已歸檔的
 #   docs/plan/finish/phase-*.md——那些是歷史紀錄，不該被工具動到）。
+
+# ── CI：GitHub Actions（Phase 73）─────────────────────────────────
+# 檔案：.github/workflows/test.yml。每次 push 與 PR 跑一顆 job，內容等價於：
+#   ruff format --check app tests scripts     ← 不准改檔，格式不對就紅
+#   ruff check app tests scripts
+#   psql … -f db/schema.sql                   ← CI 的庫是全新的空庫，表要自己建
+#   pytest -q                                 ← 顆數要跟本機一樣（543）
+# CI 自己起一個 pgvector:pg17 當附屬容器並映到 5433（跟 tests/conftest.py 對齊），
+# **不起** Redis／Celery worker／Ollama、不建 app 映像、沒有 .env——
+# 那四道 autouse 安全網已經把外部依賴全擋掉了，測試不需要它們。
+#
+# ⚠ 本機想預演 CI 的環境（CI 上沒有 .env，config 全走預設值）：
+#   把那些變數先設進環境再跑 pytest 即可——load_dotenv() 預設不覆蓋既有環境變數，
+#   所以 .env 會被自動略過，**不必去動那個檔**（動它會連帶影響正在跑的 app 容器，
+#   而且來源檔消失時 Docker 會默默建一個叫 .env 的「資料夾」）：
+#     env OLLAMA_API_KEY= VLM_MODEL=gemma4 LLM_MODEL=gemma4 \
+#         OLLAMA_CLOUD_VLM_MODEL=gemma4 OLLAMA_CLOUD_LLM_MODEL=gemma4 \
+#         EMBEDDING_MODEL=bge-m3 pytest -q
+#   （2026-08-27 實測 543 passed，與帶 .env 跑的結果相同。）
 
 # 只跑規格檔 binder（上傳＋詢問＋無線鏡頭三份；2026-08-24 摘標後**全綠、零 skip**，共 27 顆）
 pytest tests/integration/test_upload_feature.py tests/integration/test_ask_feature.py tests/integration/test_camera_feature.py -v
