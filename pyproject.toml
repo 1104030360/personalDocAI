@@ -1,7 +1,5 @@
-# ruff 設定（Phase 73）＝全專案唯一的 Python 格式與 lint 來源。
-#
-# 刻意「只有」這一段：不寫 [project]／[build-system]，因為本專案不是要發行的
-# 套件，這個檔案存在的唯一理由就是放 ruff 設定。pytest 的設定仍在 pytest.ini。
+# 工具設定（不發行套件，所以沒有 [project]／[build-system]）。
+# ruff：格式與 lint。pytest：原 pytest.ini 的三行，併進來讓根目錄少一個檔。
 
 [tool.ruff]
 target-version = "py312"
@@ -33,3 +31,10 @@ ignore = ["E501"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+# pytest 8 讀 [tool.pytest.ini_options]（不是 pytest 9 的 [tool.pytest]）。
+# 清單要用 TOML 陣列；寫成字串 "tests" 在部分版本會被當成單一奇怪的路徑。
+# 來源：https://docs.pytest.org/en/stable/reference/customize.html
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

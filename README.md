@@ -554,8 +554,7 @@ scripts/  check_embedding_dim.py (manual real-model smoke test, never in CI)
 compose.yaml      production-style, always on (db / redis / app / worker, no --reload)
 compose.dev.yaml  dev overlay (app hot reload + source bind mounts)
 Dockerfile        one image shared by app and worker
-pyproject.toml    ruff configuration (this is not a distributable package, so no [project])
-pytest.ini        pytest configuration
+pyproject.toml    ruff + pytest configuration (not a distributable package, so no [project])
 .pre-commit-config.yaml   ruff on staged .py files at commit time
 .github/workflows/test.yml CI: format check -> lint -> schema -> pytest
 ```
