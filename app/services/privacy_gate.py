@@ -212,7 +212,7 @@ class VlmGate:
             try:
                 # 只看第一頁：多頁薪資單只有封面被看過，失敗方向仍是 UNCERTAIN／
                 # 可能漏，好過整份不看。完整逐頁理解是入庫那一次的事。
-                image_bytes = pdf_service.render_pages(image_bytes)[0]
+                image_bytes = pdf_service.render_pages(image_bytes, max_pages=1)[0]
             except Exception:
                 logger.warning(
                     "隱私閘門判斷失敗，當作 UNCERTAIN：PDF 渲染不出第一頁", exc_info=True

@@ -206,6 +206,35 @@ def test_PDF渲染失敗回UNCERTAIN():
     assert model.calls == 0
 
 
+def test_PDF閘門只渲染第一頁(monkeypatch):
+    """R4：閘門對多頁 PDF 只渲染第一頁。
+
+    包住**真的** render_pages（不是換成假的）：既驗「有沒有把 max_pages 傳下去」，
+    也驗「傳下去之後真的還拿得到一張 PNG」——換成假的就只驗得到前者。
+    """
+    from tests.fakes import make_pdf_bytes
+
+    seen_kwargs: dict = {}
+    real_render_pages = privacy_gate.pdf_service.render_pages
+
+    def recording_render_pages(pdf_bytes, *args, **kwargs):
+        seen_kwargs.update(kwargs)
+        return real_render_pages(pdf_bytes, *args, **kwargs)
+
+    monkeypatch.setattr(privacy_gate.pdf_service, "render_pages", recording_render_pages)
+
+    model = FakePrivacyModel(PrivacyJudgement(sensitive=False, confident=True))
+    VlmGate(model).classify(
+        filename="scan.pdf",
+        content_type="application/pdf",
+        load_bytes=lambda: make_pdf_bytes(3),
+    )
+
+    assert seen_kwargs.get("max_pages") == 1, "閘門要明講『只要第一頁』"
+    assert model.calls == 1
+    assert model.last_image_bytes[:4] == b"\x89PNG", "送進模型的仍然是那一頁的 PNG"
+
+
 def test_縮圖失敗回UNCERTAIN():
     model = FakePrivacyModel(PrivacyJudgement(sensitive=False, confident=True))
     result = VlmGate(model).classify(

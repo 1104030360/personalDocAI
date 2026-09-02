@@ -25,11 +25,14 @@ gate（隱私閘門）與 cloud（雲端路）。兩個都是注入點，pytest 
   * INSERT ＋ 原圖 ＋ 縮圖：正本永遠在這台 Mac
   * 「這一筆算不算成功」：job 的生死（delete 或標 failed）永遠由本機決定
 
-【本 phase（80）做到哪裡】
-單圖的雲端路整圈都通了，四種「遠端不可用」也全部有退路：
-不是 running／沒憑證（Phase 78）、送出失敗（79）、逾時（79 接、80 補測試）、
-崩潰重送但沒有結果（80）。**還沒做**：PDF 的雲端路（Phase 81）——
-本檔的落庫段目前只認單圖的 result.json。
+【本 phase（81）做到哪裡】
+雲端路**全部做完**了：單圖與 PDF、順利的一圈與四種不順利
+（不是 running／沒憑證（Phase 78）、送出失敗（79）、逾時（79／80）、
+崩潰重送但沒有結果（80））。接下來是 ★G1——產品負責人點頭之後才開始碰 AWS。
+
+PDF 的雲端路有一件事與單圖不同（總覽 §10.2 F）：**本機自己再拆一次頁**。
+工人拆頁是為了看圖，本機拆頁是為了拿到「要存檔的那幾張 PNG」——
+把工人拆好的每頁 PNG 放 S3 會讓物件數隨頁數暴增，而拆頁是純 CPU、幾百毫秒的事。
 
 分層：本模組不寫 SQL、不碰 HTTP、不自己看圖——它只是「決定呼叫誰」。
 """
@@ -43,7 +46,7 @@ from typing import Callable
 from langchain_core.embeddings import Embeddings
 
 from app.core import config
-from app.services import cloud_ingest, ingest_job, staging_service, vlm_service
+from app.services import cloud_ingest, ingest_job, pdf_service, staging_service, vlm_service
 from app.services.ingest_job_store import IngestJob, JobStore
 from app.services.privacy_gate import PrivacyGate, Verdict
 
@@ -301,6 +304,27 @@ def _store_cloud_result(
     now: Callable[[], datetime | None],
     cloud,
 ) -> None:
+    """依檔案型別分流：單圖一張、PDF 一頁一張（沿用 design5 D11「一檔一任務」）。
+
+    分流的依據是 job 的 content_type，**不是** result.json 的 kind：
+    job 是我們自己寫的（HTTP 收檔時就決定了），kind 是工人寫的。
+    兩邊不一致時（例如工人是舊版映像）以本機的為準——落庫是本機的責任。
+    """
+    if job["content_type"] == config.PDF_CONTENT_TYPE:
+        _store_pdf_result(job, result, store=store, embeddings=embeddings, now=now, cloud=cloud)
+        return
+    _store_image_result(job, result, store=store, embeddings=embeddings, now=now, cloud=cloud)
+
+
+def _store_image_result(
+    job: IngestJob,
+    result: dict,
+    *,
+    store: JobStore,
+    embeddings: Embeddings,
+    now: Callable[[], datetime | None],
+    cloud,
+) -> None:
     """拿工人看好的結果，在**本機**完成剩下的事（design6 D13）：
 
         算向量 → INSERT ＋ 存原圖 ＋ 存縮圖 → **立刻寫 photo_ids** → 清 S3 → 收尾（刪 staging、刪 job）
@@ -387,6 +411,176 @@ def _store_cloud_result(
     #   （`docker compose logs worker | grep 雲端結果已入庫`）。成功的 job 會被刪掉，
     #   所以「照片真的從雲端回來了」在 log 上只剩這一行證據。
     logger.info("job %s 雲端結果已入庫：photo_id=%d", job_id, photo_id)
+
+
+def _store_pdf_result(
+    job: IngestJob,
+    result: dict,
+    *,
+    store: JobStore,
+    embeddings: Embeddings,
+    now: Callable[[], datetime | None],
+    cloud,
+) -> None:
+    """PDF 的雲端路落庫：工人逐頁看好的結果 ＋ **本機自己拆的那幾張 PNG**。
+
+    ★ 為什麼本機要再拆一次頁（總覽 §10.2 F）：
+      工人拆頁是為了看圖；本機拆頁是為了拿到「要存進 data/photos 的那幾張 PNG」。
+      把工人拆好的每頁 PNG 放 S3 會讓物件數隨頁數暴增（一份 30 頁的掃描件就 30 個物件），
+      而 pypdfium2 拆頁是純 CPU、幾百毫秒的事。
+
+    ★ 三條規則與本機路（ingest_job._run_pdf_job）**逐字相同**：
+      ① 每一頁各自成敗：某一頁看不懂就跳過那一頁，其他頁照樣入庫
+      ② 0 頁成功才整筆失敗（ERROR_PDF_ALL_PAGES_FAILED）
+      ③ 崩潰重送從 pages_done 的**下一頁**接著跑，已成功的頁不重插
+         （pages_done ＝「已處理幾頁」，**含跳過的頁**；每一頁的收據在整份 cleanup() 之前
+         就已經寫進 JobStore——總覽 §10.2 R）
+    """
+    job_id = job["job_id"]
+    content_type = job["content_type"]
+
+    # ① 工人說這份 PDF 拆不開（pages 是空清單）＝ 這次上傳什麼都存不了
+    pages = result.get("pages")
+    if not isinstance(pages, list) or not pages:
+        logger.warning("job %s：雲端回報 PDF 拆不開", job_id)
+        _best_effort_cloud_cleanup(cloud, job_id)
+        ingest_job.fail_job(
+            job_id, ingest_job.ERROR_PDF_UNREADABLE, store=store, content_type=content_type
+        )
+        return
+
+    # ② 本機自己拆一次頁，拿到要存檔的 PNG 位元組
+    try:
+        page_images = pdf_service.render_pages(staging_service.read_staging(job_id, content_type))
+    except pdf_service.PdfUnreadableError:
+        # 工人拆得開、本機拆不開：多半是 staging 檔在半路壞了（很罕見）
+        logger.warning("job %s：本機拆頁失敗", job_id, exc_info=True)
+        _best_effort_cloud_cleanup(cloud, job_id)
+        ingest_job.fail_job(
+            job_id, ingest_job.ERROR_PDF_UNREADABLE, store=store, content_type=content_type
+        )
+        return
+
+    store.update(job_id, page_count=len(page_images))
+    prompt_context = ingest_job.load_prompt_context()
+
+    # ③ 依頁碼配對（工人回的順序不保證，用 page 這個欄位對，不要用陣列索引）
+    page_results = {page.get("page"): page for page in pages if isinstance(page, dict)}
+    if len(page_results) != len(page_images):
+        # 兩邊拆的是同一份檔、用的是同一支 pdf_service，正常情況頁數一定相同。
+        # 對不上＝工人是別的版本、或檔在半路壞了。對不上的頁由下面的 .get() 當「沒有結果」跳過，
+        # 這裡先大聲記一行——不然「少了幾頁」會安靜地變成幾個跳頁，事後很難查。
+        logger.warning(
+            "job %s：工人回了 %d 頁的結果，本機拆出 %d 頁，對不上的頁會被跳過",
+            job_id,
+            len(page_results),
+            len(page_images),
+        )
+
+    photo_ids: list[int] = list(job.get("photo_ids") or [])
+    already_done = job.get("pages_done") or 0
+    if already_done:
+        logger.info(
+            "job %s：崩潰重送，已處理 %d／%d 頁，從第 %d 頁接著跑",
+            job_id,
+            already_done,
+            len(page_images),
+            already_done + 1,
+        )
+
+    for page_number, page_bytes in enumerate(page_images[already_done:], start=already_done + 1):
+        photo_id = _store_pdf_page(
+            job_id,
+            page_number,
+            page_bytes,
+            page_results.get(page_number),
+            store=store,
+            embeddings=embeddings,
+            now=now,
+            prompt_context=prompt_context,
+        )
+        if photo_id is not None:
+            photo_ids.append(photo_id)
+        # 成功或跳過都要記 pages_done，而且要與 photo_ids **同一次**寫進去：
+        # 分兩次寫的話，剛好被殺在中間的重送會把同一頁再做一次（沿用本機路的作法）。
+        # ★ 這一行也是 PDF 版的「先寫收據」（總覽 §10.2 R）：每一頁的收據在**這裡**、
+        #   在整份的 cleanup()（下面 ④）之前就已經落到 JobStore——cleanup 期間被殺，
+        #   重送會從 pages_done 的下一頁接著跑，已入庫的頁不會再插一次。
+        store.update(job_id, pages_done=page_number, photo_ids=list(photo_ids))
+
+    # ④ 收尾：至少一頁成功就算整筆成功（design5 D12）。
+    #    走到這裡時每一頁的 pages_done／photo_ids 都已經在 JobStore 裡了（③ 的迴圈每頁寫一次），
+    #    所以下面的 cleanup（S3 網路呼叫）與刪 job 之間被殺也不會雙 INSERT（總覽 §10.2 R）。
+    if not photo_ids:
+        _best_effort_cloud_cleanup(cloud, job_id)
+        ingest_job.fail_job(
+            job_id, ingest_job.ERROR_PDF_ALL_PAGES_FAILED, store=store, content_type=content_type
+        )
+        return
+
+    _best_effort_cloud_cleanup(cloud, job_id)
+    staging_service.remove_staging(job_id, content_type)
+    store.delete(job_id)
+    # ★ 契約字樣（與單圖那一行同一個前綴）：Phase 88／92 的 Demo 靠 grep「雲端結果已入庫」對帳。
+    #   跳過幾頁算得出來：len(page_images) − len(photo_ids)，不必再印一個欄位。
+    logger.info(
+        "job %s 雲端結果已入庫：%d 頁中 %d 頁成功（photo_ids=%s）",
+        job_id,
+        len(page_images),
+        len(photo_ids),
+        photo_ids,
+    )
+
+
+def _store_pdf_page(
+    job_id: str,
+    page_number: int,
+    page_bytes: bytes,
+    page_result: dict | None,
+    *,
+    store: JobStore,
+    embeddings: Embeddings,
+    now: Callable[[], datetime | None],
+    prompt_context: ingest_job.PromptContext,
+) -> int | None:
+    """把 PDF 的一頁變成資料庫裡的一列；這一頁不成立就回 None（＝跳過它）。
+
+    三種「跳過」：工人沒回這一頁、工人說看不懂、本機轉向量或寫檔失敗。
+    三種都只影響**這一頁**——其他頁照樣入庫（design5 D12 的 skipped_pages 語意）。
+    """
+    understanding = (
+        _parse_understanding(page_result.get("understanding"))
+        if page_result and page_result.get("understood")
+        else None
+    )
+    if understanding is None:
+        logger.warning("job %s：第 %d 頁雲端看不懂或沒有結果，跳過這一頁", job_id, page_number)
+        return None
+
+    embedding = _embed_with_retries(
+        job_id, understanding, store=store, embeddings=embeddings, prompt_context=prompt_context
+    )
+    if embedding is None:
+        logger.warning("job %s：第 %d 頁本機轉向量失敗，跳過這一頁", job_id, page_number)
+        return None
+
+    try:
+        return ingest_job.insert_photo_with_files(
+            page_bytes,
+            ingest_job.PDF_PAGE_CONTENT_TYPE,
+            understanding,
+            embedding,
+            inbox_name=prompt_context.inbox_name,
+            folders=prompt_context.folders,
+            entities=prompt_context.entities,
+            uploaded_at=now(),
+        )
+    except Exception:
+        # 半成品已由 insert_photo_with_files 自己清乾淨（檔案＋資料列）
+        logger.exception(
+            "job %s：第 %d 頁入庫寫入失敗，半成品已清乾淨，跳過這一頁", job_id, page_number
+        )
+        return None
 
 
 def _embed_with_retries(

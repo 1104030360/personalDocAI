@@ -435,8 +435,8 @@ git branch --show-current             # 預期：main
 | 78 | `phase-78-閘門接線與fallback契約.md` | 甲 | `gated_ingest.run_gated_ingest_job()`：閘門、`route=local`、遠端不可用→fallback；`celery_app` 改呼叫它 | 74、75、76、77 | D5、D7、D10、§2.1、§8 第 1／2／3 列 | +9 | 589 | [x] |
 | 79 | `phase-79-雲端路本機端單圖.md` | 甲 | `CloudRoute` 本體（available／submit／fetch_result／wait_result 基本版／cleanup）＋雲端成功路（單圖） | 77、78 | D7、D8、D9、D13、§2.2、§2.3、§8 第 4／7 列 | +10 | 599 | [x] |
 | 80 | `phase-80-雲端路逾時與冪等.md` | 甲 | `wait_result` 完整版（總覽 §2.5 五條規則）＋崩潰重送 `route=cloud`＋D17 冪等 | 79 | D10、D17、§2.1 第 4 條、§8 第 5／6 列 | +10 | 609 | [x] |
-| 81 | `phase-81-雲端路PDF.md` | 甲 | PDF 走雲端路：`result.pages` 逐頁配對本機 `render_pages`；沿用跳頁／`pages_done`／0 頁失敗 | 79、80 | D7、D17、§2.2、§8 第 7 列 | +7 | 616 | [ ] |
-| **★G1** | （人的動作，沒有檔案） | — | 甲的驗收 ＋ 產品負責人明示「可以開始花 AWS 資源」 | 81 | §0 甲那列、§0 禁止第 1 條 | — | 616 | [ ] |
+| 81 | `phase-81-雲端路PDF.md` | 甲 | PDF 走雲端路：`result.pages` 逐頁配對本機 `render_pages`；沿用跳頁／`pages_done`／0 頁失敗；**2026-09-02 裁決 R4 順手做 `render_pages(max_pages=)`＋閘門只渲染第一頁** | 79、80 | D7、D17、§2.2、§8 第 7 列 | +7（實 +11） | 616（實 **624**） | [ ] |
+| **★G1** | （人的動作，沒有檔案） | — | 甲的驗收 ＋ 產品負責人明示「可以開始花 AWS 資源」 | 81 | §0 甲那列、§0 禁止第 1 條 | — | 616（實 624） | [ ] |
 | 82 | `phase-82-AWS帳號與工具.md` | 乙 | **零程式碼、人做**：Free plan 開戶、**先建 Budget**、東京區、AWS CLI、IAM user `personaldocai-mac` | ★G1 | D15、§7 全節、§6 IAM 那列 | +0 | 616 | [ ] |
 | 83 | `phase-83-aws_mailbox模組.md` | 乙 | `requirements.txt` 加 `boto3>=1.35`；**改 design5 那顆 boto3 掃碼測試**；`aws_mailbox.py` 全部方法（stub client） | 82 | D8、D9、§1.1 第 1 列、§2.2、§2.3 | +16 | 632 | [ ] |
 | 84 | `phase-84-建S3寄物櫃.md` | 乙 | AWS CLI 建 bucket（BPA、SSE-S3、Lifecycle 2 天）；`scripts/aws_check.py s3`；`.env` 填 `S3_BUCKET` | 83 | D8、§6「Bucket 非公開」「用完刪 mailbox」 | +0 | 632 | [ ] |
@@ -938,11 +938,12 @@ route = job.get("route")
 
 `test_wait_result每次等待的秒數都不超過20`、`test_收到別人的訊息而那筆還在雲端路時把訊息還回去`、`test_收到別人的訊息而那筆已不在store時刪訊息也刪S3`、`test_收到別人的訊息而那筆已改走本機時刪訊息也刪S3`、`test_自己的訊息但result_json不在時回None`、`test_逾時沒有結果_fallback本機且log有reason_result_timeout`、`test_同一個job_id的結果送兩次_照片仍然只有一列`、`test_崩潰重送route是cloud而且S3有結果_直接落庫零submit`、`test_崩潰重送route是cloud但S3沒有結果_fallback本機`、`test_逾時fallback之前會先清掉S3物件`
 
-#### Phase 81 · 階段甲 · +7 顆（累計 616）
+#### Phase 81 · 階段甲 · +7 顆（累計 616；**2026-09-02 實查：開工基線 613、核心 +7、R4 +2、review 裁決 R11 守門測試 +2、累計 624**）
 
 **動到的檔：** `app/services/gated_ingest.py`、`tests/fakes.py`（假工人支援 PDF）、
-`tests/integration/test_gated_ingest_pdf.py`（新）
-> ⚠ **81 的 `gated_ingest.py` 一律以 Phase 80 落地版（工作樹實檔）為基準只加 PDF 分支，不要照 81 計畫檔的整檔區塊重貼**（81 成稿早於 80 的三處實作裁決）：必須保留 `_繼續雲端路` 落庫前重讀那一行（`最新 = store.get(job_id) or job`，D17 最後一道保險；校準 E／F 發現）、`_盡力清雲端`、**R14 的 `cloud.wait_result(...)` try/except（信箱例外 → 視為 result_timeout）**、以及 `_理解()` 註解的「多餘鍵會被忽略」措辭。派 81 前先 diff 81 計畫檔的重貼碼與實檔，把差異搬進計畫檔。
+`tests/integration/test_gated_ingest_pdf.py`（新）；**2026-09-02 裁決 R4 再加** `app/services/pdf_service.py`（`render_pages(..., max_pages=None)`）、`app/services/privacy_gate.py`（閘門 PDF 分支 `max_pages=1`）與兩顆單元測試 `test_max_pages只渲染前幾頁`／`test_PDF閘門只渲染第一頁`（phase0901 ledger Task 2 parked minor ＋ FINAL review M5 留給 81 的項目）。
+> 📌 **2026-09-02 校準紀錄**：識別字一律英文（產品負責人指示；`_用雲端結果落庫`→`_store_cloud_result`、`_PDF用結果落庫`→`_store_pdf_result`、`_落一頁`→`_store_pdf_page`、測試工具 `WorkerMailbox`／`create_pdf_job`／`cloud_route`／`run`…；命名契約在 `.superpowers/sdd/phase0902/brief-common.md` §5）；`test_中文` 測試名維持。
+> ⚠ **81 的 `gated_ingest.py` 一律以 Phase 80 落地版（工作樹實檔）為基準只加 PDF 分支，不要照 81 計畫檔的整檔區塊重貼**（81 成稿早於 80 的三處實作裁決）：必須保留 `_resume_cloud_route` 落庫前重讀那一行（`latest_job = store.get(job_id) or job`，D17 最後一道保險；校準 E／F 發現）、`_best_effort_cloud_cleanup`、**R14 的 `cloud.wait_result(...)` try/except（信箱例外 → 視為 result_timeout）**、以及 `_parse_understanding()` 註解的「多餘鍵會被忽略」措辭（函式名為 2026-09-02 英文化後的實檔名）。派 81 前先 diff 81 計畫檔的重貼碼與實檔，把差異搬進計畫檔。
 
 **新增測試（`test_gated_ingest_pdf.py` 7 顆）：**
 
@@ -1357,7 +1358,7 @@ Ollama 不進本機 Docker、`postgresql@14` 不動、待決定／詢問流程�
 - [ ] **pytest 不連 AWS（三個死埠一起指，顆數不變）**
 
   ```bash
-  pytest -q                          # 預期：616 passed（Phase 81 之後）
+  pytest -q                          # 預期：616 passed（Phase 81 之後；2026-09-02 實查基線 613 → 624）
   AWS_ENDPOINT_URL=http://127.0.0.1:9 \
   CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
   OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
@@ -1828,7 +1829,7 @@ design5 §3 的兩條限制**本增量不改**：3 次自動重試做完就是�
 | 78 | 新檔 `test_gated_ingest.py`（8）＋ `test_celery_app_unit.py` 追加 1 | **+9** | 589 | 22 |
 | 79 | `test_cloud_ingest_unit.py` 追加 4 ＋ `test_gated_ingest.py` 追加 6；**2026-09-01 實作 review 裁決 R13 再補 1 顆** `test_雲端路available本身丟例外_閘門層也當作不可用`（`_遠端可用嗎` 的雙保險失去覆蓋）——實查 **+11、累計 602** | **+10**（實 +11） | 599（實 602） | 22 |
 | 80 | 同兩檔各追加 5；**裁決 R14 再補 1 顆** `test_等結果時信箱丟例外_fallback本機而且清乾淨`（`wait_result` 例外要收成 result_timeout，否則 job 卡 analyzing）——預期 **+11、累計 613** | **+10**（實 +11） | 609（實 613） | 22 |
-| 81 | 新檔 `test_gated_ingest_pdf.py`（7 顆） | **+7** | 616 | 22 |
+| 81 | 新檔 `test_gated_ingest_pdf.py`（7 顆）；**2026-09-02 裁決 R4 再補 2 顆**（`test_pdf_service_unit.py::test_max_pages只渲染前幾頁`、`test_privacy_gate_unit.py::test_PDF閘門只渲染第一頁`）；**review 裁決 R11 再補 2 顆守門測試**（`test_工人回的pages反序_仍依page欄位配對`、`test_工人只回第二頁_第一頁跳過且原圖是第二頁`：用原圖位元組證明配對靠 `page` 欄位不靠陣列索引）——預期 **+11、累計 624** | **+7**（實 +11） | 616（實 624） | 22 |
 | 82 | 人工操作（零程式碼） | +0 | 616 | 22 |
 | 83 | 新檔 `test_aws_mailbox_unit.py`（16 顆）；另**改** design5 的 boto3 掃碼 1 顆（改不計顆） | **+16** | 632 | 22 |
 | 84 | 建 bucket（驗收＝AWS CLI 輸出） | +0 | 632 | 22 |

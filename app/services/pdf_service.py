@@ -27,10 +27,14 @@ class PdfUnreadableError(Exception):
     """
 
 
-def render_pages(pdf_bytes: bytes, scale: float = DEFAULT_SCALE) -> list[bytes]:
+def render_pages(
+    pdf_bytes: bytes, scale: float = DEFAULT_SCALE, *, max_pages: int | None = None
+) -> list[bytes]:
     """把整份 PDF 逐頁渲染成 PNG 位元組，回傳的順序即頁序。
 
     順序很重要：呼叫端用「第幾個」回報 skipped_pages 的頁碼。
+
+    max_pages 只給閘門用：看第一頁就夠時不必整份渲染（None ＝ 全部，既有呼叫端不必改）。
     """
     try:
         document = pdfium.PdfDocument(pdf_bytes)
@@ -44,7 +48,9 @@ def render_pages(pdf_bytes: bytes, scale: float = DEFAULT_SCALE) -> list[bytes]:
             raise PdfUnreadableError("這份 PDF 沒有任何一頁")
 
         pages: list[bytes] = []
-        for page in document:
+        for index, page in enumerate(document):
+            if max_pages is not None and index >= max_pages:
+                break
             # render() 回傳的是 PDFium 的點陣圖，to_pil() 換成 Pillow 圖片物件，
             # 再存成 PNG bytes——之後的存檔與縮圖都吃 bytes，跟一般上傳沒有兩樣。
             image = page.render(scale=scale).to_pil()

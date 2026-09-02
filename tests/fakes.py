@@ -15,6 +15,7 @@ from langchain_core.documents import Document
 from PIL import Image
 
 from app.core import config
+from app.services import pdf_service
 from app.services.ask_workflow import RouteDecision
 from app.services.cloud_ingest import MailboxMessage
 from app.services.privacy_gate import PrivacyJudgement, Verdict
@@ -719,8 +720,11 @@ def fake_worker_process_one(mailbox, understanding=None, *, worker_version="fake
     它**不是** app/workers/cloud_worker.py（那是 Phase 87 的事），只是「另一頭真的
     有人在做事」的最小替身：不看圖、不解析影像，照著測試指定的答案寫結果。
 
+    單圖（.jpg／.png）：
       understanding 給一個 PhotoUnderstanding ＝ 工人一次就看懂了
       understanding 給 None                    ＝ 工人試了三次都看不懂
+
+    PDF（.pdf，Phase 81 加）：見 _fake_worker_read_pdf()。
 
     ★ 順序刻意寫成「**先 PutObject、才 SendMessage**」（design6 D9 的順序鐵律）：
       假件也要教對的做法，Phase 87 的真工人才有樣本可比。
@@ -731,14 +735,18 @@ def fake_worker_process_one(mailbox, understanding=None, *, worker_version="fake
     if message is None:
         return None
 
-    result = {
-        "job_id": message.job_id,
-        "worker_version": worker_version,
-        "kind": "image",
-        "understood": understanding is not None,
-        "attempts": 1 if understanding is not None else config.VLM_MAX_ATTEMPTS,
-        "understanding": understanding.model_dump() if understanding is not None else None,
-    }
+    if (message.s3_key or "").endswith(".pdf"):
+        result = _fake_worker_read_pdf(mailbox, message, understanding, worker_version)
+    else:
+        result = {
+            "job_id": message.job_id,
+            "worker_version": worker_version,
+            "kind": "image",
+            "understood": understanding is not None,
+            "attempts": 1 if understanding is not None else config.VLM_MAX_ATTEMPTS,
+            "understanding": understanding.model_dump() if understanding is not None else None,
+        }
+
     mailbox.put_object(
         mailbox.result_key(message.job_id),
         json.dumps(result, ensure_ascii=False, default=str).encode("utf-8"),
@@ -747,3 +755,49 @@ def fake_worker_process_one(mailbox, understanding=None, *, worker_version="fake
     mailbox.send_result(message.job_id)
     mailbox.delete_job_message(message.receipt_handle)
     return result
+
+
+def _fake_worker_read_pdf(mailbox, message, understanding, worker_version: str) -> dict:
+    """PDF 的假結果：先拆頁（只為了知道有幾頁），再一頁一頁照劇本回答。
+
+    understanding 可以給三種東西：
+      * 一個 PhotoUnderstanding ＝ 每一頁都看懂了，而且內容都一樣
+      * 一個 list               ＝ 逐頁指定（None ＝ 那一頁看不懂）；比頁數短就補 None
+      * None                    ＝ 每一頁都看不懂
+
+    拆不開（壞檔）→ `pages` 是**空清單**——與真工人的規則相同（總覽 §2.6 第 5 條），
+    本機看到空清單就標 ERROR_PDF_UNREADABLE。
+
+    ⚠ 這裡用的是**產品碼的** pdf_service.render_pages()：假件只負責「演出工人的行為」，
+      不自己發明一套拆頁邏輯（不然頁數對不上就會變成假綠）。
+    """
+    raw = mailbox.get_object(message.s3_key) or b""
+    try:
+        page_count = len(pdf_service.render_pages(raw))
+    except pdf_service.PdfUnreadableError:
+        page_count = 0
+
+    if isinstance(understanding, list):
+        per_page = list(understanding) + [None] * max(0, page_count - len(understanding))
+    else:
+        per_page = [understanding] * page_count
+
+    pages = []
+    for page_number, page_understanding in enumerate(per_page[:page_count], start=1):
+        pages.append(
+            {
+                "page": page_number,
+                "understood": page_understanding is not None,
+                "attempts": 1 if page_understanding is not None else config.VLM_MAX_ATTEMPTS,
+                "understanding": (
+                    page_understanding.model_dump() if page_understanding is not None else None
+                ),
+            }
+        )
+
+    return {
+        "job_id": message.job_id,
+        "worker_version": worker_version,
+        "kind": "pdf",
+        "pages": pages,
+    }
