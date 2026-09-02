@@ -4,13 +4,14 @@
   這正是 design5 D15 說的「任務本體抽成函式，測試直接呼叫」——
   pytest 因此不必啟動 Celery、不必連 Redis、不必等 worker 排班。
 
-conftest 的四道 autouse 安全網照樣生效：
+conftest 的五道 autouse 安全網照樣生效：
   reset_tables          → 每顆測試前清空資料庫並重播六筆資料夾（收件箱固定是 id 1）
   isolated_data_dir     → config.DATA_DIR 指到暫存目錄，所以 staging／原圖／縮圖
                           全部寫在暫存目錄，永遠不會弄髒專案的 data/
   wire_fake_ai          → 本檔用不到（沒走 FastAPI 的注入），留著不影響
   wire_memory_job_store → 同樣用不到（store 不經 get_job_store 注入，
                           每顆測試自己 new 一個 InMemoryJobStore），留著不影響
+  wire_fake_cloud       → 同樣用不到（本檔直接呼叫 run_ingest_job，不經閘門），留著不影響
 
 四個依賴一律**當參數傳**，不靠 dependency_overrides：
   store       → 每顆測試自己 new 一個 InMemoryJobStore（不共用，天生隔離）
@@ -22,7 +23,10 @@ conftest 的四道 autouse 安全網照樣生效：
 from __future__ import annotations
 
 import logging
+from dataclasses import FrozenInstanceError
 from datetime import date, datetime
+
+import pytest
 
 from app.core import config
 from app.repositories import photo_repository
@@ -432,3 +436,126 @@ def test_worker不會自己建實體_不會自己釘選_也不會自己建待辦
     ], "worker 不可以自己建新實體"
     assert photo_repository.list_photo_entities(photo_id) == [], "worker 不可以自己釘"
     assert photo_repository.get_task_by_photo(photo_id) is None, "worker 不可以自己建待辦"
+
+
+# ------------- ⑨ 五個公開積木（增量六 Phase 76 抽出來的）-------------
+#
+# 這一組不是重測「整條流程」（上面 ①〜⑧ 已經測過了），而是把**積木本身**釘死：
+# Phase 79 的雲端路會直接呼叫它們（拿回 result.json 之後用同一套落庫），
+# 所以它們的契約（讀什麼、寫什麼、順序）必須自己有測試守著。
+
+
+class RecordingEmbeddings:
+    """記下「到底把哪一段文字轉成向量」的假件。
+
+    刻意寫在本檔而不是 tests/fakes.py：只有這一顆測試需要它
+    （與上面的 壞掉的Embeddings 同一個理由）。
+    """
+
+    def __init__(self) -> None:
+        self.last_text: str | None = None
+
+    def embed_query(self, text: str) -> list[float]:
+        self.last_text = text
+        return [0.5] * config.EMBEDDING_DIM
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed_query(text) for text in texts]
+
+
+def test_load_prompt_context讀回三份清單且收件箱名稱正確():
+    """三份清單各讀一次，而且收件箱名稱是**從資料夾清單裡找出來的**，不是寫死的字串。"""
+    photo_repository.create_entity("我的 MacBook", "工作用筆電")
+
+    context = ingest_job.load_prompt_context()
+
+    assert [f["name"] for f in context.folders] == [
+        "未分類",
+        "收據",
+        "飲食",
+        "風景",
+        "文件",
+        "其他",
+    ]
+    assert context.inbox_name == "未分類"
+    assert [e["name"] for e in context.entities] == ["我的 MacBook"]
+    assert context.corrections == [], "還沒有人糾正過任何一張照片"
+
+    # frozen=True：建好之後不准有人中途把裡面的東西換掉
+    with pytest.raises(FrozenInstanceError):
+        context.inbox_name = "收據"
+
+
+def test_embed_understanding用收件箱名稱組文件():
+    """向量裡的「類別」永遠是收件箱，不是模型猜的那一個（design1.md §2）。
+
+    模型猜「收據」只會存進 suggested_category 那一欄；照片的實際歸屬與**向量**
+    都是「未分類」。歸類之後 PATCH /photos/{id}/folder 會把整條重算。
+    """
+    embeddings = RecordingEmbeddings()
+
+    vector = ingest_job.embed_understanding(收據理解, embeddings=embeddings, inbox_name="未分類")
+
+    assert len(vector) == config.EMBEDDING_DIM
+    assert embeddings.last_text is not None
+    assert "類別: 未分類" in embeddings.last_text
+    assert "類別: 收據" not in embeddings.last_text, "模型猜的類別不可以進向量"
+    assert 收據理解.text in embeddings.last_text
+    assert "地點: Target" in embeddings.last_text
+    assert "物品: 可樂、洋芋片" in embeddings.last_text
+    assert "時間: 2026-08-10" in embeddings.last_text
+
+
+def test_finish_image_job的順序是先寫photo_ids再刪staging最後刪job(monkeypatch):
+    """三步的順序是鐵律（design5.md §4.4）。
+
+    photo_ids 一定要在刪 staging 之前寫進去：順序反過來的話，
+    「剛好在這兩步之間被殺掉」的重送會找不到冪等依據，同一張照片就會被插第二次。
+    """
+    store = InMemoryJobStore()
+    job_id = 建一個job(store)
+    order: list[str] = []
+
+    real_update = store.update
+    real_delete = store.delete
+    real_remove = staging_service.remove_staging
+
+    def recording_update(target_job_id, **fields):
+        if "photo_ids" in fields:
+            order.append("寫photo_ids")
+        return real_update(target_job_id, **fields)
+
+    def recording_delete(target_job_id):
+        order.append("刪job")
+        return real_delete(target_job_id)
+
+    def recording_remove(target_job_id, content_type):
+        order.append("刪staging")
+        return real_remove(target_job_id, content_type)
+
+    monkeypatch.setattr(store, "update", recording_update)
+    monkeypatch.setattr(store, "delete", recording_delete)
+    # ingest_job 是用「模組屬性」呼叫 staging_service.remove_staging()，
+    # 名字在**呼叫當下**才解析，所以換掉模組上的那個屬性就攔得到。
+    monkeypatch.setattr(staging_service, "remove_staging", recording_remove)
+
+    ingest_job.finish_image_job(job_id, 7, store=store, content_type="image/png")
+
+    assert order == ["寫photo_ids", "刪staging", "刪job"]
+    assert store.get(job_id) is None, "成功＝刪掉這筆 job（design5.md §4.3）"
+
+
+def test_fail_job標failed但不刪job():
+    """失敗的那一列要留在進度面板上，等人按 × 才消失（design5.md §4.3）。"""
+    store = InMemoryJobStore()
+    job_id = 建一個job(store)
+
+    ingest_job.fail_job(job_id, "測試用的失敗訊息", store=store, content_type="image/png")
+
+    job = store.get(job_id)
+    assert job is not None, "失敗的 job 不可以被刪掉"
+    assert job["status"] == "failed"
+    assert job["error"] == "測試用的失敗訊息"
+    assert job["photo_ids"] == []
+    assert store.list_open() == [job]
+    assert not staging_service.staging_path(job_id, "image/png").exists(), "staging 要清掉"

@@ -19,6 +19,17 @@
   ⛔ **絕對不要**改用 Celery 的 `autoretry_for` 讓整個任務重跑——
      那會把已經 INSERT 的照片再插一次。理由與圖解見計畫文件 phase-59 §5。
 
+★ 五個公開積木（增量六 Phase 76 抽出來的；design6 用得到）：
+    load_prompt_context()     讀三份清單＋收件箱名稱
+    embed_understanding()     把看圖結果轉成向量（含 ai_timing 的 embed 計時 log）
+    insert_photo_with_files() INSERT → 存原圖 → 產縮圖 → UPDATE 補路徑
+    finish_image_job()        單圖成功收尾（順序鐵律：photo_ids → staging → job）
+    fail_job()                最終失敗收尾（刪 staging、標 failed、**不刪 job**）
+  抽出來的理由：增量六的雲端路（app/services/gated_ingest.py，Phase 79）拿回
+  `result.json` 之後要做的事，與這裡「看圖成功之後」那一段**逐字相同**。
+  沒有這五個積木，那邊就得複製一份——兩份會慢慢漂移的同款程式碼，
+  正是產品負責人明令不要的「過渡產物」。**本模組對外行為一個字都沒有改變。**
+
 分層：本模組會呼叫 repository（寫資料庫）、storage_service（寫檔）、
 staging_service（讀／刪暫存檔）、vlm_service／indexing_service（AI）。
 它**不寫任何 SQL**（全站鐵律：SQL 只在 photo_repository）。
@@ -27,6 +38,7 @@ staging_service（讀／刪暫存檔）、vlm_service／indexing_service（AI）
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
@@ -72,6 +84,48 @@ class _NotUnderstood(Exception):
     在 with 裡面 raise，結束行才會誠實地標成失敗——這與增量四的舊同步流程
     在 with 裡面 raise HTTPException(422) 是同一個手法。
     """
+
+
+@dataclass(frozen=True, slots=True)
+class PromptContext:
+    """組一次看圖 prompt 需要的四樣東西（增量六 Phase 76 抽出來的）。
+
+    為什麼包成一個小物件而不是繼續傳四個參數：Phase 79 的雲端路要把前三份清單
+    原樣序列化成 S3 上的 `documents/{job_id}/context.json` 交給遠端工人
+    （總覽 §2.4.3），而工人要靠它組出**同一份** build_vlm_prompt()。
+    四個參數散著傳的話，那邊就得自己再組一次，兩邊很容易漏掉其中一份。
+
+    frozen=True ＝建好之後不能改（誰也不能中途把 folders 換掉）；
+    slots=True  ＝不配 __dict__，省一點記憶體、而且打錯欄位名會當場 AttributeError。
+    ⚠ frozen 擋的是「重新指派欄位」，**不是**「改清單裡的內容」——
+      list 本身仍然是可變的。這裡沒有人會去改它，但別誤以為它是深層不可變。
+    """
+
+    folders: list[dict]
+    entities: list[dict]
+    corrections: list[dict]
+    inbox_name: str
+
+
+def load_prompt_context() -> PromptContext:
+    """把看圖 prompt 要注入的三份清單各讀一次，順便找出收件箱的名稱。
+
+    三份清單是**變數不是常數**：使用者今天自建了「專案X」資料夾或「我的 MacBook」實體，
+    下一次上傳時模型就看得到它（design1.md §8、design3.md D12、D11）。
+
+    ★ 一次任務只讀一次：PDF 的每一頁共用同一份（與增量四舊上傳流程一致）。
+      每頁各讀一次不只是浪費，還會讓「同一份檔的各頁看到不一樣的清單」變成可能。
+    """
+    folders = photo_repository.list_folders()
+    entities = photo_repository.list_entities()
+    corrections = photo_repository.recent_corrections(limit=FEW_SHOT_CORRECTIONS)
+    inbox = next(folder for folder in folders if folder["is_inbox"])
+    return PromptContext(
+        folders=folders,
+        entities=entities,
+        corrections=corrections,
+        inbox_name=inbox["name"],
+    )
 
 
 def run_ingest_job(
@@ -139,10 +193,7 @@ def _run_image_job(
 
     # ③ 清單各讀一次（與增量四舊上傳流程的呼叫端一字不差）：
     #    資料夾、實體、最近的糾錯例子都要注入看圖 prompt。
-    folders = photo_repository.list_folders()
-    entities = photo_repository.list_entities()
-    corrections = photo_repository.recent_corrections(limit=FEW_SHOT_CORRECTIONS)
-    inbox = next(folder for folder in folders if folder["is_inbox"])
+    context = load_prompt_context()
 
     # ④ 看圖＋轉向量，最多 VLM_MAX_ATTEMPTS 次
     result = _understand_and_embed(
@@ -152,13 +203,10 @@ def _run_image_job(
         store=store,
         vlm=vlm,
         embeddings=embeddings,
-        folders=folders,
-        entities=entities,
-        corrections=corrections,
-        inbox_name=inbox["name"],
+        context=context,
     )
     if result is None:
-        _fail(
+        fail_job(
             job_id,
             ERROR_VLM_FAILED.format(attempts=config.VLM_MAX_ATTEMPTS),
             store=store,
@@ -169,31 +217,28 @@ def _run_image_job(
 
     # ⑤ 寫資料庫＋寫檔。這一段失敗就是最終失敗（VLM 已經成功了，重看沒有意義）
     try:
-        photo_id = _insert_photo_with_files(
+        photo_id = insert_photo_with_files(
             image_bytes,
             content_type,
             understanding,
             embedding,
-            inbox_name=inbox["name"],
-            folders=folders,
-            entities=entities,  # ← Phase 61 新增
+            inbox_name=context.inbox_name,
+            folders=context.folders,
+            entities=context.entities,  # ← Phase 61 新增
             uploaded_at=now(),
         )
     except Exception:
         logger.exception("job %s 入庫寫入失敗，半成品已清乾淨", job_id)
-        _fail(job_id, ERROR_WRITE_FAILED, store=store, content_type=content_type)
+        fail_job(job_id, ERROR_WRITE_FAILED, store=store, content_type=content_type)
         return
 
-    # ⑥ 收尾。photo_ids 一定要在刪 staging 之前寫進去——
-    #    順序反過來的話，「剛好在這兩步之間被殺掉」的重送會找不到冪等依據。
-    store.update(job_id, photo_ids=[photo_id])
-    staging_service.remove_staging(job_id, content_type)
-    store.delete(job_id)
+    # ⑥ 收尾（順序鐵律見 finish_image_job 的 docstring）
+    finish_image_job(job_id, photo_id, store=store, content_type=content_type)
     logger.info(
         "job %s 入庫完成：photo_id=%d（先進「%s」，等使用者到待決定頁歸類）",
         job_id,
         photo_id,
-        inbox["name"],
+        context.inbox_name,
     )
 
 
@@ -230,18 +275,14 @@ def _run_pdf_job(
         page_images = pdf_service.render_pages(pdf_bytes)
     except pdf_service.PdfUnreadableError:
         logger.warning("job %s：PDF 拆頁失敗", job_id, exc_info=True)
-        _fail(job_id, ERROR_PDF_UNREADABLE, store=store, content_type=content_type)
+        fail_job(job_id, ERROR_PDF_UNREADABLE, store=store, content_type=content_type)
         return
 
     # ② 拆得開才知道幾頁（design5.md §4.3：未拆前 page_count 可為 null）
     store.update(job_id, page_count=len(page_images))
 
     # ③ 清單在迴圈**外面**讀一次：整份 PDF 的每一頁共用同一份注入 prompt
-    # （與現在 photos.py 的 upload_photo 讀一次、傳給每頁的作法一致）
-    folders = photo_repository.list_folders()
-    entities = photo_repository.list_entities()
-    corrections = photo_repository.recent_corrections(limit=FEW_SHOT_CORRECTIONS)
-    inbox = next(folder for folder in folders if folder["is_inbox"])
+    context = load_prompt_context()
 
     # ④ 從上次做到的地方接著跑
     photo_ids: list[int] = list(job.get("photo_ids") or [])
@@ -265,10 +306,7 @@ def _run_pdf_job(
             store=store,
             vlm=vlm,
             embeddings=embeddings,
-            folders=folders,
-            entities=entities,
-            corrections=corrections,
-            inbox_name=inbox["name"],
+            context=context,
         )
         if result is None:
             logger.warning(
@@ -280,18 +318,18 @@ def _run_pdf_job(
         else:
             understanding, embedding = result
             try:
-                photo_id = _insert_photo_with_files(
+                photo_id = insert_photo_with_files(
                     page_bytes,
                     PDF_PAGE_CONTENT_TYPE,
                     understanding,
                     embedding,
-                    inbox_name=inbox["name"],
-                    folders=folders,
-                    entities=entities,  # ← Phase 61 新增
+                    inbox_name=context.inbox_name,
+                    folders=context.folders,
+                    entities=context.entities,  # ← Phase 61 新增
                     uploaded_at=now(),
                 )
             except Exception:
-                # 半成品已由 _insert_photo_with_files 自己清乾淨（檔案＋資料列）。
+                # 半成品已由 insert_photo_with_files 自己清乾淨（檔案＋資料列）。
                 # 這一頁當成「跳過」處理，不讓它拖垮已經成功的其他頁——
                 # 理由見計畫文件 phase-60 §4 步驟 3 的裁決說明。
                 logger.exception(
@@ -308,7 +346,7 @@ def _run_pdf_job(
 
     # ⑤ 收尾：至少一頁成功就算整筆成功（design5.md D12）
     if not photo_ids:
-        _fail(
+        fail_job(
             job_id,
             ERROR_PDF_ALL_PAGES_FAILED,
             store=store,
@@ -336,10 +374,7 @@ def _understand_and_embed(
     store: JobStore,
     vlm: vlm_service.VLMClient,
     embeddings: Embeddings,
-    folders: list[dict],
-    entities: list[dict],
-    corrections: list[dict],
-    inbox_name: str,
+    context: PromptContext,
 ) -> tuple[vlm_service.PhotoUnderstanding, list[float]] | None:
     """看圖 ＋ 轉向量，最多試 config.VLM_MAX_ATTEMPTS 次；全部失敗回 None。
 
@@ -365,14 +400,18 @@ def _understand_and_embed(
             # 就把 backend 與 model 記在 timing_target 上，所以 worker 只要
             # 「用任務裡的 ai_backend 快照建對客戶端」，log 的 backend= 自然就對
             # （design5.md D14）。假件沒有這個屬性，會退回讀 config，不影響測試。
-            with ai_timing.log_ai("vlm", target=vlm_service.vlm_timing_target(vlm)) as 計時:
+            with ai_timing.log_ai("vlm", target=vlm_service.vlm_timing_target(vlm)) as timing:
                 understanding = vlm.understand(
-                    image_bytes, content_type, folders, entities, corrections
+                    image_bytes,
+                    content_type,
+                    context.folders,
+                    context.entities,
+                    context.corrections,
                 )
                 if not understanding.understood or not understanding.text.strip():
-                    計時.note = f"understood=false text_chars={len(understanding.text)}"
+                    timing.note = f"understood=false text_chars={len(understanding.text)}"
                     raise _NotUnderstood()
-                計時.note = (
+                timing.note = (
                     f"understood=true text_chars={len(understanding.text)} "
                     f"item_count={len(understanding.items)} "
                     f"category_present={'true' if understanding.category else 'false'} "
@@ -388,22 +427,10 @@ def _understand_and_embed(
             logger.warning("job %s：第 %d 次看圖呼叫失敗", job_id, attempt, exc_info=True)
             continue
 
-        # 合併與轉向量一律用收件箱名稱——上傳當下的向量就是未分類版本
-        # （design1.md §2；歸類後 PATCH 會整條重算）
-        content_time = vlm_service.parse_content_time(understanding.content_time)
-        document = indexing_service.build_document(
-            text=understanding.text,
-            category=inbox_name,
-            location=understanding.location,
-            items=understanding.items,
-            content_time=content_time.isoformat() if content_time else None,
-        )
         try:
-            with ai_timing.log_ai(
-                "embed",
-                target=indexing_service.embedding_timing_target(embeddings),
-            ):
-                embedding = indexing_service.embed_document(embeddings, document)
+            embedding = embed_understanding(
+                understanding, embeddings=embeddings, inbox_name=context.inbox_name
+            )
         except Exception:
             logger.warning("job %s：第 %d 次轉向量失敗", job_id, attempt, exc_info=True)
             continue
@@ -413,7 +440,41 @@ def _understand_and_embed(
     return None
 
 
-def _insert_photo_with_files(
+def embed_understanding(
+    understanding: vlm_service.PhotoUnderstanding,
+    *,
+    embeddings: Embeddings,
+    inbox_name: str,
+) -> list[float]:
+    """把一次看圖結果合併成 Document 再轉成向量。失敗就把例外往外丟。
+
+    ★ 合併與轉向量一律用**收件箱名稱**當 category——上傳當下的向量就是「未分類」版本
+      （design1.md §2；使用者到待決定頁歸類之後，PATCH 會把整條重算）。
+      這也是為什麼參數是 inbox_name 而不是 understanding.category：
+      模型猜的類別只會存進 suggested_category 那一欄，**不進向量**。
+
+    ★ 計時 log 在這裡（kind=embed，backend 永遠 local）：向量必須跟庫裡既有的
+      bge-m3 同源，所以 embeddings 從來不歸頁首那顆開關管。
+
+    ★ 這一支**不吞例外**：呼叫端要自己決定「算失敗、重來一次」（_understand_and_embed）
+      還是「這筆 job 失敗」（Phase 79 的雲端路）。
+    """
+    content_time = vlm_service.parse_content_time(understanding.content_time)
+    document = indexing_service.build_document(
+        text=understanding.text,
+        category=inbox_name,
+        location=understanding.location,
+        items=understanding.items,
+        content_time=content_time.isoformat() if content_time else None,
+    )
+    with ai_timing.log_ai(
+        "embed",
+        target=indexing_service.embedding_timing_target(embeddings),
+    ):
+        return indexing_service.embed_document(embeddings, document)
+
+
+def insert_photo_with_files(
     image_bytes: bytes,
     content_type: str,
     understanding: vlm_service.PhotoUnderstanding,
@@ -434,6 +495,10 @@ def _insert_photo_with_files(
       所以失敗時自己把兩個檔案與那一列刪掉，再把原始錯誤往外丟。
       差別只有一個：往外丟之後，接住它的不再是 FastAPI（500），
       而是 `_run_image_job` 的 except（把 job 標成 failed）。
+
+    ★ 增量六 Phase 76 把名字前面的底線拿掉（原本叫 _insert_photo_with_files）：
+      雲端路（Phase 79）拿回 result.json 之後要做的事與這裡完全相同，
+      共用同一支才不會出現兩份會漂移的同款程式碼。**函式內容一個字都沒改。**
     """
     # ── 三個「建議」欄位（design5.md D16）──────────────────────────────
     # 這裡寫的是「AI 當下猜了什麼」，不是「這張照片屬於什麼」。
@@ -501,7 +566,25 @@ def _insert_photo_with_files(
     return photo_id
 
 
-def _fail(job_id: str, message: str, *, store: JobStore, content_type: str) -> None:
+def finish_image_job(job_id: str, photo_id: int, *, store: JobStore, content_type: str) -> None:
+    """單圖成功的統一收尾：寫 photo_ids → 刪 staging → 刪 job。
+
+    ★ **三步的順序是鐵律。** photo_ids 一定要在刪 staging 之前寫進去——
+      順序反過來的話，「剛好在這兩步之間被殺掉」的重送會找不到冪等依據，
+      於是同一張照片會被插第二次（design5.md §4.4）。
+
+    ★ 刪掉 job ＝「成功」（design5.md §4.3：JOB_STATUSES 裡根本沒有 success）。
+      所以進度面板的清單天生就不含成功的工作，前端不必自己過濾。
+
+    ★ 只給**單圖**用。PDF 的收尾不一樣：photo_ids 是在逐頁迴圈裡跟 pages_done
+      一起寫的，最後只需要刪 staging 與刪 job（見 _run_pdf_job 第 ⑤ 段）。
+    """
+    store.update(job_id, photo_ids=[photo_id])
+    staging_service.remove_staging(job_id, content_type)
+    store.delete(job_id)
+
+
+def fail_job(job_id: str, message: str, *, store: JobStore, content_type: str) -> None:
     """最終失敗的統一收尾：刪 staging ＋ 把 job 標成 failed。
 
     **不刪 job**——失敗的那一列要留在進度面板上讓人看到，
