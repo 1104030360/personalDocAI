@@ -7,15 +7,26 @@
 
 ---
 
-## 0. 執行狀態（2026-08-27 更新）
+## 0. 執行狀態（2026-09-01 更新：**Phase 73 全部完成**）
 
 | 步驟 | 狀態 |
 |---|---|
 | §6.1 本機基線 | ✅ `pytest -q` = **543 passed ＋ 0 skipped** |
 | §6.2〜6.3 ruff 設定＋一次 format | ✅ **commit `902360c`**（68 個 `.py` 重排、6 個 I001 ＋ 1 個 F541 修掉；顆數不變） |
 | §6.4 pre-commit | ✅ **commit `6df5fc6`**（含 `pre-commit install` 與擋 commit 的煙霧實測） |
-| §6.5 GitHub Actions | ✅ 三個檔都改好了，**尚未 commit**（產品負責人指示先看過）。workflow ＋ `conftest.py` 改 `127.0.0.1` ＋ CLAUDE.md 補 CI 段；另把 `requirements.txt` 的 ruff 加上上限 `<0.17`（理由見 §6.5 註記） |
-| §6.6 建 remote 並推 | ⏸ **未執行**。有外部副作用（建 GitHub repo、push），依本檔規定要產品負責人明示才做；而且沒 commit 就沒東西可推 |
+| §6.5 GitHub Actions | ✅ **commit `4269985`**（`ci: GitHub Actions 跑 ruff check／format 與 pytest`）。workflow ＋ `conftest.py` 改 `127.0.0.1` ＋ CLAUDE.md 補 CI 段；另把 `requirements.txt` 的 ruff 加上上限 `<0.17`（理由見 §6.5 註記） |
+| §6.6 建 remote 並推 | ✅ **已由產品負責人 2026-08-28 完成**。`origin` ＝ `https://github.com/1104030360/personalDocAI.git`、預設分支 **`main`**、GitHub Actions job `test` **已綠兩次**（詳見改寫後的 §6.6） |
+| 之後追加的一筆 | ✅ **commit `a53ab57`**（`chore: pytest 設定檔merge 進project.toml, delete pytest.ini`）：原 `pytest.ini` 的三行併進 `pyproject.toml` 的 `[tool.pytest.ini_options]`，根目錄少一個檔。**§4 檔案地圖與 §6.2 的 `pyproject.toml` 區塊已照這一筆更新** |
+
+**剩下什麼：只剩歸檔。** 產品負責人下一次 commit 時把本檔從 `docs/plan/unfinish/` `git mv` 到
+`docs/plan/finish/`（§8；增量六期間**不由 agent 搬檔**，見 §8 那一條）。
+
+> ⚠️ **兩處與原計畫不同，是事實不是待辦，不要「改回去」也不要建議改：**
+>
+> | 原計畫寫的 | 實際落地 | 說明 |
+> |---|---|---|
+> | 建 **private** repo（§3、§6.6、§10） | repo 是 **PUBLIC** | 產品負責人的選擇。本檔提到 private 的每一處都已就地標註「原計畫 vs 事實」；`.env`／`certs/`／`data/` 仍然全在 `.gitignore` 裡（§6.6 的檢查步驟已實走） |
+> | 分支 `master` | 分支 **`main`** | 本檔已全數改成 `main`（總覽 §7 鐵律 12 也是這樣寫） |
 
 **§6.5 已做的本機預演**（CI 上跑不到之前，能在本機驗的都驗了）：
 
@@ -27,8 +38,9 @@
 | 有沒有樣板注入面 | `grep '${{'` | ✅ 0 個（整份 workflow 不吃任何外部輸入） |
 | CI 的兩句 ruff | `ruff format --check` ＋ `ruff check` | ✅ 98 files already formatted／All checks passed |
 
-**剩下唯一驗不到的**：Actions runner 上的 Postgres service、`apt-get install postgresql-client`、
-以及 `psql -f db/schema.sql` 這三步。那要真的 push 一次才知道（§6.6）。
+**當時剩下唯一驗不到的**：Actions runner 上的 Postgres service、`apt-get install postgresql-client`、
+以及 `psql -f db/schema.sql` 這三步。那要真的 push 一次才知道（§6.6）——
+**2026-08-28 已經真的推過，三步全綠**（見改寫後的 §6.6）。
 
 ⚠️ **§6.2／§6.4 的兩個設定檔區塊已於 2026-08-27 依實測修正**（原草稿有四個會安靜壞掉的錯，
 逐項見各區塊底下的「⚠ 與原草稿的差異」）。**要照著做的話請用改過的版本，不要用 git 歷史裡的舊版。**
@@ -60,7 +72,7 @@ CI
 |---|---|
 | JS／HTML／CSS 要不要 lint | **不管**。只跑 Python |
 | 既有 ~87 個 `.py` 沒 formatter | **允許一次 `ruff format`（外加 `check --fix`）打進全部 Python，獨立一筆 commit** |
-| 與增量五的順序 | 增量五**已經 commit**。本 phase 從乾淨 `master` 開工 |
+| 與增量五的順序 | 增量五**已經 commit**。本 phase 從乾淨 `main` 開工 |
 
 **新名詞先解釋：**
 
@@ -86,7 +98,7 @@ CI
 
 本 phase **不是**某個 `docs/design/design*.md` 的產品增量。它是工程後盾，約束來自：
 
-- 測試契約：`tests/conftest.py` 把測試庫寫死成 `postgresql://postgres@localhost:5433/PersonalDocAI_test`；四道 autouse 安全網讓 pytest **不連 Redis、不啟動 Celery、不打 Ollama、不寫專案 `data/`**。
+- 測試契約：`tests/conftest.py` 把測試庫寫死成 `postgresql://postgres@127.0.0.1:5433/PersonalDocAI_test`（開工當時是 `localhost`，由本 phase §6.5 改成 `127.0.0.1`）；四道 autouse 安全網讓 pytest **不連 Redis、不啟動 Celery、不打 Ollama、不寫專案 `data/`**。
 - 測試庫結構：`db/schema.sql`（CI 的空庫要灌一次）。
 - 依賴風格：`requirements.txt` 用 `>=`（與 pytest 同一區追加 ruff／pre-commit，不另開 lock）。
 - 前端約束：零框架、零打包——所以 **不引入 Node／eslint／prettier**。
@@ -95,7 +107,10 @@ CI
 
 ## 2. 前置條件
 
-- 增量五已在 `master`（`39e1c7e` 或之後），工作區乾淨。
+> 📌 **以下是 2026-08-27 開工當下的狀態，留作紀錄。** 本 phase 已全部做完
+> （§0），所以現在這四項的實況全都反過來了：三個設定檔都在、`origin` 也接上了。
+
+- 增量五已在 `main`（`39e1c7e` 或之後），工作區乾淨。
 - 本機 Docker 的 `db` 是 `Up (healthy)`（pytest 需要）。
 - **還沒有** `.github/`、`pyproject.toml`、`.pre-commit-config.yaml`（2026-08-27 實查：無）。
 - **還沒有 git remote**（2026-08-27 實查：`.git/config` 無 `[remote]`）。Task 6 才建 GitHub repo；沒 push 就沒有 Actions。
@@ -117,14 +132,15 @@ ls pyproject.toml .pre-commit-config.yaml .github/workflows/test.yml 2>/dev/null
 
 ### 做
 
-- 新增 `pyproject.toml`（只寫 `[tool.ruff]`，不當套件發行設定）。
+- 新增 `pyproject.toml`（只寫工具設定 `[tool.ruff]`，不當套件發行設定；**之後 commit `a53ab57` 又把原 `pytest.ini` 的三行併進來成 `[tool.pytest.ini_options]`**，所以實檔現在是「ruff ＋ pytest 兩套設定」）。
 - `requirements.txt` 測試區加 `ruff`、`pre-commit`。
 - 一次 format + 自動修 lint，獨立風格 commit；`pytest -q` 顆數不變。
 - 新增 `.pre-commit-config.yaml`；本機 `pre-commit install`。
 - 新增 `.github/workflows/test.yml`：format `--check` → lint → 灌 schema → pytest。
 - `tests/conftest.py` 的 host 從 `localhost` 改成 `127.0.0.1`（CI Ubuntu 上 `localhost` 可能先走 IPv6 `::1`，Postgres service 只映 IPv4）。
 - `CLAUDE.md` 指令區補短段：新 clone 要 `pre-commit install`；CI 在驗什麼。
-- 建 **private** GitHub repo、加上 `origin`、push（需產品負責人明示才由 agent 執行 `gh repo create`／`git push`）。
+- 建 GitHub repo、加上 `origin`、push（需產品負責人明示才由 agent 執行 `gh repo create`／`git push`）。
+  ⚠ 原計畫寫的是 **private**；**實際落地是 PUBLIC**（產品負責人 2026-08-28 的選擇，見 §0）。
 
 ### 明確不做（防手滑）
 
@@ -143,10 +159,11 @@ ls pyproject.toml .pre-commit-config.yaml .github/workflows/test.yml 2>/dev/null
 
 ### 建議的四筆 commit（不要混）
 
-1. `style: 全庫套用 ruff format 與 E/F/I`（pyproject + requirements + 所有被改到的 `.py`）
-2. `chore: 加 pre-commit（ruff format + lint）`
-3. `ci: GitHub Actions 跑 ruff 與 pytest`（workflow + conftest 一行 + CLAUDE.md 短段）
-4. 遠端：`gh repo create` + `git push`（**不是** commit；需明示授權）
+1. ✅ `style: 全庫套用 ruff format 與 E/F/I`（pyproject + requirements + 所有被改到的 `.py`）→ `902360c`
+2. ✅ `chore: 加 pre-commit（ruff format + lint）` → `6df5fc6`
+3. ✅ `ci: GitHub Actions 跑 ruff 與 pytest`（workflow + conftest 一行 + CLAUDE.md 短段）→ `4269985`
+   （實際 commit 標題是 `ci: GitHub Actions 跑 ruff check／format 與 pytest`）
+4. ✅ 遠端：`gh repo create` + `git push`（**不是** commit；需明示授權）→ 產品負責人 2026-08-28 自己做了（§6.6）
 
 ---
 
@@ -154,7 +171,7 @@ ls pyproject.toml .pre-commit-config.yaml .github/workflows/test.yml 2>/dev/null
 
 | 檔案 | 職責 |
 |---|---|
-| `pyproject.toml`（新） | ruff 的 line-length、規則、掃描目錄 |
+| `pyproject.toml`（新） | ruff 的 line-length、規則、掃描目錄。**commit `a53ab57` 之後另含 `[tool.pytest.ini_options]`**（`testpaths` / `python_files`，原本住在 `pytest.ini`——那個檔已刪） |
 | `.pre-commit-config.yaml`（新） | hook 清單；`rev` 與本機 ruff 大版對齊 |
 | `.github/workflows/test.yml`（新） | CI：format check → lint → pytest |
 | `requirements.txt` | 加 `ruff`、`pre-commit`（與 pytest 同一區） |
@@ -201,7 +218,7 @@ pre-commit>=4.0           # git commit hook 管理器；每人 clone 後跑一�
 而 formatter 的輸出會隨版本演進。裝到更舊的 ruff 會把格式「反著改回去」，
 於是每個人 commit 都在互相覆蓋。
 
-- [ ] 在專案根目錄新建 `pyproject.toml`（整份就是這些，不要加 `[project]`／build-system——我們不是要發行套件）：
+- [ ] 在專案根目錄新建 `pyproject.toml`（不要加 `[project]`／build-system——我們不是要發行套件）：
 
 ```toml
 [tool.ruff]
@@ -217,9 +234,18 @@ ignore = ["E501"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+# ↓ 這一段**不是本 phase 加的**，是之後的 commit `a53ab57` 把 pytest.ini 併進來的。
+#   放在這裡是為了讓「檔案地圖 vs 實檔」對得起來——照本 phase 做的時候不必先寫它。
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 ```
 
-（實際落地的檔案有大段中文註解解釋每一行的理由，這裡只列骨架。）
+（實際落地的檔案有大段中文註解解釋每一行的理由，這裡只列骨架。
+`[tool.pytest.ini_options]` 那一段的註解記著兩個坑：pytest 8 讀的是
+`[tool.pytest.ini_options]` 而不是 pytest 9 的 `[tool.pytest]`；清單要用 TOML 陣列，
+寫成字串 `"tests"` 在部分版本會被當成單一奇怪的路徑。）
 
 規則說明（寫死，不要開更多）：
 
@@ -427,8 +453,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -451,6 +477,11 @@ jobs:
 ```
 
 注意：CI 的 Postgres 直接把 `POSTGRES_DB` 設成測試庫名稱，不必跑 `db/docker-init/`（那支是本機 compose 在正式庫之外再建 test db 用的）。
+
+（上面是骨架。**實際落地的 `.github/workflows/test.yml` 用的是 `actions/checkout@v7` 與
+`actions/setup-python@v7`**——建檔當下的最新大版；另有大段中文註解解釋每一段的理由
+（為什麼只起 pgvector、為什麼大小寫混雜的 `POSTGRES_DB` 沒問題、為什麼 CI 沒有 `.env` 也能綠）。
+本檔上面的 YAML 已同步成 v7，抄的時候不必再改。）
 
 - [ ] 本機先跑 CI 會跑的兩句（不需 GitHub）：
 
@@ -487,11 +518,24 @@ EOF
 )"
 ```
 
-### 6.6 建 private remote 並推（第一次才有 Actions）
+### 6.6 建 remote 並推（第一次才有 Actions）——✅ **已於 2026-08-28 由產品負責人完成**
 
-**本步有外部副作用（建立 GitHub repo、push）。實作者沒有產品負責人「可以 push／可以 create repo」的明示之前，停在 Commit 3。**
+> 📌 **本節從「待辦」改寫成「紀錄」。** 這一步有外部副作用（建立 GitHub repo、push），
+> 依本檔原規定要產品負責人明示才做——**他自己做了**。下面是事實，不是要再做一次的清單。
 
-- [ ] 確認不會把秘密推出去：
+**實況：**
+
+| 項目 | 事實 |
+|---|---|
+| remote | `origin` ＝ `https://github.com/1104030360/personalDocAI.git`（HTTPS，不是 SSH） |
+| 可見性 | **PUBLIC**（原計畫寫 private；以事實為準，不要改回去，也不要建議改） |
+| 預設分支 | **`main`**（不是 `master`） |
+| Actions job `test` | **已綠兩次**（2026-08-28 推的兩筆）：`docs: README／LAUNCH.md 全文改為英文`（`77ae7bf`）、`chore: pytest 設定檔merge 進project.toml, delete pytest.ini`（`a53ab57`） |
+| 秘密 | `.env`、`certs/`、`data/` 全在 `.gitignore`，沒有被推上去 |
+
+**當初的步驟長這樣**（留作紀錄；若哪天要在另一台機器重接 remote 才會用到）：
+
+- [x] 確認不會把秘密推出去：
 
 ```bash
 git status
@@ -500,54 +544,63 @@ git check-ignore -v .env certs/cert.pem data/ 2>/dev/null || true
 
 `.env`、`certs/`、`data/` 已在 `.gitignore`。不要 `git add -f` 它們。
 
-- [ ] 建 private repo 並推（repo 名稱若 GitHub 上要叫別的，改第一個參數）：
+- [x] 建 repo 並推（repo 名稱若 GitHub 上要叫別的，改第一個參數）：
 
 ```bash
-gh repo create personalDocAI --private --source=. --remote=origin
-git push -u origin master
+# ⚠ 實際落地是 public。要 private 的話把 --public 換成 --private。
+gh repo create personalDocAI --public --source=. --remote=origin
+git push -u origin main
 ```
 
 若 GitHub 上已經有空 repo、只是本機還沒接 remote：
 
 ```bash
-git remote add origin git@github.com:<帳號>/personalDocAI.git
-git push -u origin master
+git remote add origin https://github.com/<帳號>/personalDocAI.git
+git push -u origin main
 ```
 
-- [ ] 打開 GitHub → Actions，等 job `ci`。成功標準：
+- [x] 打開 GitHub → Actions，等 job `test`（workflow 的 `name: test`、job id 是 `ci`）。成功標準：
 
   - `format check` 綠
   - `lint` 綠
-  - `tests` 綠，顆數與本機 §6.1 相同
+  - `tests` 綠，顆數與本機 §6.1 相同（543）
 
-- [ ] 若卡在連 DB：先懷疑 `localhost` vs `::1`。§6.5 若漏改 conftest，補改 `127.0.0.1` 再推。**不要**因此去加 Redis 或改 compose。
+  ✅ 兩次都達標，`schema` 那一步（`apt-get install postgresql-client` ＋ `psql -f db/schema.sql`）
+  也一起驗過了——那正是 §0 說「本機驗不到、要真的推一次才知道」的三步。
 
-- [ ] 若 format／lint 紅、本機卻綠：多半是 CI 裝到較新的 ruff。把 `requirements.txt` 的 `ruff>=0.12` 暫時收成與 hook `rev` 相同的下限（例如 `ruff>=0.12.11`），或把 hook `rev` 升到 CI 裝到的版本，兩頭對齊後重推。
+- 若卡在連 DB：先懷疑 `localhost` vs `::1`。§6.5 若漏改 conftest，補改 `127.0.0.1` 再推。**不要**因此去加 Redis 或改 compose。
+
+- 若 format／lint 紅、本機卻綠：多半是 CI 裝到較新的 ruff。`requirements.txt` 現在釘的是
+  `ruff>=0.16,<0.17`、`.pre-commit-config.yaml` 的 `rev` 是 `v0.16.5`（整庫格式基線就是它跑出來的）。
+  兩頭對齊後重推；要升級就三個地方一起動（那兩處 ＋ 重跑一次 `ruff format app tests scripts`）。
 
 ---
 
 ## 7. 驗收標準
 
-| 檢查 | 通過長相 |
-|---|---|
-| 風格基線 | `ruff format --check app tests scripts` 與 `ruff check app tests scripts` 本機 exit 0 |
-| pytest 沒被風格改壞 | `pytest -q` 顆數與 §6.1 相同、0 skipped |
-| pre-commit | 弄亂一個 `.py` 的空白或 import，`git commit` 會自動修或擋下 |
-| format CI | 把一行故意折得很醜 push → `ruff format --check` 紅 |
-| lint CI | 加一個未使用名稱 push → `ruff check` 紅 |
-| tests CI | 正常 push → `pytest -q` 綠 |
-| 負面後盾 | 沒跑 `pre-commit install` 仍能 commit，但 push 後 CI 會紅 |
-| 秘密 | Actions log 與 repo 裡沒有 `.env`、憑證、`data/` 照片 |
+| 檢查 | 通過長相 | 狀態（2026-09-01） |
+|---|---|---|
+| 風格基線 | `ruff format --check app tests scripts` 與 `ruff check app tests scripts` 本機 exit 0 | ✅ §6.3／§6.5 實測 |
+| pytest 沒被風格改壞 | `pytest -q` 顆數與 §6.1 相同、0 skipped | ✅ 543 passed ＋ 0 skipped |
+| pre-commit | 弄亂一個 `.py` 的空白或 import，`git commit` 會自動修或擋下 | ✅ §6.4 煙霧實測 |
+| format CI | 把一行故意折得很醜 push → `ruff format --check` 紅 | ⏸ **未執行（可選）**——沒有做過「故意弄髒再 push」的負面驗證 |
+| lint CI | 加一個未使用名稱 push → `ruff check` 紅 | ⏸ **未執行（可選）**——同上 |
+| tests CI | 正常 push → `pytest -q` 綠 | ✅ 2026-08-28 兩次 push 都綠（§6.6） |
+| 負面後盾 | 沒跑 `pre-commit install` 仍能 commit，但 push 後 CI 會紅 | ⏸ **未執行（可選）**——「仍能 commit」那半邊是既知行為，「CI 會紅」那半邊沒實測 |
+| 秘密 | Actions log 與 repo 裡沒有 `.env`、憑證、`data/` 照片 | ✅ `.gitignore` ＋ §6.6 的 `git check-ignore` 檢查 |
 
-負面兩項（故意弄髒再 push）可在第一次綠燈之後、用一個立刻 revert 的 commit 做；也可以第一次只驗「正常 push 全綠」，負面之後再補。不要為了驗收把髒碼留在 `master`。
+負面三項（故意弄髒再 push）**刻意留成可選**：要做的話在綠燈之後、用一個立刻 revert 的 commit 做。
+不要為了驗收把髒碼留在 `main`；也不要為了補這三格就自己 push（增量六期間 commit／push 節奏由產品負責人決定）。
 
 ---
 
 ## 8. 文件
 
-- [ ] `CLAUDE.md` 指令區：§6.5 那一小段（新 clone 裝 hook、CI 等價指令）。
-- [ ] 本檔做完、Actions 第一次綠了之後，依慣例隨 **CI 那筆 commit 或下一筆 docs commit** 把本檔從 `docs/plan/unfinish/` 搬到 `docs/plan/finish/`。不要在產品負責人還沒 push 成功前就搬。
-- [ ] **不要**為此改 `docs/spec/`、`docs/design/`。
+- [x] `CLAUDE.md` 指令區：§6.5 那一小段（新 clone 裝 hook、CI 等價指令）。**已進 commit `4269985`**。
+- [ ] **歸檔：本次不搬檔。** 增量六期間各 phase 一律不 commit，`unfinish/` → `finish/` 的
+  `git mv` 隨產品負責人的 commit 一起做（`git mv` 會直接 stage，自己搬等於替他決定 commit 內容）。
+  依據：增量六總覽 §7 鐵律 12「commit 節奏由產品負責人決定……不要把計畫檔搬進 `finish/`」。
+- [x] **不要**為此改 `docs/spec/`、`docs/design/`。（全程沒動）
 
 `LAUNCH.md` 不必改：那是給「這台 Mac 怎麼開服務」的人看的，不是給 CI 看的。
 
@@ -565,18 +618,20 @@ git push -u origin master
 | worker／Redis 相關測試在 CI 紅 | 某個測試繞過了 `wire_memory_job_store` | 修測試，不要在 CI 起 Redis |
 | commit 之後發現 `.md` 被改了 | `.pre-commit-config.yaml` 的 `types_or` 被拿掉了（上游預設含 markdown） | 把 `types_or: [python, pyi]` 加回去，被改的 `.md` 用 `git checkout` 還原 |
 | 所有測試檔的 import 中間多一行空行 | `pyproject.toml` 的 `src` 被改成 `["app","tests","scripts"]` | 改回 `src = ["."]`，再跑一次 `ruff check --fix` |
-| 換一台機器 commit，格式被反著改回去 | 那台裝到比 0.16.5 舊的 ruff | 對齊 `requirements.txt` 的下限與 `.pre-commit-config.yaml` 的 `rev` |
+| 換一台機器 commit，格式被反著改回去 | 那台裝到比 0.16.5 舊的 ruff | 對齊 `requirements.txt` 的下限（`ruff>=0.16,<0.17`）與 `.pre-commit-config.yaml` 的 `rev`（`v0.16.5`） |
+| 重新 clone 之後 commit 沒被 hook 檢查 | `pre-commit install` 沒跑（hook 寫在 `.git/hooks/`，不進版控） | 跑一次 `pre-commit install`；沒跑的人靠 push 之後的 CI 紅燈擋 |
 
 ---
 
-## 10. 做完長什麼樣（給產品負責人）
+## 10. 做完長什麼樣（給產品負責人）——✅ 現況就是這樣
 
 本機：
 
 - `pre-commit install` 過一次之後，commit Python 會被 ruff 整理。
-- `pytest -q` 仍然全綠。
+- `pytest -q` 仍然全綠（543 passed ＋ 0 skipped）。
 
-GitHub（private）：
+GitHub（**public**；原計畫寫 private，實際落地是公開，見 §0）：
 
-- 每次 push／PR 跑一顆 job：format → lint → pytest。
+- 每次 push／PR 跑一顆 job：format → lint → schema → pytest。
 - 沒有第二個 job、沒有部署、沒有 Node。
+- 2026-08-28 已綠兩次（§6.6）。
