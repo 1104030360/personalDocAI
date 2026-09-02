@@ -90,3 +90,47 @@ SEARCH_MODE_LABELS = {
     "entity": "entity pin search",
     "task": "task search",
 }
+
+# --- 增量六：雲端路（design6.md D7〜D10、D15；總覽 §2.4.2）-------------------
+# ★ 這一整段只有「名字」與「預設值」，**一個真實的值都不寫進版控**：
+#   bucket 名、佇列 URL、實例 id 一律放 .env（.env 不入版控）。
+
+# 雲端路的總開關。只認三種值（dependencies.get_cloud_route() 會擋掉別的）：
+#   off    ＝ 完全不走雲端。**pytest 與新 clone 的預設**，行為與增量五逐字相同
+#   assume ＝ 假設遠端開著（階段丁：工人跑在這台 Mac 上時用；Phase 86 接）
+#   ec2    ＝ 每次送出前用 DescribeInstances 問一下那台機器開著沒（Phase 89 接）
+CLOUD_ROUTE = os.getenv("CLOUD_ROUTE", "off")
+
+# AWS 區域：東京（design6 §7）。boto3 的 client 一律**明傳** region_name=config.AWS_REGION，
+# 不靠 ~/.aws/config——那個檔不入版控，換一台機器就會變成「在別的區域找不到 bucket」。
+AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-1")
+
+# ★ AWS_ACCESS_KEY_ID／AWS_SECRET_ACCESS_KEY／AWS_ENDPOINT_URL 這三個**刻意不在這裡讀**：
+#   它們是 boto3 自己認得的標準環境變數，建 client 時 boto3 會直接去環境裡撈。
+#   config 再抄一份副本只會多一個會漂移的地方，而且金鑰一旦變成 Python 變數，
+#   任何一次 print(vars(config)) 都會把它印出來。
+#   EC2 上完全不放金鑰——那台機器用 instance role 拿臨時憑證（design6 §6）。
+
+# 寄物櫃 bucket 名（Phase 84 建好之後填進 .env）
+S3_BUCKET = os.getenv("S3_BUCKET", "")
+
+# 兩條 SQS 佇列的網址（Phase 85 建好之後填進 .env）
+SQS_JOBS_QUEUE_URL = os.getenv("SQS_JOBS_QUEUE_URL", "")
+SQS_RESULTS_QUEUE_URL = os.getenv("SQS_RESULTS_QUEUE_URL", "")
+
+# CLOUD_ROUTE=ec2 時要探測哪一台（Phase 92 開好實例之後填進 .env）
+EC2_WORKER_INSTANCE_ID = os.getenv("EC2_WORKER_INSTANCE_ID", "")
+
+# DescribeInstances 的答案快取幾秒（design6 §2.1 第 1 條「快取可短 TTL」）。
+# 不快取的話每一張照片都要打一次 AWS API：慢，而且是可以省下來的錢。
+EC2_PROBE_TTL_SECONDS = int(os.getenv("EC2_PROBE_TTL_SECONDS", "60"))
+
+# 送出之後最多等 results 佇列幾秒；到了還沒有結果就 fallback 本機（design6 D10）。
+# 300 秒 ＝ 5 分鐘：雲端看一張圖約 2 秒，這個值留的是「工人剛好在忙別的檔」的餘裕。
+# 手動煙霧時在 .env 調小比較不必空等（Phase 86 用 30 秒）。
+CLOUD_RESULT_TIMEOUT_SECONDS = int(os.getenv("CLOUD_RESULT_TIMEOUT_SECONDS", "300"))
+
+# 雲端工人映像的版本：build 時由 Dockerfile 的 ARG GIT_SHA 烙進去（Phase 90）。
+# 只有 app/workers/cloud_worker.py 讀它，啟動時印在 log 第一行——
+# Demo 3 就是靠這個字串證明「EC2 上跑的真的是剛剛推上去的那一版」（design6 D16）。
+WORKER_VERSION = os.getenv("WORKER_VERSION", "dev")

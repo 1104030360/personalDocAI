@@ -99,7 +99,8 @@ def test_雲端建議_解析不出時回None並留log(caplog):
 
 # ---------------------- AI 計時 log（Phase 43）----------------------
 #
-# `entity_suggest` 是五種 kind 裡唯一包在**類別內**的（design4 §5.3／§5.4 明白指定
+# `entity_suggest` 是六種 kind 裡兩個包在**類別內**的之一（另一個是增量六 Phase 75 的 `privacy`，
+# 在 OllamaPrivacyModel.judge() 裡；design4 §5.3／§5.4 明白指定
 # 「entity_suggestion_service 本機＋雲端各一處」）。代價是 tests/fakes.py 的
 # FakeEntitySuggester 不會打 log，所以這兩顆用「真的類別＋假的內部模型」來測。
 #

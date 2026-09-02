@@ -25,9 +25,11 @@ from langchain_core.embeddings import Embeddings
 from app.core import config
 from app.services import (
     ask_workflow,
+    cloud_ingest,
     entity_suggestion_service,
     indexing_service,
     ingest_job_store,
+    privacy_gate,
     vlm_service,
 )
 
@@ -150,6 +152,36 @@ def get_today(now: datetime | None = Depends(get_now)) -> date:
     return now.date() if now is not None else date.today()
 
 
+# ---------- 隱私閘門（增量六 Phase 74 立契約、75 接真模型；design6.md D2〜D4）----------
+#
+# 「這張照片能不能離開這台 Mac」由它判斷：同一顆看圖 VLM、另一份短 prompt。
+# 還沒有人呼叫 classify()（接線是 Phase 78）。
+
+
+def build_privacy_gate_for_backend(ai_backend: str) -> privacy_gate.PrivacyGate:
+    """依「指定的」後端建隱私閘門——**不看** config.AI_BACKEND。
+
+    誰會用它：
+    - get_privacy_gate()（下面那個）：web 行程／pytest，參數是當下的開關值
+    - Phase 78 的 app/celery_app.py：worker 行程，參數是**入列當下寫進 job 的快照**
+      job["ai_backend"]。worker 行程的 config.AI_BACKEND 永遠是預設的 "local"
+      （頁首開關撥的是 web 行程的記憶體狀態，兩個行程不共用），所以這裡若改讀
+      config 就會變成「頁首撥雲端、閘門仍打本機」——違反 D6 而且完全不出聲。
+
+    理由與寫法同 build_vlm_for_backend()（design5.md D14 的同一個坑）。
+
+    ⚠ 刻意不加 @lru_cache（不像 _ollama_vlm 那種）：後端是建構參數，
+      快取一顆會讓第二次呼叫拿到第一次的後端。ChatOllama 與
+      ollama_cloud.build_client() 建物件本身不連線，每次建一顆是可接受的成本。
+    """
+    return privacy_gate.VlmGate(privacy_gate.OllamaPrivacyModel(backend=ai_backend))
+
+
+def get_privacy_gate() -> privacy_gate.PrivacyGate:
+    """給 Depends 的隱私閘門。跟著頁首的 AI 開關走（理由與寫法同 get_vlm）。"""
+    return build_privacy_gate_for_backend(config.AI_BACKEND)
+
+
 # ---------- 入庫任務的狀態存放處（Phase 57；design5.md §4.3）----------
 
 
@@ -241,3 +273,35 @@ def get_task_dispatcher() -> TaskDispatcher:
     from app.celery_app import CeleryDispatcher
 
     return CeleryDispatcher()
+
+
+# ---------------- 增量六 Phase 77：雲端路的注入點（design6 D7／D10）----------------
+
+
+def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
+    """這一台現在要不要走雲端路、怎麼走。**全系統只有這一個地方決定。**
+
+    三種模式（config.CLOUD_ROUTE，預設 off）：
+      off    → CloudRouteOff()：available() 恆為 False，行為與增量五**逐字相同**
+      assume → Phase 86 才接（CloudRoute ＋ AwsMailbox ＋ AlwaysRunning）
+      ec2    → Phase 89 才接（探測換成 Ec2Probe）
+
+    ★ 打錯字要當場炸（ValueError），不要默默當成 off：
+      「我明明把 CLOUD_ROUTE 設成 cloud 了，怎麼都沒送出去」是最難查的一種壞法。
+
+    ★ 回傳型別註記裡的 cloud_ingest.CloudRoute 要 Phase 79 才存在。本檔最上面有
+      `from __future__ import annotations`，所以註記只是**字串**、執行時不會被求值，
+      現在寫上去不會炸——這樣 79 補完之後這一行不必再動。
+      （前提：這一支**不可以**被寫成 Depends(get_cloud_route) 塞進 router，
+      那會讓 FastAPI 真的去解析型別。本增量不新增端點，也不需要。）
+
+    pytest 由 tests/conftest.py 的第五道安全網 wire_fake_cloud 兩管齊下換掉它。
+    """
+    mode = config.CLOUD_ROUTE
+    if mode == "off":
+        return cloud_ingest.CloudRouteOff()
+    if mode == "assume":
+        raise NotImplementedError("CLOUD_ROUTE=assume 要等 Phase 86 接上真 AWS 才能用")
+    if mode == "ec2":
+        raise NotImplementedError("CLOUD_ROUTE=ec2 要等 Phase 89 的 Ec2Probe 才能用")
+    raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{mode!r}")

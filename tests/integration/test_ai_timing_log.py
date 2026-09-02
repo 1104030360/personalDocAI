@@ -24,7 +24,7 @@ PDF 是不是每頁各一組（而不是整份一組）、看不懂的那一頁�
   - 看不懂的那條路現在會照 design5.md §4.4 重試 `config.VLM_MAX_ATTEMPTS` 次，
     所以「失敗」的看圖結束行有那麼多組，不再只有一組。
 
-本檔完全不打真模型：`conftest.py` 的 `wire_fake_ai` 已把六個注入點都換成假件，
+本檔完全不打真模型：`conftest.py` 的 `wire_fake_ai` 已把七個注入點都換成假件，
 需要「看得懂」時在測試裡覆寫 `get_vlm` 即可（覆寫由 `wire_fake_ai` 統一收拾）；
 `跑完任務` 用的也正是這幾份假件（見 `tests/conftest.py` 的 `目前注入的假件`）。
 """

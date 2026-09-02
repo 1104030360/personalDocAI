@@ -1,7 +1,7 @@
 """AI 呼叫的計時 log（design4.md §5）。
 
 「用到 AI」＝會打 Ollama（本機或 Cloud）的那一段。本檔提供唯一的一種格式，
-五種呼叫（看圖／轉向量／判斷查法／產生回答／再建議一個）全部走這裡——
+六種呼叫（看圖／轉向量／判斷查法／產生回答／再建議一個／隱私閘門短問）全部走這裡——
 格式只有一份，才 grep 得出來（例如 grep "kind=embed" 只看轉向量花多久）。
 
 不計時的東西（design4.md §5.1 明文）：PDF 渲染、存檔、縮圖、SQL、WebRTC、QR、
@@ -38,14 +38,14 @@ class AiTarget:
     model: str
 
 
-def _安全log值(value: str) -> str:
-    單行 = "".join(字元 if 字元.isprintable() else " " for 字元 in value)
-    if len(單行) <= LOG_VALUE_MAX_CHARS:
-        return 單行
-    return 單行[: LOG_VALUE_MAX_CHARS - 1] + "…"
+def _safe_log_value(value: str) -> str:
+    single_line = "".join(char if char.isprintable() else " " for char in value)
+    if len(single_line) <= LOG_VALUE_MAX_CHARS:
+        return single_line
+    return single_line[: LOG_VALUE_MAX_CHARS - 1] + "…"
 
 
-def _目標(kind: str) -> AiTarget:
+def _target_for_kind(kind: str) -> AiTarget:
     """這一種呼叫會打到哪裡、用哪顆模型（design4.md §5.1 的表）。
 
     ★ config.AI_BACKEND 一定要在這裡「即時讀」：它是頁首那顆本機／雲端開關
@@ -56,16 +56,16 @@ def _目標(kind: str) -> AiTarget:
         # 所以 embeddings 從來不歸那顆開關管（dependencies.py 的 get_embeddings）。
         return AiTarget(backend="local", model=config.EMBEDDING_MODEL)
 
-    是雲端 = config.AI_BACKEND == "cloud"
-    if kind == "vlm":
+    is_cloud = config.AI_BACKEND == "cloud"
+    if kind in ("vlm", "privacy"):
         return AiTarget(
             backend=config.AI_BACKEND,
-            model=config.OLLAMA_CLOUD_VLM_MODEL if 是雲端 else config.VLM_MODEL,
+            model=config.OLLAMA_CLOUD_VLM_MODEL if is_cloud else config.VLM_MODEL,
         )
     if kind in ("route", "answer", "entity_suggest"):
         return AiTarget(
             backend=config.AI_BACKEND,
-            model=config.OLLAMA_CLOUD_LLM_MODEL if 是雲端 else config.LLM_MODEL,
+            model=config.OLLAMA_CLOUD_LLM_MODEL if is_cloud else config.LLM_MODEL,
         )
     # 打錯 kind 的 log 會變成 grep 不到的孤兒，寧可當場炸給實作者看
     raise ValueError(  # GENERIC_ERR_OK - 維持既有 unknown-kind API
@@ -88,43 +88,43 @@ class AiCall:
 def log_ai(kind: str, *, target: AiTarget | None = None) -> Iterator[AiCall]:
     """把一次 AI 呼叫包起來，前後各打一行。
 
-    kind：vlm／embed／route／answer／entity_suggest 五選一。
+    kind：vlm／embed／route／answer／entity_suggest／privacy 六選一。
 
     ★ 先算 backend／model 再打開始行：kind 打錯時要在「一行 log 都還沒打」的
       狀態下炸掉，不然終端機會留下一個永遠等不到結束行的孤兒開始行。
     """
-    # target 有傳進來時仍呼叫一次 _目標：只利用它驗證 kind，維持未知種類在
+    # target 有傳進來時仍呼叫一次 _target_for_kind：只利用它驗證 kind，維持未知種類在
     # 「一行 log 都還沒打」時就拋錯的既有語意；實際欄位則使用 request 已選定的 target。
-    預設目標 = _目標(kind)
-    實際目標 = target if target is not None else 預設目標
-    抬頭 = (
-        f"kind={_安全log值(kind)} "
-        f"backend={_安全log值(實際目標.backend)} "
-        f"model={_安全log值(實際目標.model)}"
+    default_target = _target_for_kind(kind)
+    actual_target = target if target is not None else default_target
+    header = (
+        f"kind={_safe_log_value(kind)} "
+        f"backend={_safe_log_value(actual_target.backend)} "
+        f"model={_safe_log_value(actual_target.model)}"
     )
-    logger.info("AI 開始 %s", 抬頭)
+    logger.info("AI 開始 %s", header)
 
-    這次 = AiCall()
-    起點 = time.monotonic()  # 只會往前走的時鐘，量時間差要用它
-    成功 = True
+    call = AiCall()
+    started_at = time.monotonic()  # 只會往前走的時鐘，量時間差要用它
+    succeeded = True
     try:
-        yield 這次
+        yield call
     except BaseException:  # BROAD_EXCEPT_OK - 記錄後原樣重拋，含關機訊號
         # 不做任何處理，只記下「這次失敗了」，然後原封不動往外丟。
         # 抓最寬的 BaseException 是因為 Ctrl+C 與 uvicorn 關機丟的不是
         # Exception 的子類，用窄的那個會漏掉結束行。
-        成功 = False
+        succeeded = False
         raise
     finally:
         # 一定是 finally 不是 else：else 只有沒例外時才跑，失敗就不會打結束行了
-        秒數 = time.monotonic() - 起點
-        摘要 = f" {_安全log值(這次.note)}" if 這次.note else ""
+        elapsed_seconds = time.monotonic() - started_at
+        note_suffix = f" {_safe_log_value(call.note)}" if call.note else ""
         logger.info(
             # %.1f 而不是 str(秒數)：假件跑得極快，秒數可能是 1.9e-05，
             # 印成科學記號就毀了對齊與 grep（格式化之後會是 0.0，正是我們要的）
             "AI 結束 %s elapsed_s=%.1f ok=%s%s",
-            抬頭,
-            秒數,
-            "true" if 成功 else "false",
-            摘要,
+            header,
+            elapsed_seconds,
+            "true" if succeeded else "false",
+            note_suffix,
         )

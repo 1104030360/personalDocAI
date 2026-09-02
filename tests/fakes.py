@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import math
 import os
+from collections.abc import Callable
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -14,6 +16,9 @@ from PIL import Image
 
 from app.core import config
 from app.services.ask_workflow import RouteDecision
+from app.services.cloud_ingest import MailboxMessage
+from app.services.privacy_gate import PrivacyJudgement, Verdict
+from app.services.staging_service import STAGING_EXTENSIONS
 from app.services.vlm_service import PhotoUnderstanding
 
 # ---------- 真的圖片位元組（Pillow 讀得開）----------
@@ -417,3 +422,328 @@ class FakeCloudChat:
     def chat(self, **kwargs):
         self.calls.append(kwargs)
         return SimpleNamespace(message=SimpleNamespace(content=self._content))
+
+
+class FakePrivacyGate:
+    """固定回同一個 Verdict 的假閘門（增量六 Phase 74）。
+
+    conftest 的 wire_fake_ai 預設掛 FakePrivacyGate(Verdict.UNCERTAIN)
+    ＝所有既有測試都走本機路徑，行為零改變。
+    calls／last_filename／last_content_type 讓測試驗得出「呼叫端真的問了閘門、
+    而且把哪個檔名與 content_type 交出去」。
+    """
+
+    def __init__(self, verdict: Verdict) -> None:
+        self.verdict = verdict
+        self.calls = 0
+        self.last_filename: str | None = None
+        self.last_content_type: str | None = None
+
+    def classify(
+        self, *, filename: str, content_type: str, load_bytes: Callable[[], bytes]
+    ) -> Verdict:
+        self.calls += 1
+        self.last_filename = filename
+        self.last_content_type = content_type
+        return self.verdict
+
+
+class FakePrivacyModel:
+    """短問模型的固定答案卡（增量六 Phase 74；回 PrivacyJudgement，不是 Verdict）。
+
+    raise_on_judge=True 讓 judge() 丟例外，用來驗「模型炸掉 → UNCERTAIN」。
+    last_image_bytes 記下真正送進模型的位元組（Phase 75 靠它驗縮圖長邊 ≤512）。
+    """
+
+    def __init__(self, judgement: PrivacyJudgement, *, raise_on_judge: bool = False) -> None:
+        self.judgement = judgement
+        self.raise_on_judge = raise_on_judge
+        self.calls = 0
+        self.last_image_bytes: bytes | None = None
+        self.last_content_type: str | None = None
+
+    def judge(self, image_bytes: bytes, content_type: str) -> PrivacyJudgement:
+        self.calls += 1
+        self.last_image_bytes = image_bytes
+        self.last_content_type = content_type
+        if self.raise_on_judge:
+            raise RuntimeError("假模型炸掉")
+        return self.judgement
+
+
+# ---------- 增量六 Phase 77：雲端路的假件 ----------
+#
+# 這一區的四顆假件是 Phase 78〜81（本機端流程）、87（工人）、89（EC2 探測）
+# 全部測試的地基。它們**沒有一行 boto3**，也不連任何網路——
+# 「pytest 絕不連真 AWS」（design6 §9）的實際做法就是這裡。
+
+# S3 上寄物櫃的前綴（design6 §2.2 的鍵名契約）。
+# 副檔名借用 staging 那一張表（同樣是那三種格式）：兩份一定會漂移，
+# 而鍵名是**跨機器**的契約——本機寫的名字，EC2 上的工人要拿得到。
+S3_PREFIX = "documents"
+
+
+class FakeMailbox:
+    """一顆假件同時扮演 S3 寄物櫃與兩條 SQS 佇列（總覽 §2.4.5）。
+
+    為什麼三個角色合成一顆：一次雲端往返會同時碰到三者（Put 物件 → 發 jobs 訊息 →
+    工人 Get 物件 → Put 結果 → 發 results 訊息 → 本機 Get 結果），
+    拆成三顆假件的話，每個測試都要自己把三顆接起來，而且很容易接錯。
+    合成一顆之後，Phase 87 的端到端測試可以直接寫成
+    「本機送出 → 假工人處理**同一顆信箱** → 本機收回入庫」。
+
+    它模仿的 SQS 行為（只模仿真的會影響正確性的那幾件）：
+      * receive 會把訊息**從佇列拿走**（模仿可見度逾時：別人暫時看不到它）
+      * delete 要帶 receipt handle（把手不對＝當場 AssertionError，比默默成功好）
+      * release 把訊息放回**佇列前端**（模仿 ChangeMessageVisibility 改成 0）
+      * 佇列空的時候 receive 回 None（真 SQS 長輪詢到時間也是回空的）
+      * **不模仿**：亂序、重複投遞、可見度會自己過期。冪等要用「明確地再送一次」
+        來測（Phase 80），比亂數可靠得多——假件要可預測。
+
+    計數器與流水帳（測試靠它們斷言「有沒有真的送出去」「先後順序對不對」）：
+      calls                                         **呼叫流水帳**：每被叫一次就記一行
+                                                    （例如 "put_object documents/x/input.png"）。
+                                                    整數計數器驗得出「幾次」，驗不出「誰先誰後」
+                                                    ——D9 的順序鐵律只能靠這一份清單釘（總覽 §2.4.5）
+      put_calls / get_calls / delete_calls          S3 三種操作各幾次
+      send_job_calls / send_result_calls            兩條佇列各發了幾則
+      wait_seconds_log                              每次 receive 說要等幾秒（Phase 80 驗 <= 20）
+      instance_state_calls                          DescribeInstances 被叫幾次（Phase 89 驗快取）
+    """
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self.jobs: list[dict] = []
+        self.results: list[dict] = []
+        self.calls: list[str] = []
+        self.put_calls = 0
+        self.get_calls = 0
+        self.delete_calls = 0
+        self.send_job_calls = 0
+        self.send_result_calls = 0
+        self.wait_seconds_log: list[int] = []
+        # instance_state() 依序回傳這個清單，用完之後重複最後一個。
+        # 預設「開著」＝ 大部分測試不必管它；要測「關機了」就把它換掉。
+        self.instance_state_script: list[str] = ["running"]
+        self.instance_state_calls = 0
+        self._handle_seq = 0
+        self._in_flight: dict[str, tuple[list[dict], dict]] = {}
+
+    # ---------- 鍵名（design6 §2.2 的契約；Phase 83 的 AwsMailbox 要逐字相同）----------
+
+    def input_key(self, job_id: str, content_type: str) -> str:
+        return f"{S3_PREFIX}/{job_id}/input{STAGING_EXTENSIONS[content_type]}"
+
+    def context_key(self, job_id: str) -> str:
+        return f"{S3_PREFIX}/{job_id}/context.json"
+
+    def result_key(self, job_id: str) -> str:
+        return f"{S3_PREFIX}/{job_id}/result.json"
+
+    # ---------- S3 那一半 ----------
+
+    def put_object(self, key: str, body: bytes, content_type: str) -> None:
+        assert isinstance(body, bytes), "S3 只收位元組；字串要自己先 encode"
+        self.calls.append(f"put_object {key}")
+        self.put_calls += 1
+        self.objects[key] = body
+
+    def get_object(self, key: str) -> bytes | None:
+        """拿不到回 None（**不是**丟例外）——真的 AwsMailbox 會把 NoSuchKey 翻成 None。"""
+        self.calls.append(f"get_object {key}")
+        self.get_calls += 1
+        return self.objects.get(key)
+
+    def delete_objects(self, keys: list[str]) -> None:
+        """盡力刪：本來就不在的鍵不算錯（真 S3 的 DeleteObjects 也是這個行為）。"""
+        self.calls.append(f"delete_objects {len(keys)}")
+        self.delete_calls += 1
+        for key in keys:
+            self.objects.pop(key, None)
+
+    # ---------- jobs 佇列（本機 Send、工人 Receive／Delete）----------
+
+    def send_job(self, job_id: str, s3_key: str) -> None:
+        self.calls.append(f"send_job {job_id}")
+        self.send_job_calls += 1
+        self.jobs.append({"job_id": job_id, "s3_key": s3_key})
+
+    def receive_job(self, wait_seconds: int) -> MailboxMessage | None:
+        self.calls.append("receive_job")
+        return self._receive(self.jobs, wait_seconds)
+
+    def delete_job_message(self, receipt_handle: str) -> None:
+        self.calls.append("delete_job_message")
+        self._delete_message(receipt_handle)
+
+    # ---------- results 佇列（工人 Send、本機 Receive／Delete／Release）----------
+
+    def send_result(self, job_id: str) -> None:
+        self.calls.append(f"send_result {job_id}")
+        self.send_result_calls += 1
+        self.results.append({"job_id": job_id})
+
+    def receive_result(self, wait_seconds: int) -> MailboxMessage | None:
+        self.calls.append("receive_result")
+        return self._receive(self.results, wait_seconds)
+
+    def delete_result_message(self, receipt_handle: str) -> None:
+        self.calls.append("delete_result_message")
+        self._delete_message(receipt_handle)
+
+    def release_result_message(self, receipt_handle: str) -> None:
+        """把手上這則訊息立刻還回佇列前端（＝ ChangeMessageVisibility 改成 0）。"""
+        self.calls.append("release_result_message")
+        queue, body = self._in_flight.pop(receipt_handle)
+        queue.insert(0, body)
+
+    # ---------- EC2（Phase 89 的 Ec2Probe 用）----------
+
+    def instance_state(self, instance_id: str) -> str:
+        self.calls.append(f"instance_state {instance_id}")
+        self.instance_state_calls += 1
+        answer = self.instance_state_script[0]
+        if len(self.instance_state_script) > 1:
+            self.instance_state_script.pop(0)
+        return answer
+
+    # ---------- 內部 ----------
+
+    def _receive(self, queue: list[dict], wait_seconds: int) -> MailboxMessage | None:
+        """從佇列前端拿一則走，發一個新的 receipt handle。**不會真的等** wait_seconds 秒。
+
+        ⚠ 正因為它不等，「等到逾時」的測試一定要接管 cloud_ingest 的時間接縫
+          _now()／_sleep()（Phase 79 才建），否則 wait_result 的迴圈會全速空轉到 deadline。
+          接管用的小工具由 Phase 80 的測試檔定義：advance_clock_frozen(monkeypatch, seconds) ＝ 一次撥到
+          未來然後凍結、advance_clock_each_call(monkeypatch, step_seconds) ＝ 每問一次就再前進。
+          **本 phase 不定義任何時間 helper**——tests/fakes.py 裡沒有、也不該有它們。
+        """
+        self.wait_seconds_log.append(wait_seconds)
+        if not queue:
+            return None
+        body = queue.pop(0)
+        self._handle_seq += 1
+        handle = f"receipt-{self._handle_seq}"
+        self._in_flight[handle] = (queue, body)
+        return MailboxMessage(
+            job_id=body["job_id"],
+            s3_key=body.get("s3_key"),
+            receipt_handle=handle,
+        )
+
+    def _delete_message(self, receipt_handle: str) -> None:
+        assert receipt_handle in self._in_flight, (
+            f"要刪的訊息不在手上（把手 {receipt_handle!r}）——真 SQS 會安靜地不做事，"
+            "所以這裡改成大聲炸掉，才抓得到「把手用錯／刪兩次」"
+        )
+        self._in_flight.pop(receipt_handle)
+
+
+class FakeProbe:
+    """假的遠端探測（總覽 §2.4.5）。
+
+    running 給 True／False 決定答案；給一個**例外實例**就在被問時丟出來
+    ——用來重現 design6 §2.1 第 2 條「沒有 AWS 憑證／API 失敗」那一種不可用。
+    """
+
+    def __init__(self, running: bool | Exception = True) -> None:
+        self.running = running
+        self.calls = 0
+
+    def is_running(self) -> bool:
+        self.calls += 1
+        if isinstance(self.running, Exception):
+            raise self.running
+        return self.running
+
+
+class ScriptedProbe:
+    """依序回一串答案的假探測；用完之後重複最後一個（總覽 §2.4.5）。
+
+    給 CloudRoute(信箱, probe) 的流程測試用：答案寫成 [True, False] 就能演
+    「第一次可用、第二次不可用」這種劇本。
+    ⚠ **不是**給 Phase 89 的 Ec2Probe 做 TTL 測試用——那組要數的是 DescribeInstances
+      被叫了幾次，靠的是 FakeMailbox.instance_state_script ＋ instance_state_calls。
+    """
+
+    def __init__(self, answers: list[bool]) -> None:
+        assert answers, "至少要給一個答案"
+        self.answers = list(answers)
+        self.calls = 0
+
+    def is_running(self) -> bool:
+        answer = self.answers[min(self.calls, len(self.answers) - 1)]
+        self.calls += 1
+        return answer
+
+
+class FakeCloudRoute:
+    """只回答「遠端可不可用」的假雲端路。**只給 Phase 77／78 用。**
+
+    Phase 79 起一律改用真的 `CloudRoute(FakeMailbox(), FakeProbe(True), timeout_seconds=…)`
+    ——假的路只證明得了「分支走對了」，證明不了「送出去的東西長什麼樣」
+    （總覽 §2.4.5 那一列的原話）。
+
+    available 給 True／False 決定答案；給一個**例外實例**就丟出來
+    （閘門那一層必須把它當作「不可用」，不可以讓整個任務炸掉）。
+    """
+
+    def __init__(self, available: bool | Exception = True) -> None:
+        self._available = available
+        self.available_calls = 0
+        self.submit_calls = 0
+        self.cleanup_calls = 0
+
+    def available(self) -> bool:
+        self.available_calls += 1
+        if isinstance(self._available, Exception):
+            raise self._available
+        return self._available
+
+    def submit(self, job_id: str, *, content_type: str, file_bytes: bytes, context: dict) -> None:
+        self.submit_calls += 1
+
+    def fetch_result(self, job_id: str) -> dict | None:
+        return None
+
+    def wait_result(self, job_id: str, *, store) -> dict | None:
+        return None
+
+    def cleanup(self, job_id: str) -> None:
+        self.cleanup_calls += 1
+
+
+def fake_worker_process_one(mailbox, understanding=None, *, worker_version="fake-worker"):
+    """假工人：把 mailbox.jobs 裡的**第一則**訊息做成 result.json ＋ 一則 results 訊息。
+
+    它**不是** app/workers/cloud_worker.py（那是 Phase 87 的事），只是「另一頭真的
+    有人在做事」的最小替身：不看圖、不解析影像，照著測試指定的答案寫結果。
+
+      understanding 給一個 PhotoUnderstanding ＝ 工人一次就看懂了
+      understanding 給 None                    ＝ 工人試了三次都看不懂
+
+    ★ 順序刻意寫成「**先 PutObject、才 SendMessage**」（design6 D9 的順序鐵律）：
+      假件也要教對的做法，Phase 87 的真工人才有樣本可比。
+
+    回傳寫出去的那份 result（測試想再檢查內容時用得到）；jobs 佇列空的時候回 None。
+    """
+    message = mailbox.receive_job(wait_seconds=0)
+    if message is None:
+        return None
+
+    result = {
+        "job_id": message.job_id,
+        "worker_version": worker_version,
+        "kind": "image",
+        "understood": understanding is not None,
+        "attempts": 1 if understanding is not None else config.VLM_MAX_ATTEMPTS,
+        "understanding": understanding.model_dump() if understanding is not None else None,
+    }
+    mailbox.put_object(
+        mailbox.result_key(message.job_id),
+        json.dumps(result, ensure_ascii=False, default=str).encode("utf-8"),
+        "application/json",
+    )
+    mailbox.send_result(message.job_id)
+    mailbox.delete_job_message(message.receipt_handle)
+    return result

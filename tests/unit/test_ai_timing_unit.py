@@ -1,7 +1,7 @@
 """ai_timing 的單元測試（design4.md §5.1〜§5.3、Phase 41）。
 
-驗的是「格式只有一份」這件事：五種 AI 呼叫（看圖／轉向量／判斷查法／產生回答／
-再建議一個）都走同一個 helper，所以五個必要欄位（kind／backend／model／elapsed_s／ok）
+驗的是「格式只有一份」這件事：六種 AI 呼叫（看圖／轉向量／判斷查法／產生回答／
+再建議一個／隱私閘門短問）都走同一個 helper，所以五個必要欄位（kind／backend／model／elapsed_s／ok）
 的長相與順序在這裡一次釘死——之後才 grep 得出來（例如 grep "kind=embed"
 只看轉向量花多久）。
 
@@ -226,3 +226,25 @@ def test_未知的kind直接炸掉且一行log都沒打(caplog, monkeypatch):
             pass
 
     assert caplog.messages == []
+
+
+def test_privacy這個kind也有前後兩行log(caplog, monkeypatch):
+    """隱私閘門的短問也是一次真的模型推論，所以一樣要留前後兩行。
+
+    模型跟看圖那顆同一顆（design6 §1.1「同一顆 VLM、另一份短 prompt」），
+    所以 backend／model 與 kind=vlm 完全同一組——跟著頁首開關走，不是恆 local。
+    """
+    caplog.set_level(logging.INFO)
+
+    monkeypatch.setattr(config, "AI_BACKEND", "local")
+    with log_ai("privacy"):
+        pass
+    assert len(caplog.messages) == 2, f"預期恰好兩行，實得：{caplog.messages}"
+    assert caplog.messages[0].startswith("AI 開始 ")
+    assert f"kind=privacy backend=local model={config.VLM_MODEL}" in _結束行(caplog)
+
+    caplog.clear()
+    monkeypatch.setattr(config, "AI_BACKEND", "cloud")
+    with log_ai("privacy"):
+        pass
+    assert f"kind=privacy backend=cloud model={config.OLLAMA_CLOUD_VLM_MODEL}" in _結束行(caplog)

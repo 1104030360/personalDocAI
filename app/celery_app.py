@@ -17,8 +17,13 @@ Unable to load celery application. Module 'app.celery_app' has no attribute 'app
 <https://docs.celeryq.dev/en/stable/getting-started/first-steps-with-celery.html>
 
 ★ 本檔刻意寫得很薄（design5.md D15）：所有規則（VLM 重試 3 次、PDF 逐頁、
-  失敗清乾淨、冪等）都在 run_ingest_job 裡，這裡只負責「把零件組好、呼叫它」。
-  所以測試可以直接呼叫 run_ingest_job，不必啟動 Celery、不必有 Redis。
+  失敗清乾淨、冪等）都在入庫任務裡，這裡只負責「把零件組好、呼叫它」。
+  所以測試可以直接呼叫那一支函式，不必啟動 Celery、不必有 Redis。
+
+★ 增量六（Phase 78）起，呼叫的對象換成 app/services/gated_ingest.py 的
+  run_gated_ingest_job：它會先問隱私閘門、再問遠端狀態，然後決定這一筆走
+  本機（＝既有的 run_ingest_job，行為與增量五逐字相同）還是雲端（design6 D5）。
+  本檔仍然只負責「組零件」——多組兩個而已（gate 與 cloud）。
 """
 
 from __future__ import annotations
@@ -30,8 +35,7 @@ from celery.signals import worker_ready
 
 from app import dependencies
 from app.core import config
-from app.services import staging_service
-from app.services.ingest_job import run_ingest_job
+from app.services import gated_ingest, staging_service
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,7 @@ celery_app.conf.broker_connection_retry_on_startup = True
 def ingest_task(job_id: str) -> None:
     """worker 真正執行的東西——薄薄一層 wrapper（design5.md D15）。
 
-    只做四件事：撈 job、依快照組零件、呼叫 run_ingest_job、結束。
+    只做四件事：撈 job、依快照組零件、呼叫 run_gated_ingest_job、結束。
 
     ★ 為什麼 vlm 用 job["ai_backend"] 而不是 dependencies.get_vlm()：
       頁首開關改的是 **web 行程**記憶體裡的 config.AI_BACKEND；worker 是另一個行程，
@@ -66,8 +70,24 @@ def ingest_task(job_id: str) -> None:
       ——庫裡既有的向量都是本機 bge-m3 算的，換一顆就比不出東西。
 
     ★ 這裡**沒有** Celery 的 autoretry（design5.md §4.4）：「同一張圖最多送 VLM 3 次」
-      是 run_ingest_job **內部**的迴圈。在這一層再加自動重試，會讓「已經 INSERT 成功的
+      是入庫任務**內部**的迴圈。在這一層再加自動重試，會讓「已經 INSERT 成功的
       JPEG 被插第二次」。崩潰重送的冪等靠 job 裡的 photo_ids／pages_done，也在那裡。
+
+    ★ gate 與 cloud 為什麼在這裡才拿（design6 D5、D10）：
+      gate  ＝ 隱私閘門。**分類要在檔案出機房之前**，所以它必須由 worker 觸發，
+              不能放進 HTTP 路徑（那會讓 202 變慢，而且 D5 明文禁止）。
+      cloud ＝ 雲端路。CLOUD_ROUTE 預設 off，此時 get_cloud_route() 回一顆
+              「永遠說遠端不可用」的替身，於是每一筆都走 fallback ＝ 增量五那條路。
+      兩個都用 dependencies.xxx() **直接呼叫**（不是 Depends）——這裡不是 HTTP 請求，
+      所以 pytest 靠 monkeypatch 那一管換掉它們（conftest 第四／五道安全網）。
+
+    ★ 為什麼 gate 用 build_privacy_gate_for_backend(job["ai_backend"])，
+      而不是 get_privacy_gate()——**與上面 vlm 那一行同一個理由**（D6、D14）：
+      閘門的短問要跟頁首那顆「AI 模型：本機｜雲端」開關走，而 get_privacy_gate()
+      讀的是 config.AI_BACKEND；worker 是另一個行程，它那份永遠是預設的 "local"。
+      用它建的話，使用者撥到雲端時「看圖走雲端、閘門仍打本機」——**安靜地違反 D6**。
+      入列當下已經把開關值抄進 job 了，閘門與看圖用同一份快照才對得起來。
+      （AWS 那扇門不受這個影響：不管短問打哪裡，只有 NON_SENSITIVE 才進得了 S3。）
     """
     store = dependencies.get_job_store()
     job = store.get(job_id)
@@ -77,12 +97,14 @@ def ingest_task(job_id: str) -> None:
         logger.warning("找不到 job，略過這次派工：job_id=%s", job_id)
         return
 
-    run_ingest_job(
+    gated_ingest.run_gated_ingest_job(
         job_id,
         store=store,
         vlm=dependencies.build_vlm_for_backend(job["ai_backend"]),
         embeddings=dependencies.get_embeddings(),
         now=dependencies.get_now,
+        gate=dependencies.build_privacy_gate_for_backend(job["ai_backend"]),
+        cloud=dependencies.get_cloud_route(),
     )
 
 
@@ -102,7 +124,7 @@ class CeleryDispatcher:
 
 
 @worker_ready.connect
-def _worker啟動時掃一次過期暫存檔(sender=None, **kwargs) -> None:
+def _sweep_stale_staging_on_worker_ready(sender=None, **kwargs) -> None:
     """worker 準備好接工作的那一刻，順手清掉 data/staging 裡的孤兒檔。
 
     worker_ready 是 Celery 的訊號（signal），意思是「worker 初始化完成、可以開始拿工作」。
@@ -115,7 +137,7 @@ def _worker啟動時掃一次過期暫存檔(sender=None, **kwargs) -> None:
     整段包在 try 裡：掃把失敗只是少清幾個垃圾檔，**絕不可以讓 worker 起不來**。
     """
     try:
-        清掉幾個 = staging_service.sweep_stale_staging(dependencies.get_job_store())
-        logger.info("staging 掃把（worker 啟動）：清掉 %d 個過期暫存檔", 清掉幾個)
+        removed_count = staging_service.sweep_stale_staging(dependencies.get_job_store())
+        logger.info("staging 掃把（worker 啟動）：清掉 %d 個過期暫存檔", removed_count)
     except Exception:
         logger.warning("staging 掃把執行失敗，不影響 worker 啟動", exc_info=True)

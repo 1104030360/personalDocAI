@@ -61,7 +61,7 @@ from tests.fakes import FakeVLM, make_pdf_bytes
 def 假看圖(wire_fake_ai):
     """接上「看得懂且建議收據」的假看圖，並把實例交給測試。
 
-    顯式依賴 wire_fake_ai 保證它先跑（六個注入點都已接假件），測後由它統一 clear()。
+    顯式依賴 wire_fake_ai 保證它先跑（七個注入點都已接假件），測後由它統一 clear()。
     回傳實例是為了驗 last_corrections——也就是「router 真的把糾錯清單傳進看圖了」。
     """
     fake = FakeVLM(超市照片)
