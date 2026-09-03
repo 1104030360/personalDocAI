@@ -8,9 +8,12 @@ embedding. Afterwards you can ask in plain language — "上個月在 Target 買
 "show me my receipts" — and LangGraph decides whether to run a filtered lookup or a semantic
 search, with an LLM writing the final answer **in whatever language you asked in**.
 
-**A single-user, fully local, genuinely demo-able side project.** No accounts, no cloud
-storage — the photos and the database live on your own machine (only AI inference can be
-switched between local Ollama and Ollama Cloud).
+**A single-user, local-first, genuinely demo-able side project.** No accounts; the photos,
+the database and the vectors live on your own machine. Photos stay on your machine by
+default — only files the local privacy gate marks non-sensitive may pass briefly through a
+private S3 mailbox while an optional EC2 worker is running, and those objects are deleted as
+soon as the result comes home. AI inference can also be switched between local Ollama and
+Ollama Cloud.
 
 | | |
 |---|---|
@@ -632,7 +635,14 @@ the code, so quietly adding one back turns the suite red:
 - No deleting photos (`openapi.json` contains zero DELETE)
 - No changing a folder after it is decided (the backend answers 409; there is no undo)
 - No conversational memory (every question stands alone)
-- No cloud storage (photos never leave your machine; only AI inference can go to the cloud)
+- No cloud file storage and no cloud backups. S3 is used only as a short-lived mailbox: a
+  photo goes there only when the local privacy gate says non-sensitive **and** the optional
+  EC2 worker is running, and the objects are deleted as soon as the result comes back (a
+  2-day lifecycle rule sweeps up anything missed). Sensitive and uncertain photos never enter
+  that mailbox; the database, the originals and the thumbnails never leave the machine at all.
+  (The header AI switch is a separate door: set to cloud, it still sends a photo's pixels to
+  Ollama Cloud for inference, exactly as before)
+
 - No frontend framework or bundler (plain HTML and vanilla JS)
 - No `alert` / `confirm` / `prompt`
 - No automatic capture, no second model, no tool calling, no writing to Gmail or a calendar

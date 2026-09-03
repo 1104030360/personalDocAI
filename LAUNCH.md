@@ -19,6 +19,7 @@ you do not need to type anything.**
 10. [Troubleshooting](#10-troubleshooting)
 11. [Never do these](#11-never-do-these)
 12. [Cloud worker on the Mac](#12-cloud-worker-on-the-mac)
+13. [Cloud worker (EC2)](#13-cloud-worker-ec2)
 
 ---
 
@@ -550,11 +551,11 @@ Ctrl+C, fix `.env`, start it again.
 is that instance's own `127.0.0.1:11434`. It does work here on the Mac, but the local gemma4
 takes 64–88 s per photo, so this value really exists for a GPU instance (added 2026-09-03;
 it replaces the earlier rule that the worker always used Ollama Cloud).
-No EC2 worker is running yet. When one is set up it will be a **CPU box first** (`t3.xlarge`),
-which keeps `cloud` here — the box just forwards the image to ollama.com — because that box
-is only there to prove the AWS path end to end. A **GPU box** (`g4dn.xlarge`, `local`) comes
-later and only if AWS grants the GPU quota; the machine type does not decide the backend,
-this variable does. With `local` the worker
+A **CPU box** (`t3.xlarge`) is already set up and is normally **stopped**; day to day it
+keeps `cloud` here — the box just forwards the image to ollama.com. You can temporarily
+switch that same box to `local` to try CPU inference (slow; see [section 13](#13-cloud-worker-ec2)).
+A **GPU box** (`g4dn.xlarge`, `local`) comes later and only if AWS grants the GPU quota; the
+machine type does not decide the backend, this variable does. With `local` the worker
 does not need `OLLAMA_API_KEY` at all, but it does need `VLM_MODEL` (an empty model name talks
 to Ollama happily and fails on every single photo). Leaving the value empty, or leaving the line
 out entirely, both mean `cloud`; a *typo* is fatal on purpose — the worker refuses to start
@@ -645,6 +646,237 @@ aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"   #
 
 ---
 
+## 13. Cloud worker (EC2)
+
+An **optional** EC2 worker can take the vision step off this Mac.
+This is the real remote worker; [section 12](#12-cloud-worker-on-the-mac) covers running the
+same program locally on this Mac for development. It is **off by default**:
+the instance is normally **stopped**, and with it stopped the system behaves exactly as it
+did before — every photo is analysed locally. Nothing needs changing to switch back.
+
+Only photos the **local privacy gate** marks `NON_SENSITIVE` are eligible, and only while
+the instance is actually `running`. The gate looks at the *image*, never at the filename.
+Sensitive and uncertain photos never enter the S3 mailbox
+and never reach the EC2 worker. (The header "AI model: local | cloud" switch is a *separate*
+door: with it set to cloud, any photo's pixels are still sent to Ollama Cloud for inference,
+exactly as before — the gate does not touch that switch.)
+
+### Which box is out there
+
+The instance comes in two flavours. **Both run the same user-data script, the same systemd
+unit and the same container image**; only the instance type, the AMI, the root volume size
+and one line of `/opt/personaldocai/worker.env` differ.
+
+| | CPU box (**what is set up today**) | GPU box (waiting on an AWS quota) |
+|---|---|---|
+| instance type | `t3.xlarge` (4 vCPU, 16 GiB, no GPU) | `g4dn.xlarge` (one NVIDIA T4) |
+| AMI | plain Amazon Linux 2023, x86_64 | Deep Learning Base OSS NVIDIA Driver GPU AMI |
+| root volume | 30 GB gp3 | 80 GB gp3 |
+| `WORKER_VLM_BACKEND` | `cloud` — the box forwards the image to ollama.com | `local` — the box runs its **own** Ollama and uses the T4 |
+| on-demand, Tokyo | about **$0.2176 / hour** | about **$0.71 / hour** |
+| when idle | **stopped**, 30 GB disk ≈ $2.9 / month | terminated after the demo, so nothing |
+
+**Right now the GPU box does not exist.** The G-and-VT service quota (`L-DB2E81BA`) is still
+0 on this account and the increase request is with AWS support, so the cloud path was brought
+up and verified on the CPU box first — everything that can actually break (instance-profile
+credentials inside the container, an egress-only security group, pulling from ECR, SSM access,
+systemd starting the worker at boot, the local probe reading the instance state, the amd64
+image running on real x86) is identical on both. The GPU only changes *where the vision step
+runs and how many seconds it takes*. If the quota is refused, the CPU box stays as it is and
+nothing else changes.
+
+The worker's very first log line always says which one you are looking at:
+`… vlm=cloud model=<cloud model>` or `… vlm=local model=gemma4:e2b`. That value comes from
+`WORKER_VLM_BACKEND` in `/opt/personaldocai/worker.env` **on the instance** — nothing on this
+Mac decides it. Both flavours install Ollama at first boot. The systemd unit only waits for
+`127.0.0.1:11434` when `WORKER_VLM_BACKEND=local` (up to 120 s). On the CPU box with the
+usual `cloud` setting that wait is skipped, so a failed first-boot `ollama pull` does not
+block the worker. The pull is non-fatal; if you later switch the same box to `local`, pull
+the model yourself before restarting the service.
+
+### Start it
+
+```bash
+set -a; . ./.env; set +a          # brings AWS_REGION and EC2_WORKER_INSTANCE_ID into the shell
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY   # .env holds the app's minimal key; the CLI must use the admin profile in ~/.aws
+aws ec2 start-instances  --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
+aws ec2 wait instance-running --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
+```
+
+The worker service starts by itself (systemd `personaldocai-worker`, enabled at boot). It
+pulls the `latest` image from ECR on every start, so a freshly deployed image is picked up
+automatically. When `WORKER_VLM_BACKEND=local` it also waits for the local Ollama to answer
+before that pull. Give it about a minute (the very first boot of a *newly created* instance
+takes 5-10 minutes longer, because the machine installs Ollama and downloads the 7 GB model),
+then upload a photo whose **contents** are clearly non-sensitive — a receipt, a menu; the
+gate reads the image, so renaming a file changes nothing. The local worker log should show,
+in this order,
+`route=cloud verdict=NON_SENSITIVE`, then `kind=embed backend=local` (vectors are always computed
+here), then `雲端結果已入庫：photo_id=…` — and **no** `fallback=` line. Those three lines are
+the same on either flavour of the box.
+
+Tip: flip the header "AI model" switch to cloud *before* uploading. The privacy gate follows
+that switch, and on the local model a single gate question takes one to two minutes.
+
+### Optional: try local Ollama on the CPU box
+
+The CPU box can temporarily switch to `WORKER_VLM_BACKEND=local`. This is not a gate; it only
+proves the same unit and mailbox still work when vision runs on that box's own CPU.
+
+CPU `gemma4:e2b` often exceeds 300 s, so **first** raise `CLOUD_RESULT_TIMEOUT_SECONDS` to
+`900` on this Mac and `docker compose … restart worker`. Then SSM in, set
+`WORKER_VLM_BACKEND=local`, `OLLAMA_BASE_URL=http://127.0.0.1:11434`,
+`VLM_MODEL=gemma4:e2b` (no `-mlx`; leave AWS / ECR / S3 / SQS lines alone),
+`sudo ollama pull gemma4:e2b` if the first-boot pull failed, and
+`sudo systemctl restart personaldocai-worker`. The first log line must say
+`vlm=local model=gemma4:e2b`. Upload **one still image** only (no PDF — jobs visibility is
+900 s and there is no heartbeat). Afterwards put `worker.env` back to `cloud`, put
+`CLOUD_RESULT_TIMEOUT_SECONDS` back to `300`, and restart both sides. Do not leave 900 overnight.
+
+### Stop it (do this every time)
+
+```bash
+aws ec2 stop-instances  --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
+aws ec2 wait instance-stopped --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
+```
+
+Forgot whether you stopped it? This lists anything still running:
+
+```bash
+aws ec2 describe-instances --region "$AWS_REGION" \
+  --filters Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].{Id:InstanceId,Type:InstanceType}' --output table
+```
+
+An empty table is what you want at the end of the day.
+
+Stopping the instance shuts it down cleanly: systemd runs `docker stop -t 120 cloud-worker`, the
+worker gets a SIGTERM, logs 「收到停止訊號」 and finishes the message in its hands before
+exiting (the unit runs `docker stop -t 120`, so it has up to 120 s). Should a message ever be cut off, SQS redelivers it
+after the visibility timeout and the worker's idempotency rules pick it up on the next Start —
+nothing is ever inserted twice.
+
+**Stop the CPU box, never terminate it.** Stop keeps the disk, so `worker.env` and the pulled
+image survive and the next Start needs no setup; 30 GB gp3 costs about $2.9 a month, which is
+inside the budget alert. Terminate destroys the instance **and its disk**, and it cannot be
+undone — you would have to rebuild it from `deploy/ec2/user-data.sh` and re-enter the secrets
+by hand. (The GPU box is the exception: its 80 GB disk costs about $7.7 a month, more than the
+whole budget alert, so that one gets terminated after its demo rather than left stopped.)
+
+After a Stop the public IPv4 address is released (and stops being billed) and the next Start
+gets a new one. That is fine here: nothing ever connects *to* the instance (its security
+group has **no inbound rules at all**).
+
+### Check the logs without SSH
+
+There is no SSH on this instance. Use SSM — either an interactive shell:
+
+```bash
+aws ssm start-session --target "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
+# inside:  systemctl status personaldocai-worker --no-pager
+#          sudo docker logs cloud-worker --tail 50
+#          sudo journalctl -u personaldocai-worker -n 50 --no-pager
+#          systemctl is-active ollama    # required only when WORKER_VLM_BACKEND=local
+#          nvidia-smi                    # GPU box only — look for an "ollama" process holding VRAM
+#          ollama ps                     # GPU box only — PROCESSOR should say 100% GPU
+#          exit
+```
+
+…or one-shot from here (no session needed):
+
+```bash
+CMD_ID=$(aws ssm send-command --region "$AWS_REGION" \
+  --instance-ids "$EC2_WORKER_INSTANCE_ID" \
+  --document-name AWS-RunShellScript \
+  --parameters 'commands=["docker logs cloud-worker 2>&1 | tail -n 20"]' \
+  --query 'Command.CommandId' --output text)
+sleep 5
+aws ssm get-command-invocation --region "$AWS_REGION" \
+  --command-id "$CMD_ID" --instance-id "$EC2_WORKER_INSTANCE_ID" \
+  --query 'StandardOutputContent' --output text
+```
+
+The first log line tells you which build is running and which model it will use:
+`cloud_worker 啟動 version=<git sha> region=… bucket=… vlm=cloud model=…`.
+That `version=` is the only reliable way to confirm a deployment landed — do not trust the
+`latest` tag alone. On the CPU box `vlm=cloud` is the day-to-day setting; `vlm=local` is only
+for the optional CPU-inference test above. On the GPU box `vlm=cloud` would mean the
+instance is paying for a T4 and not using it — fix `WORKER_VLM_BACKEND` in
+`/opt/personaldocai/worker.env` and restart the service.
+`aws ssm start-session` needs a plugin the CLI does not bundle:
+`brew install --cask session-manager-plugin` (once per machine).
+
+### Cost notes
+
+| Item | Cost |
+|---|---|
+| `t3.xlarge` (CPU box) while **running** | about **$0.2176 / hour** on-demand in Tokyo. An hour of demoing is about 22 cents; a day you forgot to stop is about **$5.2** |
+| `g4dn.xlarge` (GPU box) while **running** | about **$0.71 / hour**. A day you forgot to stop is about **$17**, a month about **$515** |
+| public IPv4 while **running** | **$0.005 / hour** — every public IPv4 address is billed since 2024-02-01. Released on Stop, so nothing while stopped |
+| 30 GB gp3 root volume while **stopped** (CPU box) | about **$2.9 / month** — inside the $5 budget alert, which is why this box is kept around |
+| 80 GB gp3 root volume while **stopped** (GPU box) | about **$7.7 / month** — above the whole budget alert on its own, which is why that box is terminated instead of stopped |
+| S3 mailbox | objects are deleted as soon as the result comes home; a lifecycle rule expires anything left under `documents/` after 2 days |
+| SQS, ECR, IAM, security group, S3 gateway endpoint | free or negligible at this volume (ECR storage is a few cents a month for one image) |
+
+The account is on the AWS **Paid plan** (upgraded 2026-09-03), so a running instance is billed
+to the card. A budget alert exists (`personaldocai-budget`, $5/month, mail at 80% of both actual
+and forecast). Paid does **not** grant GPU quota; that is a separate request (`L-DB2E81BA`),
+which is why the CPU box came first.
+
+### Never do these
+
+- **Never create a NAT Gateway.** ~$45/month in Tokyo; it would burn the budget in weeks.
+  The instance sits in a public subnet with an auto-assigned public IP and gets out fine.
+- **Never allocate an Elastic IP.** Since 2024-02-01 an Elastic IP is billed for every hour it
+  exists, attached or not — on a machine that is stopped 99% of the time that is pure waste.
+  The auto-assigned address costs nothing while stopped, and we do not need a fixed address.
+- **Never open an inbound rule** (not even SSH on 22). Management is SSM only.
+- **Do not terminate mid-demo.** The fallback demo needs Stop (the disk stays) so that the
+  local worker can be shown falling back with nothing reconfigured.
+- **Never launch a GPU box from a plain Amazon Linux 2023 AMI.** That image has no NVIDIA driver,
+  so Ollama silently falls back to the CPU: it still works, it is just ten times slower, and
+  nothing anywhere says why. Use the Deep Learning Base OSS NVIDIA Driver GPU AMI — and,
+  conversely, do not launch the *CPU* box from the GPU AMI: its snapshot alone is 75 GB, so you
+  would pay for a 80 GB disk you have no use for.
+- **Never expose Ollama on `0.0.0.0`.** It listens on loopback only; the worker container
+  reaches it with `--network host`.
+
+### `.env` keys this uses
+
+Values live in `.env`, which is not in version control. Names only:
+
+```text
+AWS_REGION
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+S3_BUCKET
+SQS_JOBS_QUEUE_URL
+SQS_RESULTS_QUEUE_URL
+EC2_WORKER_INSTANCE_ID
+CLOUD_ROUTE                    # off | assume | ec2 — day to day this is "ec2"
+EC2_PROBE_TTL_SECONDS          # 60
+CLOUD_RESULT_TIMEOUT_SECONDS   # 300
+```
+
+`WORKER_VLM_BACKEND` is **not** one of these: it lives in `/opt/personaldocai/worker.env`
+**on the instance**, next to `OLLAMA_BASE_URL` and `VLM_MODEL`. Nothing on this Mac reads it.
+
+`CLOUD_ROUTE=off` disables the cloud path entirely — the fastest way to rule it out while
+debugging. `assume` skips the running-check and is only for development.
+
+**After changing any of these you must restart the worker container:**
+`docker compose -f compose.yaml -f compose.dev.yaml restart worker`. Two independent reasons:
+the config module reads `.env` once at process start, and the `ec2` route object is built
+behind an `lru_cache` (so the whole process shares one probe cache). Without a restart the
+new values are simply ignored — silently, with no error.
+
+A **stopped instance is not an error state**. With `CLOUD_ROUTE=ec2` the local worker checks
+the instance before every eligible photo (answer cached 60 s) and simply analyses locally
+when it is not running, logging `fallback=local reason=remote_unavailable`. Uploads still
+return 202 and the progress panel looks exactly the same.
+
+---
+
 ## Appendix: current architecture
 
 ```
@@ -706,6 +938,42 @@ aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"   #
         (design5 section 4.1: image bytes NEVER enter Redis or a Celery argument)
      phone ==WebRTC direct== desktop browser -- the camera preview never touches
         the server (increment five left this alone)
+
+   Optional cloud path (only while the EC2 worker is running, and only for photos the
+   local privacy gate marks NON_SENSITIVE -- everything else is analysed locally):
+
+     worker --PutObject--> S3 documents/<job_id>/{context.json,input.*}   (private bucket,
+        |                                                                 BPA on, SSE-S3,
+        |                                                                 2-day lifecycle)
+        +--SendMessage---> SQS personaldocai-jobs   {"job_id","s3_key"}   -- no image bytes
+                                    |
+                                    v
+                     [EC2 x86_64 instance]                        <- normally STOPPED
+                       today: t3.xlarge, plain AL2023, 30 GB
+                       later: g4dn.xlarge + NVIDIA T4, DL Base GPU AMI, 80 GB
+                             systemd personaldocai-worker
+                               docker run --network host <ECR>/...:latest
+                             ollama.service on the host, 127.0.0.1:11434
+                               (the unit waits on :11434 only when WORKER_VLM_BACKEND=local;
+                                on the CPU box with cloud it is unused unless you switch)
+                             no inbound rules at all; egress TCP 443 only
+                             managed via SSM Session Manager (no SSH, no key pair)
+                               |  GetObject input + context
+                               |  vision runs where WORKER_VLM_BACKEND says:
+                               |    cloud -> forwarded to ollama.com   (CPU box today)
+                               |    local -> this box's own Ollama     (GPU box later;
+                               |              also the optional CPU-box test)
+                               |  PutObject documents/<job_id>/result.json
+                               +--SendMessage--> SQS personaldocai-results  {"job_id"}
+                                    |
+                                    v
+     worker <--ReceiveMessage-- results, then GetObject result.json
+        |    embeddings are ALWAYS local bge-m3, never remote
+        +--> INSERT photo + original + thumbnail, delete the three S3 objects, delete the job
+
+   With the instance stopped, none of the above happens: the local worker sees the probe
+   say "not running" and calls the ordinary local ingest path instead. Same 202, same
+   progress panel, same pending wall.
 
    Dev mode (layering compose.dev.yaml) differs in exactly three ways:
      app's command gains --reload, app and worker both bind-mount ./app,
