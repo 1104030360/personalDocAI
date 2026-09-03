@@ -1,5 +1,22 @@
 # Phase 93：GitHub OIDC 與部署角色
 
+> 📌 **2026-09-03 夜裡校準（產品負責人拍板；本 phase 仍不准開工，要等 ★G3）：**
+>
+> Phase 92 已拆成兩段（總覽 §10.2 追認項 **U**）：**92-A** ＝ CPU 機 `t3.xlarge`
+> ＋ `WORKER_VLM_BACKEND=cloud`，**現在就做、收工 Stop**（30 GB ≈ $2.9／月，留給 Phase 94 的 Demo 3）；
+> **92-B** ＝ GPU 機 `g4dn.xlarge` ＋ `local`，**等 G and VT 配額（`L-DB2E81BA`，現況 0、`CASE_OPENED`）**，測完 Terminate。
+> **★G3 在 92-A 之後**，所以本 phase **不必等 GPU 配額**。帳號已升 Paid。
+> 本 phase **仍然零 AWS 運算費**（只建 IAM／OIDC，不開機）。
+>
+> 對本檔的影響（實作時照這幾條，不要照舊的 t4g／只建 arm64／「真機一定是 g4dn」）：
+> 1. **★G3 的 Demo 2b 證據仍是 Stop 後 fallback**（設計契約沒變）。
+>    93 開工時那台 EC2 **通常是 92-A 留下的 `t3.xlarge`、狀態 stopped**（也可能已被 Terminate）。
+>    本 phase **不需要**它 running——stopped、terminated、查無此實例都算過。
+> 2. 手動 build 工人映像是 **多架構**（`linux/amd64,linux/arm64`），不是只 `linux/arm64`。
+> 3. 看圖失敗要先看啟動行的 `vlm=`：92-A 是 `cloud`（查 `OLLAMA_API_KEY`／`OLLAMA_CLOUD_VLM_MODEL`）、
+>    92-B 是 `local`（查 `nvidia-smi`／`ollama`／`VLM_MODEL`）。**兩者皆 x86_64**，多架構那條不變。
+> 4. CD **仍然不准** `StartInstances`／`StopInstances`／`TerminateInstances`。開關機與刪機是人做的。
+
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
 > 本 phase 特別不要做的四件事：
 > ① **不要**寫 `.github/workflows/deploy.yml`（那是 Phase 94；本 phase 只準備「鑰匙」）；
@@ -30,7 +47,7 @@
 | 誰確認 | **產品負責人（人）**，而且必須親眼看過 **Demo 2 與 Demo 2b** |
 | 憑什麼確認 | design6 §0 戊那列：真機 Start → 處理一筆 → Stop；Stop 後下一筆自動本機。逐條指令見總覽 **§5.2**（Demo 2）與 **§5.3**（Demo 2b） |
 | 沒過會怎樣 | Phase 93〜94 停擺。理由：CD 的失敗與工人的失敗**長得一模一樣**（都是「EC2 上沒反應」）。手動部署還沒跑通就加自動部署，除錯時分不清是「新映像沒推上去」還是「工人本來就壞」 |
-| 卡住時怎麼辦 | ① 真機起不來 → 看 `deploy/ec2/user-data.sh`（回 **91**）；② 工人起得來但拿不到訊息 → IAM instance role 的 policy（回 **91**）；③ 拿得到訊息但看圖失敗 → `worker.env` 的 `OLLAMA_API_KEY`（回 **92** 的 Session Manager 步驟）；④ 一切正常但本機沒收到 → 本機 `.env` 的 `CLOUD_ROUTE=ec2` 與 `EC2_WORKER_INSTANCE_ID`（回 **92**）。⚠ **每一輪除錯完都要記得 Stop** |
+| 卡住時怎麼辦 | ① 真機起不來 → 看 `deploy/ec2/user-data.sh`（回 **91／92**）；② 工人起得來但拿不到訊息 → IAM instance role（回 **91**）；③ 拿得到訊息但看圖失敗 → 先看啟動行 `vlm=`：`cloud`（92-A）查 `OLLAMA_API_KEY`／`OLLAMA_CLOUD_VLM_MODEL`；`local`（92-B）查 GPU／Ollama（回 **92**）。⚠ Demo 當下除錯可 Stop；**92-A 收工 Stop、92-B 測完 Terminate**（已拍板） |
 
 > 🚦 **閘門是「人」的動作，實作者不可以自己勾掉。** 指令只是**證據**，
 > 「看過證據、同意往下走」的那個動作必須由產品負責人做出來——
@@ -44,7 +61,7 @@
 
 **現在的痛：** Phase 92 做完之後，改工人的程式碼要做三件事：
 
-1. 在 Mac 上 `docker build --target cloud-worker --platform linux/arm64 …`
+1. 在 Mac 上 `docker buildx build --target cloud-worker --platform linux/amd64,linux/arm64 …`
 2. `docker push` 到 ECR
 3. 用 Session Manager 登進那台 EC2、`sudo systemctl restart personaldocai-worker`
 
@@ -106,7 +123,7 @@ design6 §8 錯誤表第 9 列因此明文寫「**GitHub OIDC 未鎖 `sub` → �
 
 | 出處 | 說的是什麼 | 本 phase 怎麼落地 |
 |---|---|---|
-| **D16**（CI／CD 分開） | 「現有 GitHub Actions CI 不動契約。CD：CI 綠 → **OIDC 短憑證** → build `linux/arm64` → ECR `personaldocai:<git-sha>` → SSM Run Command 在 EC2 上 pull＋重啟」 | 本 phase 只做**「OIDC 短憑證」那一段**：provider ＋ role ＋ 兩份 JSON ＋ GitHub secret。build／push／SSM 的 workflow 是 Phase 94。（ECR repository 名稱依總覽 §2.8 是 `personaldocai-worker`；design6 這裡的 `personaldocai` 是簡寫） |
+| **D16**（CI／CD 分開） | 「現有 GitHub Actions CI 不動契約。CD：CI 綠 → **OIDC 短憑證** → build 多架構映像 → ECR `personaldocai:<git-sha>` → SSM Run Command 在 EC2 上 pull＋重啟」 | 本 phase 只做**「OIDC 短憑證」那一段**：provider ＋ role ＋ 兩份 JSON ＋ GitHub secret。build／push／SSM 的 workflow 是 Phase 94（`linux/amd64,linux/arm64`）。（ECR repository 名稱依總覽 §2.8 是 `personaldocai-worker`；design6 這裡的 `personaldocai` 是簡寫） |
 | **§6 安全與隱私**最後一列 | 「GitHub OIDC role：ECR push、SSM SendCommand、描述該實例。**trust 的 `sub` 鎖 repo＋分支**」 | §4.4 的 `github-deploy-policy.json` 恰好三組動作；§4.3 的 trust JSON 用 `StringEquals` 逐字鎖 |
 | **§8 錯誤表第 9 列** | 「GitHub OIDC 未鎖 `sub` → CD → **不准合併**；trust 必須釘 repo＋branch」 | §4.7 的兩顆掃碼測試（`test_OIDC信任文件的sub逐字鎖住main分支`、`test_OIDC信任文件沒有星號萬用字元`）——測試紅了就 commit 不了、CI 也會紅，這就是「不准合併」在本專案的落地方式（§4.7 末有完整說明） |
 | **總覽 §2.8 裁決** | IAM role（GitHub OIDC）＝ `personaldocai-github-deploy`，檔案 `deploy/aws/github-oidc-trust.json`／`github-deploy-policy.json` | §4.3〜§4.5 逐字沿用這三個名字 |
@@ -127,10 +144,9 @@ design6 §8 錯誤表第 9 列因此明文寫「**GitHub OIDC 未鎖 `sub` → �
 
 - **Phase 74〜92 全部完成**（甲＋乙＋丙＋丁＋戊全段）。
 - **★ 閘門 G3 已由產品負責人通過**（本檔最上面那張表；**沒過不准開工**）。
-- EC2 實例已經建好而且**現在是 `stopped`**（Phase 92 做完 Demo 2／2b 之後有 Stop）。
-  本 phase **不需要**把它開機——建 IAM 東西不碰那台機器。
-- ECR repository `personaldocai-worker` 已存在（Phase 91 建的），而且裡面**已經有一個手動推上去的映像**。
-- `.env` 裡 `EC2_WORKER_INSTANCE_ID` 已經填好（Phase 92 填的）。
+- EC2 實例：**不需要 running**。通常是 92-A 那台 `t3.xlarge` 停著（stopped），也可能已被 Terminate。
+  建 IAM／OIDC 不碰那台機器；`.env` 的 `EC2_WORKER_INSTANCE_ID` 留著或留空都行（stopped／terminated 的 ID 對本 phase 無影響）。
+- ECR repository `personaldocai-worker` 已存在（Phase 91 建的），而且裡面**已經有一個手動推上去的映像**（應是多架構 manifest：amd64＋arm64）。
 - AWS CLI（`aws configure` 的 default profile）指到 **`personaldocai-admin`**（Phase 82 §4.7 設的；本 phase 要建 IAM 東西，最小權限的 `personaldocai-mac` 做不到——它的 key 只在 `.env`）。
 - `gh` 已登入，而且 `origin` 是 `https://github.com/1104030360/personalDocAI.git`。
 
@@ -174,9 +190,12 @@ aws ecr describe-repositories --repository-names personaldocai-worker \
   --region ap-northeast-1 --query 'repositories[0].repositoryUri' --output text
 # 預期：<ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/personaldocai-worker
 
-aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" \
-  --region ap-northeast-1 --query 'Reservations[0].Instances[0].State.Name' --output text
-# 預期：stopped   ← 本 phase 全程都應該是 stopped，不必開機
+# 本 phase 不需要機器 running（92-A 那台通常是 stopped）：
+aws ec2 describe-instances --region ap-northeast-1 \
+  --filters Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].InstanceId' --output text
+# 預期：空。不准是 running。
+# 若 .env 還留著 92-A 的 ID：describe 那一筆應為 stopped（或已 terminate／InvalidInstanceID.NotFound）
 
 ls deploy/aws/
 # 預期看得到：mac-policy.json（82）、worker-role-trust.json、worker-role-policy.json（91）
@@ -193,7 +212,7 @@ ls tests/integration/test_design6_error_paths.py
 |---|---|
 | 開工時 `pytest -q` | ＿＿＿ passed ＋ 0 skipped（應為 **662**＝總覽 §9 Phase 92 那列的累計） |
 | 開工時 `test_design6_error_paths.py` 顆數 | ＿＿＿（總覽 §9 寫 **4**，Phase 90 放的） |
-| EC2 狀態 | ＿＿＿（必須是 `stopped`） |
+| EC2 狀態 | ＿＿＿（應為 `stopped`（92-A 留下的 `t3.xlarge`）／`terminated`／查無／空 ID；**不准 running**） |
 
 ---
 
@@ -767,7 +786,8 @@ EcrLoginTokenIsAccountWide      EcrPushOnlyToTheWorkerRepository SsmRestartOnlyT
 
 **費用影響：**
 IAM 的 role、policy、OIDC provider **全部免費**，沒有數量計費、沒有月費。
-本 phase **不會產生任何 AWS 費用**（也不會扣 Free plan 的點數）——
+本 phase **不會產生任何 AWS 運算費用**（OIDC／IAM 角色是免費的）——
+帳號已升 Paid，但本 phase 不開機。
 它一行 EC2、一 byte S3 都沒有碰。
 
 ### 4.6 把角色 ARN 放進 GitHub secret
@@ -939,7 +959,7 @@ def test_部署用的policy裡沒有寫死帳號ID():
     本 phase 的兩份——之後再多一份也自動納入，不必回來改測試。
 
     帳號 ID 本身不算機密（ARN 到處都是它），但把它寫死進版控有兩個實際壞處：
-      1. 換帳號／重開帳號（Free plan 滿 6 個月會關帳）時要逐檔搜尋取代
+      1. 換帳號／重開帳號時要逐檔搜尋取代
       2. 這個 repo 哪天轉成 public，帳號 ID 就永遠留在 git 歷史裡（改不掉）
     做法是「檔案裡永遠是佔位符，要送給 AWS 的時候才用 sed 展開到 /tmp」。
     """
@@ -1200,7 +1220,7 @@ EOF
         Actions「deploy」（★ Phase 94 才寫這個檔）
              ├─ 換憑證  ◄──── ★ 本 phase（93）準備的就是這一格
              │     secrets.AWS_DEPLOY_ROLE_ARN ＋ trust 的兩個 StringEquals
-             ├─ buildx  linux/arm64  target=cloud-worker      ← 94
+             ├─ buildx  linux/amd64,linux/arm64  target=cloud-worker      ← 94
              ├─ push ECR  <sha> ＋ latest                     ← 94
              └─ ssm send-command  systemctl restart           ← 94
 
@@ -1291,12 +1311,13 @@ EOF
   find data/staging -type f -mmin +1440 2>/dev/null | head    # 預期：無輸出
   ```
 
-- [ ] **EC2 全程沒有被開機**（本 phase 完全不需要它）；**沒有產生任何 AWS 費用**（IAM 全免費）
+- [ ] **EC2 全程沒有被本 phase 開機**；**沒有產生任何 AWS 運算費用**（IAM／OIDC 全免費）
 
   ```bash
-  aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" \
-    --region "$AWS_REGION" --query 'Reservations[0].Instances[0].State.Name' --output text
-  # 預期：stopped
+  aws ec2 describe-instances --region "$AWS_REGION" \
+    --filters Name=instance-state-name,Values=running \
+    --query 'Reservations[].Instances[].InstanceId' --output text
+  # 預期：空。有輸出＝有人忘了關 EC2（92-A 的 t3.xlarge 或 92-B 的 g4dn），立刻處理（本 phase 不該開機）
   ```
 
 - [ ] **沒有自行 commit、沒有把 `unfinish/` 搬進 `finish/`**（除非產品負責人指示）
@@ -1448,7 +1469,7 @@ EOF
 （累計：**662 → 666**，與總覽 §9 一致。）
 
 **下一個 phase：** `phase-94-CD工作流程.md`——把 `.github/workflows/deploy.yml` 寫出來
-（`workflow_run` 綁 `test` → OIDC → QEMU ＋ buildx → `linux/arm64` → ECR `<sha>` ＋ `latest`
+（`workflow_run` 綁 `test` → OIDC → QEMU ＋ buildx → `linux/amd64,linux/arm64` → ECR `<sha>` ＋ `latest`
 → SSM 重啟），追加 6 顆掃碼測試（666 → 672），並做 **Demo 3**。
 Phase 94 會用到本 phase 的兩樣東西，名字不要改：
 

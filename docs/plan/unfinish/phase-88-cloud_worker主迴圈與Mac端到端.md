@@ -1,7 +1,29 @@
 # Phase 88：cloud_worker 主迴圈與 Mac 上的端到端
 
-> ⚠ **2026-09-01：** 閘門看圖不看檔名。端到端請上傳**內容是收據**的圖；
-> `receipt-test.png` 只改檔名、內容是證件，會被判敏感而不進 S3。
+> 📌 **2026-09-02 校準紀錄**（ledger：`.superpowers/sdd/phase0902-2/progress.md`；
+> 事實來源：`.superpowers/sdd/phase0902-2/brief-common.md`）。本檔這一輪改了這些地方：
+>
+> | 裁決 | 落在本檔哪裡 |
+> |---|---|
+> | **R0** 不 commit、用工作樹快照 | §4 步驟 9 從「commit」改成「記快照」；§6 驗收清單改用 `git status --short` |
+> | **R1** 識別字一律英文 | §3／§4 步驟 1／步驟 3 的所有 python 識別字改英文（`_configure_logging`／`_install_stop_signal`／`ScriptedMailbox`／`make_message`／`stop_after_rounds`…）；`test_中文` 名不動、註解與 log 字樣不動 |
+> | **R2** ★G2 條件式通過 | §2 與 §8 補「88 的 Mac 端到端由 controller 親跑通過，是 ★G2 的憑據之一」 |
+> | **R3** AWS／docker／`.env`／restart／煙霧由 controller 親做 | §2 的 `aws_check.py`、§4 步驟 6 整段、§6 需要真連線的三條驗收，全部標上 controller |
+> | **R4** 顆數以 2026-09-02 實查 **644** 起算 | 開工基線 646 → **656**（87 收工）、收工 651 → **661**；總覽 §9 的絕對值寫成「總覽 651（實 661）」 |
+> | **R7** `CLAUDE.md` 的 `CLOUD_ROUTE` 過期句由 **Phase 89** 改 | §4 步驟 8 註明「那三行不歸本 phase 動」 |
+> | **R8** 容器操作走 dev overlay | 所有 `docker compose … restart worker`／`logs` 改成兩個 `-f`（`compose.yaml` ＋ `compose.dev.yaml`） |
+> | **不帶 profile** | 本檔的 `aws` 指令原本就沒帶 `--profile`；`~/.aws` 的 default 就是 admin，維持不帶 |
+>
+> 另外修正的過期事實：`AwsMailbox.__init__` 是**只收關鍵字參數**（實檔有 `*`）、
+> 「已送去雲端」那行 log **有**，但住在 `cloud_ingest.CloudRoute.submit()`（L259，INFO），不在 `gated_ingest`（controller 2026-09-02 實查更正校準者的判斷）、
+> 總覽 §2.4.1 已經把 `run_forever` 收進契約表（§8 原本請 orchestrator 補，已不必）、
+> Phase 84〜87 的前置條件狀態、`scripts/aws_check.py` 的實際輸出字樣。
+
+> ⚠ **2026-09-01 改判：閘門看圖、不看檔名**（總覽 §10 追認項 f，推翻 2026-08-31 的規則版閘門）。
+> 端到端要準備的是**兩張內容不同的合成圖**：一張內容是收據（非敏感）、一張內容是證件（敏感），
+> 檔名叫什麼都不影響判定（§4.6 ⑤ 有現成的 Pillow 產圖指令）。
+> 舊寫法「把任何一張圖複製成 `receipt-test.png`」已經**不成立**——那樣只是改檔名，
+> 閘門看的是圖的內容。
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
 > 本 phase 特別**不要**做這四件事：①不要為了「多跑幾張」加執行緒／`asyncio`／多行程
@@ -55,7 +77,7 @@ Phase 87 寫好的 `process_job_message()` 是一個**只會處理一則訊息**
 | **§0「丁」那一列** | 何時算過：本機模擬工人 jobs→S3→看圖→`result.json`→SendMessage results；本機 Receive 後 GetObject 入庫 | §4.6 的人工端到端逐步驟，**這就是丁段的驗收** |
 | **D12** | EC2 看圖一律 Ollama Cloud，與頁首開關無關 | `main()` 固定建 `vlm_service.OllamaCloudVLM()`，**不看** `config.AI_BACKEND` |
 | **D10** | 遠端關掉＝fallback 本機 | §4.6 收工那一步：改回 `CLOUD_ROUTE=off`；沒改回去的後果寫在 §7 陷阱 3 |
-| **D2／D3** | 閘門在本機、敏感與不確定一律留本機 | §4.6 第 ⑨ 步：傳一張 `身分證.png`，工人那一頭**零反應** |
+| **D2／D3** | 閘門在本機、敏感與不確定一律留本機 | §4.6 第 ⑨ 步：傳一張**內容是證件**的合成圖，工人那一頭**零反應**（檔名不影響判定） |
 | **§2.3** | Receive 用長輪詢（`WaitTimeSeconds` 最多 20 秒） | `LONG_POLL_SECONDS = 20`，測試斷言 `last_wait_seconds` 就是它 |
 | **§9 測試策略** | 「真 AWS 煙霧靠人手」 | 本 phase 的 5 顆自動化測試只測迴圈，真 AWS 全部是 §4.6 的人工步驟 |
 | **§12 Demo 2 的前身** | Demo 2 要 EC2 Start；本 phase 是同一條路、只是工人跑在 Mac 上 | §4.6 的步驟與 Demo 2 幾乎逐條對應，差別只有「工人在哪裡」 |
@@ -67,32 +89,38 @@ Phase 87 寫好的 `process_job_message()` 是一個**只會處理一則訊息**
 
 ## 2. 前置條件
 
-**★ 閘門 G1 已由產品負責人通過。** ★G2 在 **Phase 90 之後**，所以本 phase 還在 G2 之前——
+**★ 閘門 G1（增量六的那一個）已由產品負責人通過**——證據是 Phase 82〜86 都做完了
+（開戶、S3、兩條 SQS、`AwsMailbox`、`CLOUD_ROUTE=assume`），HEAD `bb3921a` 已把 83〜86 收進 commit。
+★G2 在 **Phase 90 之後**，所以本 phase 還在 G2 之前——
 **一台 EC2 都還不能開**（design6 §0 的順序：丁做完、戊前半做完，才輪到 G2）。
 本 phase 只會用到 S3 與 SQS（Phase 84／85 已經建好的），**不會建立任何新的 AWS 資源**。
 
-**要先做完的 phase：**
+> 📌 **本 phase 的 §4.6 端到端就是 ★G2 的兩份憑據之一**（另一份是 Phase 90 的容器端到端；
+> ledger 裁決 R2）。它跑不通就停在這裡回報，不要往 89／90 硬推。
 
-| Phase | 本 phase 會用到它的什麼 |
-|---|---|
-| 84 | S3 bucket（`$S3_BUCKET`）已存在、BPA 全開、Lifecycle 2 天 |
-| 85 | 兩條佇列（`$SQS_JOBS_QUEUE_URL`／`$SQS_RESULTS_QUEUE_URL`）已存在 |
-| 86 | `dependencies.get_cloud_route()` 的 `assume` 分支（本機那一端靠它把檔案送出去） |
-| 87 | `process_job_message()`、`app/workers/` 套件、`tests/unit/test_cloud_worker_unit.py` |
+**要先做完的 phase**（2026-09-02 實查：83〜86 已完成且已進 commit `bb3921a`；87 是本輪的前一棒）：
+
+| Phase | 本 phase 會用到它的什麼 | 現況 |
+|---|---|---|
+| 84 | S3 bucket（`$S3_BUCKET`）已存在、BPA 全開、Lifecycle 2 天 | ✅ 已建 |
+| 85 | 兩條佇列（`$SQS_JOBS_QUEUE_URL`／`$SQS_RESULTS_QUEUE_URL`）已存在 | ✅ 已建 |
+| 86 | `dependencies.get_cloud_route()` 的 `assume` 分支（本機那一端靠它把檔案送出去） | ✅ 已接上（真煙霧過） |
+| 87 | `process_job_message()`、`app/workers/` 套件、`tests/unit/test_cloud_worker_unit.py` | 本輪前一棒 |
 
 **開工前實查基線**（在專案根目錄執行）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 docker compose ps --no-trunc          # 四個服務都要在；db 與 redis 要 Up (healthy)
-pytest --collect-only -q | tail -1    # 預期：646 tests collected
-pytest -q                             # 預期尾巴：646 passed，0 skipped
+pytest --collect-only -q | tail -1    # 預期：656 tests collected
+pytest -q                             # 預期尾巴：656 passed，0 skipped
 git branch --show-current             # 預期：main
 ```
 
-> **開工基線 ＝ 646**（總覽 §9：Phase 87 收工的數字）。
-> 本 phase 結束時應該是 **651**（+5）。交錯做的話絕對數字會不一樣，
-> **要對的是「本 phase 新增 5 顆」**。
+> **開工基線 ＝ 656**（＝ 2026-09-02 實查的 **644** ＋ Phase 87 的 +12；ledger 裁決 R4）。
+> 本 phase 結束時應該是 **661**（+5）——總覽 §9 寫的是 **651（實 661）**，
+> 那個絕對值比實際少 10，只有「本 phase 新增 5 顆」是要對的數字。
+> 交錯做的話絕對數字還會再變，**永遠以「+5」為準**。
 
 **§4.6 的人工端到端另外還需要**（現在先檢查，不要等跑到一半才發現）：
 
@@ -110,14 +138,24 @@ grep -c "^AWS_ENDPOINT_URL" .env
 # 預期印出 0
 
 # ③ 真的連得到 S3 與 SQS（Phase 84／85 寫的檢查腳本）
+#    ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 aws／docker、不改 .env
+#      （這支腳本會**真的**對 AWS 做一次 put→get→delete 與 send→receive→delete）
 python scripts/aws_check.py s3 sqs
-# 預期兩行都印 OK
+# 預期兩行（實際字樣）：
+#   ✅ S3 OK：put → get → 內容一致 → delete → 確認不在了
+#   ✅ SQS OK：兩條佇列都能 send → receive → delete
+#   它的第一行會先印「金鑰來源」——預期是 .env 那把 personaldocai-mac（最小權限）
 
 # ④ 雲端看圖的模型名有設（.env 的 OLLAMA_CLOUD_VLM_MODEL；沒設就會用 VLM_MODEL 的值，
 #    而本機那顆是 MLX 標籤 gemma4:e2b——雲端沒有那個 tag，會 404）
 grep -c "^OLLAMA_CLOUD_VLM_MODEL=." .env
 # 預期印出 1
 ```
+
+> 2026-09-02 實查結果：上面 ①〜④ **全部已經滿足**——七個變數都在（`OLLAMA_CLOUD_VLM_MODEL=gemma4`）、
+> `.env` 沒有 `AWS_ENDPOINT_URL`、`aws_check.py` 的 s3 與 sqs 兩個子命令都 OK。
+> `.env` 另外已經有 `AWS_REGION`／`CLOUD_ROUTE=off`／`CLOUD_RESULT_TIMEOUT_SECONDS=300`
+> （§4.6 ① 要動的就是後面這兩個）；**還沒有** `EC2_WORKER_INSTANCE_ID`（那是 Phase 91 才加）。
 
 > ⚠️ **絕對不要同時跑兩份 pytest**（會互相 `TRUNCATE` 測試庫，症狀是大量看似隨機的
 > 404 與 `TypeError: 'NoneType' object is not subscriptable`）。
@@ -130,14 +168,20 @@ grep -c "^OLLAMA_CLOUD_VLM_MODEL=." .env
 
 1. `app/workers/cloud_worker.py` 加四樣東西（Phase 87 寫的函式**一個字都不改**）：
    - 兩個模組常數 `LONG_POLL_SECONDS = 20`、`RECEIVE_ERROR_BACKOFF_SECONDS = 5`
-   - `_把log印到終端機()`（比照 `app/main.py` 掛 handler）
-   - `_接住停止訊號()`（SIGTERM／SIGINT → 旗標；回傳「該停了嗎」的函式）
+   - `_configure_logging()`（比照 `app/main.py` 掛 handler）
+   - `_install_stop_signal()`（SIGTERM／SIGINT → 旗標；回傳「該停了嗎」的函式）
    - `run_forever(mailbox, vlm, *, should_stop)` 與 `main()`，以及 `if __name__ == "__main__":`
 2. `tests/unit/test_cloud_worker_unit.py` 追加 5 顆（主迴圈那一組）。
 3. **人工端到端**（丁段驗收）：兩個終端機、真 S3／真 SQS／真 Ollama Cloud，
    非敏感走雲端、敏感留本機、Ctrl+C 優雅停。
+   ⚠ **本步驟（§4.6 整段）由 controller 親自執行；實作 subagent 不打 aws／docker、不改 `.env`。**
 4. `LAUNCH.md` 新增第 12 節 "Cloud worker on the Mac"（**英文**）。
 5. `CLAUDE.md` 指令區新增對應的繁中小段。
+
+> **識別字一律英文**（ledger 裁決 R1，產品負責人 2026-09-02 指示）：
+> 本檔所有 python／shell 區塊裡的函式、變數、類別、參數、fixture、shell 變數名都是英文。
+> `test_中文` 的測試函式名維持中文（跟總覽 §2.7 逐字對），註解、docstring、log 字樣、
+> 錯誤訊息也維持中文。
 
 ### 明確不做（防手滑）
 
@@ -159,9 +203,10 @@ grep -c "^OLLAMA_CLOUD_VLM_MODEL=." .env
 
 > 🧪 **順序採 TDD（先紅再綠）**：步驟 1 寫**會紅**的 5 顆 → 步驟 2 跑它看到紅 →
 > 步驟 3 寫實作 → 步驟 4 轉綠 → 步驟 5 全量回歸與 ruff →
-> 步驟 6 **人工端到端**（丁段驗收）→ 步驟 7〜8 文件 → 步驟 9 commit。
+> 步驟 6 **人工端到端**（丁段驗收，⚠ controller 執行）→ 步驟 7〜8 文件 →
+> 步驟 9 **記工作樹快照（不 commit）**。
 
-### - [ ] 步驟 1：先寫會紅的 5 顆測試
+### - [x] 步驟 1：先寫會紅的 5 顆測試
 
 打開 `tests/unit/test_cloud_worker_unit.py`（Phase 87 建的），做兩件事：
 
@@ -184,9 +229,14 @@ from app.workers import cloud_worker
 from tests.fakes import FakeMailbox, FakeVLM, ScriptedVLM, make_pdf_bytes, make_png_bytes
 ```
 
-（`MailboxMessage` 在這裡是**測試**要用的——下面的 helper `一則訊息()` 會 new 它；
+（`MailboxMessage` 在這裡是**測試**要用的——下面的 helper `make_message()` 會 new 它；
 工人本體只在 `TYPE_CHECKING` 底下用它。它**定義在 `cloud_ingest.py`**（Phase 77），
 `aws_mailbox.py` 只是 import 它來用，所以一律回到定義的地方拿，不要繞道。）
+
+⚠ 下面的測試會用到 `RECEIPT_UNDERSTANDING`——那是 **Phase 87 在同一個檔案最上面**
+建的模組常數（一張「Target 收據」的 `PhotoUnderstanding`）。本 phase 只是拿來用，
+不重新定義。**如果 87 收工後那個常數叫別的名字，以實檔為準**（它只是拿來當
+「隨便一個看圖客戶端」的答案卡，5 顆迴圈測試沒有任何一顆真的呼叫 VLM）。
 
 **② 在檔案最後面**（`test_工人不import資料庫與Celery與Redis` 之後）加上這一整段：
 
@@ -194,7 +244,7 @@ from tests.fakes import FakeMailbox, FakeVLM, ScriptedVLM, make_pdf_bytes, make_
 # ---------------- 主迴圈（Phase 88）----------------
 
 
-class 腳本信箱:
+class ScriptedMailbox:
     """只提供主迴圈用得到的那一個方法：receive_job()。
 
     腳本裡每一項可以是三種東西：
@@ -207,23 +257,23 @@ class 腳本信箱:
     排不出「第一次丟例外、第二次才給訊息」這種劇本。而主迴圈要驗的正是那件事。
     """
 
-    def __init__(self, 腳本: list) -> None:
-        self.腳本 = list(腳本)
+    def __init__(self, script: list) -> None:
+        self.script = list(script)
         self.receive_calls = 0
         self.last_wait_seconds: int | None = None
 
     def receive_job(self, wait_seconds: int):
         self.receive_calls += 1
         self.last_wait_seconds = wait_seconds
-        if not self.腳本:
+        if not self.script:
             return None
-        項目 = self.腳本.pop(0)
-        if isinstance(項目, Exception):
-            raise 項目
-        return 項目
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
-def 一則訊息(job_id: str = "job-1") -> MailboxMessage:
+def make_message(job_id: str = "job-1") -> MailboxMessage:
     """做一則長得跟 SQS 收到的一模一樣的訊息（三個欄位）。"""
     return MailboxMessage(
         job_id=job_id,
@@ -232,18 +282,18 @@ def 一則訊息(job_id: str = "job-1") -> MailboxMessage:
     )
 
 
-def 跑幾輪就停(次數: int):
-    """回一個 should_stop：前 N 次回 False（＝再跑一輪），之後永遠 True。
+def stop_after_rounds(rounds: int):
+    """回一個 should_stop：前 N 輪回 False（＝再跑一輪），之後永遠 True。
 
     正式執行時 should_stop 是訊號旗標；測試用這個，所以整組迴圈測試是毫秒等級，
     不必真的送訊號、也不必等 20 秒的長輪詢。
     """
-    剩下 = {"次數": 次數}
+    remaining = {"rounds": rounds}
 
     def should_stop() -> bool:
-        if 剩下["次數"] <= 0:
+        if remaining["rounds"] <= 0:
             return True
-        剩下["次數"] -= 1
+        remaining["rounds"] -= 1
         return False
 
     return should_stop
@@ -251,38 +301,42 @@ def 跑幾輪就停(次數: int):
 
 def test_主迴圈收到None時繼續等下一則(monkeypatch):
     """佇列空著是**常態**（一天可能只上傳幾張），不可以當成錯誤或直接退出。"""
-    處理過的 = []
+    processed = []
     monkeypatch.setattr(
-        cloud_worker, "process_job_message", lambda 信箱, 訊息, 看圖: 處理過的.append(訊息)
+        cloud_worker,
+        "process_job_message",
+        lambda mailbox, message, vlm: processed.append(message),
     )
-    信箱 = 腳本信箱([None, None, 一則訊息()])
+    mailbox = ScriptedMailbox([None, None, make_message()])
 
-    cloud_worker.run_forever(信箱, FakeVLM(收據理解), should_stop=跑幾輪就停(3))
+    cloud_worker.run_forever(
+        mailbox, FakeVLM(RECEIPT_UNDERSTANDING), should_stop=stop_after_rounds(3)
+    )
 
-    assert 信箱.receive_calls == 3, "空手而回時要繼續跑下一圈"
-    assert [訊息.job_id for 訊息 in 處理過的] == ["job-1"]
+    assert mailbox.receive_calls == 3, "空手而回時要繼續跑下一圈"
+    assert [message.job_id for message in processed] == ["job-1"]
     # 長輪詢：一定要帶 20 秒（AWS 上限）。帶 0 的話會變成短輪詢，一直空轉打 API
-    assert 信箱.last_wait_seconds == cloud_worker.LONG_POLL_SECONDS == 20
+    assert mailbox.last_wait_seconds == cloud_worker.LONG_POLL_SECONDS == 20
 
 
 def test_主迴圈收到訊息就呼叫process_job_message(monkeypatch):
     """迴圈自己不做任何判斷——訊息原封不動、連同信箱與看圖客戶端一起交出去。"""
-    收到的 = []
+    received = []
     monkeypatch.setattr(
         cloud_worker,
         "process_job_message",
-        lambda 信箱, 訊息, 看圖: 收到的.append((信箱, 訊息, 看圖)),
+        lambda mailbox, message, vlm: received.append((mailbox, message, vlm)),
     )
-    信箱 = 腳本信箱([一則訊息("job-9")])
-    看圖 = FakeVLM(收據理解)
+    mailbox = ScriptedMailbox([make_message("job-9")])
+    vlm = FakeVLM(RECEIPT_UNDERSTANDING)
 
-    cloud_worker.run_forever(信箱, 看圖, should_stop=跑幾輪就停(1))
+    cloud_worker.run_forever(mailbox, vlm, should_stop=stop_after_rounds(1))
 
-    assert len(收到的) == 1
-    傳進去的信箱, 傳進去的訊息, 傳進去的看圖 = 收到的[0]
-    assert 傳進去的信箱 is 信箱
-    assert 傳進去的訊息.job_id == "job-9"
-    assert 傳進去的看圖 is 看圖, "看圖客戶端要原樣傳進去，不可以在迴圈裡自己建一個"
+    assert len(received) == 1
+    passed_mailbox, passed_message, passed_vlm = received[0]
+    assert passed_mailbox is mailbox
+    assert passed_message.job_id == "job-9"
+    assert passed_vlm is vlm, "看圖客戶端要原樣傳進去，不可以在迴圈裡自己建一個"
 
 
 def test_停止旗標讓主迴圈退出():
@@ -291,11 +345,11 @@ def test_停止旗標讓主迴圈退出():
     先要了訊息才檢查旗標的話，會多拿一則出來卻沒人做：它會隱形 900 秒才回到佇列，
     看起來就像「有一張照片卡住了十五分鐘」。
     """
-    信箱 = 腳本信箱([一則訊息()])
+    mailbox = ScriptedMailbox([make_message()])
 
-    cloud_worker.run_forever(信箱, FakeVLM(收據理解), should_stop=lambda: True)
+    cloud_worker.run_forever(mailbox, FakeVLM(RECEIPT_UNDERSTANDING), should_stop=lambda: True)
 
-    assert 信箱.receive_calls == 0, "已經被要求停止就不該再去要訊息"
+    assert mailbox.receive_calls == 0, "已經被要求停止就不該再去要訊息"
 
 
 def test_單次例外不會讓主迴圈死掉(monkeypatch, caplog):
@@ -307,22 +361,26 @@ def test_單次例外不會讓主迴圈死掉(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     # backoff 平常是 5 秒，測試裡不要真的睡
     monkeypatch.setattr(cloud_worker, "RECEIVE_ERROR_BACKOFF_SECONDS", 0)
-    處理過的 = []
+    processed = []
 
-    def 會爆一次的處理(信箱, 訊息, 看圖):
-        if 訊息.job_id == "job-炸":
+    def exploding_process(mailbox, message, vlm):
+        if message.job_id == "job-boom":
             raise RuntimeError("S3 突然不通")
-        處理過的.append(訊息.job_id)
+        processed.append(message.job_id)
 
-    monkeypatch.setattr(cloud_worker, "process_job_message", 會爆一次的處理)
-    信箱 = 腳本信箱([RuntimeError("SQS 憑證過期"), 一則訊息("job-炸"), 一則訊息("job-好")])
+    monkeypatch.setattr(cloud_worker, "process_job_message", exploding_process)
+    mailbox = ScriptedMailbox(
+        [RuntimeError("SQS 憑證過期"), make_message("job-boom"), make_message("job-ok")]
+    )
 
-    cloud_worker.run_forever(信箱, FakeVLM(收據理解), should_stop=跑幾輪就停(3))
+    cloud_worker.run_forever(
+        mailbox, FakeVLM(RECEIPT_UNDERSTANDING), should_stop=stop_after_rounds(3)
+    )
 
-    assert 處理過的 == ["job-好"], "前兩輪都爆了，但迴圈要活著跑到第三輪"
-    assert 信箱.receive_calls == 3
-    炸掉的log = [紀錄 for 紀錄 in caplog.records if 紀錄.levelno >= logging.ERROR]
-    assert len(炸掉的log) == 2, "兩次失敗都要留下 log，不可以安靜地吞掉"
+    assert processed == ["job-ok"], "前兩輪都爆了，但迴圈要活著跑到第三輪"
+    assert mailbox.receive_calls == 3
+    error_records = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(error_records) == 2, "兩次失敗都要留下 log，不可以安靜地吞掉"
 
 
 def test_啟動時印出version與region與bucket(monkeypatch, caplog):
@@ -336,18 +394,20 @@ def test_啟動時印出version與region與bucket(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(config, "WORKER_VERSION", "abc1234")
     monkeypatch.setattr(config, "AWS_REGION", "ap-northeast-1")
-    monkeypatch.setattr(config, "S3_BUCKET", "personaldocai-mailbox-測試")
+    monkeypatch.setattr(config, "S3_BUCKET", "personaldocai-mailbox-test")
 
-    cloud_worker.run_forever(腳本信箱([]), FakeVLM(收據理解), should_stop=lambda: True)
+    cloud_worker.run_forever(
+        ScriptedMailbox([]), FakeVLM(RECEIPT_UNDERSTANDING), should_stop=lambda: True
+    )
 
-    啟動行 = [訊息 for 訊息 in caplog.messages if 訊息.startswith("cloud_worker 啟動 ")]
-    assert len(啟動行) == 1, f"預期恰好一行啟動 log，實得：{caplog.messages}"
-    assert "version=abc1234" in 啟動行[0]
-    assert "region=ap-northeast-1" in 啟動行[0]
-    assert "bucket=personaldocai-mailbox-測試" in 啟動行[0]
+    startup_lines = [line for line in caplog.messages if line.startswith("cloud_worker 啟動 ")]
+    assert len(startup_lines) == 1, f"預期恰好一行啟動 log，實得：{caplog.messages}"
+    assert "version=abc1234" in startup_lines[0]
+    assert "region=ap-northeast-1" in startup_lines[0]
+    assert "bucket=personaldocai-mailbox-test" in startup_lines[0]
 ```
 
-### - [ ] 步驟 2：跑它，親眼看到紅
+### - [x] 步驟 2：跑它，親眼看到紅
 
 ```bash
 pytest tests/unit/test_cloud_worker_unit.py -q
@@ -362,9 +422,9 @@ AttributeError: module 'app.workers.cloud_worker' has no attribute 'run_forever'
 （`LONG_POLL_SECONDS`／`RECEIVE_ERROR_BACKOFF_SECONDS` 也還不存在，
 錯誤訊息可能是這兩個其中之一，都算正確的紅。）
 
-### - [ ] 步驟 3：寫實作
+### - [x] 步驟 3：寫實作
 
-打開 `app/workers/cloud_worker.py`。**Phase 87 寫的七個函式一個字都不改**，
+打開 `app/workers/cloud_worker.py`。**Phase 87 寫的函式一個字都不改**，
 只動 import 區、加兩個常數、在檔案最後面加三個函式與一個 `__main__` 區塊。
 
 **① 檔案最上面的 import 區，本 phase 結束時的完整長相：**
@@ -414,8 +474,8 @@ RECEIVE_ERROR_BACKOFF_SECONDS = 5
 **③ 檔案最後面加這三個函式與 `__main__` 區塊（完整內容）：**
 
 ```python
-def _把log印到終端機() -> None:
-    """讓 app.* 的 INFO log 出現在終端機（寫法與 app/main.py 完全一樣）。
+def _configure_logging() -> None:
+    """讓 app.* 的 INFO log 出現在終端機（寫法與 app/main.py L26〜33 完全一樣）。
 
     工人是**獨立行程**：沒有 uvicorn、也沒有 Celery 幫忙配置 logging。
     什麼都不做的話，Python 的最後防線只會印 WARNING 以上——
@@ -426,15 +486,15 @@ def _把log印到終端機() -> None:
       app.workers.cloud_worker，掛在 "app" 上就一起收得到，
       連 vlm_service 與 ai_timing 的 log 也一起有——與 app/main.py 同一個道理。
     """
-    工人logger = logging.getLogger("app")
-    if not 工人logger.handlers:
+    worker_logger = logging.getLogger("app")
+    if not worker_logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
-        工人logger.addHandler(handler)
-        工人logger.setLevel(logging.INFO)
+        worker_logger.addHandler(handler)
+        worker_logger.setLevel(logging.INFO)
 
 
-def _接住停止訊號() -> Callable[[], bool]:
+def _install_stop_signal() -> Callable[[], bool]:
     """把 SIGTERM 與 SIGINT 接起來，回傳一個「該停了嗎」的函式。
 
     SIGTERM ＝ docker stop／systemctl stop 送的「請你收工」；
@@ -451,22 +511,22 @@ def _接住停止訊號() -> Callable[[], bool]:
       給自己，行程立刻結束（SIGINT 的退出碼是 130、SIGTERM 是 143）。
       代價是手上那一則可能沒刪，不過它 900 秒後會自己回到佇列，不會不見。
     """
-    狀態 = {"要停了": False}
+    state = {"stopping": False}
 
-    def 處理(signum, frame) -> None:
-        if 狀態["要停了"]:
+    def _handle_signal(signum, frame) -> None:
+        if state["stopping"]:
             # 第二次：使用者等不及了。先還原成系統預設的處理方式（＝直接結束行程），
             # 再把同一個訊號補發給自己——這一行之後就不會再回來了。
             logger.warning("再收到一次停止訊號，直接中斷")
             signal.signal(signum, signal.SIG_DFL)
             signal.raise_signal(signum)
             return
-        狀態["要停了"] = True
+        state["stopping"] = True
         logger.info("cloud_worker 收到停止訊號 signal=%s，做完手上這一則就退出", signum)
 
-    signal.signal(signal.SIGTERM, 處理)
-    signal.signal(signal.SIGINT, 處理)
-    return lambda: 狀態["要停了"]
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+    return lambda: state["stopping"]
 
 
 def run_forever(
@@ -523,27 +583,33 @@ def main() -> None:
       不會把 AWS SDK 一起拉進來，單元測試完全不必碰 boto3。
       理由與 dependencies.get_task_dispatcher() 相同。
 
+    ★ AwsMailbox.__init__ 的參數**全部是關鍵字**（實檔簽章第一個位置就是 `*`），
+      所以下面一定要寫 bucket=／jobs_queue_url=／results_queue_url=／region=，
+      照順序丟位置參數會 TypeError。
+
     ★ 看圖固定用 OllamaCloudVLM（design6 D12）：EC2 沒有 GPU、也不裝本機 Ollama。
       這裡**不看** config.AI_BACKEND——那顆頁首開關管的是本機那條路（D6），
       而且它是 web 行程記憶體裡的狀態，這個行程根本讀不到。
+      ⚠ 這裡**不**經過 app.dependencies：那個模組檔頭就 import ingest_job_store（→ redis），
+        工人不准把 redis 拉進來（D11）。直接跟 vlm_service 要即可。
     """
-    _把log印到終端機()
+    _configure_logging()
 
-    缺少 = [
-        名稱
-        for 名稱, 值 in (
+    missing = [
+        name
+        for name, value in (
             ("S3_BUCKET", config.S3_BUCKET),
             ("SQS_JOBS_QUEUE_URL", config.SQS_JOBS_QUEUE_URL),
             ("SQS_RESULTS_QUEUE_URL", config.SQS_RESULTS_QUEUE_URL),
             ("OLLAMA_API_KEY", config.OLLAMA_API_KEY),
         )
-        if not 值
+        if not value
     ]
-    if 缺少:
+    if missing:
         # 早點、大聲地壞掉。少了佇列 URL 的話 boto3 會丟一句看不懂的 ParamValidationError；
         # 少了 OLLAMA_API_KEY 更慘——每張圖都 401、看三次、然後標成「看不懂」，
         # 從 log 上看起來像「AI 變笨了」。
-        raise SystemExit(f"cloud_worker 無法啟動：.env 少了這些設定 {'、'.join(缺少)}")
+        raise SystemExit(f"cloud_worker 無法啟動：.env 少了這些設定 {'、'.join(missing)}")
 
     from app.services.aws_mailbox import AwsMailbox
 
@@ -553,7 +619,7 @@ def main() -> None:
         results_queue_url=config.SQS_RESULTS_QUEUE_URL,
         region=config.AWS_REGION,
     )
-    run_forever(mailbox, vlm_service.OllamaCloudVLM(), should_stop=_接住停止訊號())
+    run_forever(mailbox, vlm_service.OllamaCloudVLM(), should_stop=_install_stop_signal())
 
 
 if __name__ == "__main__":
@@ -564,7 +630,7 @@ if __name__ == "__main__":
     main()
 ```
 
-### - [ ] 步驟 4：跑新測試，看它轉綠
+### - [x] 步驟 4：跑新測試，看它轉綠
 
 ```bash
 pytest tests/unit/test_cloud_worker_unit.py -v
@@ -572,13 +638,13 @@ pytest tests/unit/test_cloud_worker_unit.py -v
 
 預期最後一行：`15 passed`（Phase 87 的 10 顆 ＋ 本 phase 的 5 顆）。
 
-### - [ ] 步驟 5：全量回歸與 ruff
+### - [x] 步驟 5：全量回歸與 ruff
 
 ```bash
 pytest -q
 ```
 
-預期：**開工基線 ＋ 5**（＝651），全綠、0 skipped。
+預期：**開工基線 ＋ 5**（＝**661**；總覽 §9 寫 651（實 661）），全綠、0 skipped。
 
 ```bash
 AWS_ENDPOINT_URL=http://127.0.0.1:9 \
@@ -596,6 +662,10 @@ ruff format --check app tests scripts && ruff check app tests scripts
 
 ### - [ ] 步驟 6：人工端到端（**丁段的驗收**，真 S3／真 SQS／真 Ollama Cloud）
 
+> ⚠ **本步驟由 controller 親自執行；實作 subagent 不打 aws／docker、不改 `.env`、不跑人工煙霧**
+> （本輪裁決 R3）。整個步驟 6 從頭到尾都是 controller 的事——底下每一個小步驟都算。
+> 它同時是 **★G2 的憑據之一**（裁決 R2）：這一段跑不通就停在本 phase 回報，不要往 89／90 推。
+
 ```text
 ┌─ ⚠️ 開始之前先讀這三句 ────────────────────────────────────────────────
 │
@@ -603,14 +673,15 @@ ruff format --check app tests scripts && ruff check app tests scripts
 │    SQS 的 Send／Receive／Delete）。這些呼叫在 Free plan 的點數下幾乎不花錢
 │    （每則訊息、每個物件都是千分之一美分等級），但它們是真的。
 │    **不會**開任何 EC2——那要等 ★G2 之後。
-│ 2. 全程只會有**一張測試照片**進入雲端管線。做完 S3 應該是空的、兩條佇列都是 0 則。
+│ 2. 全程只會有**兩張測試照片**進入系統（一張非敏感走雲端、一張敏感留本機）。
+│    做完 S3 應該是空的、兩條佇列都是 0 則。
 │ 3. **收工一定要把 .env 的 CLOUD_ROUTE 改回 off 並 restart worker。**
 │    忘了改的話，之後每一張非敏感照片都會先送去 S3、等到逾時才 fallback
-│    ——照片還是會入庫，但每張慢 5 分鐘（見 §7 陷阱 3）。
+│    ——照片還是會入庫，但每張慢好幾分鐘（見 §7 陷阱 3）。
 └────────────────────────────────────────────────────────────────────────
 ```
 
-- [ ] **① 先把逾時調短**（萬一哪裡卡住，不必等 5 分鐘）。編輯 `.env`：
+- [x] **① 先把逾時調短**（萬一哪裡卡住，不必等 5 分鐘）。編輯 `.env`（**controller 親自改**）：
 
 ```ini
 CLOUD_ROUTE=assume
@@ -619,18 +690,42 @@ CLOUD_RESULT_TIMEOUT_SECONDS=30
 
   `assume` ＝「假設遠端開著、不做探測」（總覽 §2.4.2）。
   現在還沒有 `Ec2Probe`（那是 Phase 89），所以只能用它。
+  這兩行改之前的值是 `off` 與 `300`（2026-09-02 實查），⑪ 要改回去。
 
-- [ ] **② 讓本機那條路吃到新設定。** 只需要重啟 `worker` 容器——
+- [x] **② 讓本機那條路吃到新設定。** 只需要重啟 `worker` 容器——
       `get_cloud_route()` 只有 Celery 任務會呼叫，`app` 那個行程根本用不到它：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-docker compose -f compose.yaml restart worker
-# 開發模式的話：docker compose -f compose.yaml -f compose.dev.yaml restart worker
-docker compose ps --no-trunc | grep worker      # 確認它回來了
+# 現況（2026-09-02 實查）是**開發模式**（app 帶 --reload、worker bind-mount），
+# 所以兩個 -f 都要帶；少帶 compose.dev.yaml 會把服務切回常駐模式的定義
+docker compose -f compose.yaml -f compose.dev.yaml restart worker
+docker compose ps --no-trunc | grep worker      # 確認它回來了（COMMAND 要有 --concurrency=2）
 ```
 
-- [ ] **③ 終端機 A：把工人跑起來。**
+- [x] **②b 把頁首那顆「AI 模型」開關撥到雲端**（可選，但強烈建議）。
+      隱私閘門是**同一顆看圖模型的一次短問**（design6 D4），而它**跟著頁首開關走**（D6）：
+      本機 gemma4 問一次要 **1〜2 分鐘**（Phase 78 實測 99.6 秒），雲端只要 **0.7 秒**。
+      撥到雲端之後整段煙霧從「等好幾分鐘」變成「等幾秒」：
+
+```bash
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"cloud"}'
+# 預期：{"backend":"cloud","cloud_configured":true}
+```
+
+  ⚠ 這扇門與 Privacy Gate 是**兩件事**（design6 §0 六禁之一：不准拿閘門去關這顆開關）。
+  它只影響「閘門用哪一顆模型問」與「本機路看圖用哪一顆」；
+  **雲端工人永遠走 Ollama Cloud**（D12），跟這顆開關無關。
+  ⚠ 開關是 `app` 行程記憶體裡的狀態，值在**上傳當下**被抄進 job 的 `ai_backend` 快照
+  （design5 D14 ／總覽 §10.2 追認項 S），所以要**先撥、再上傳**。
+  ⑪ 收工時記得撥回 `{"backend":"local"}`（或 restart app）。
+  ⚠ **想清楚再撥**：開關在 `cloud` 時，**閘門那一次短問是把（縮小過的）圖送到 ollama.com**——
+  也就是連 ⑨ 那張「敏感」圖也會離開這台機器一次（去被判定）。這是 design6 D6 既有的行為
+  （閘門跟著開關走），不是本 phase 引入的；煙霧用的是**全假欄位的合成圖**，所以沒有真資料外流。
+  真的介意的話就不要撥，代價是每張圖多等 1〜2 分鐘。
+
+- [x] **③ 終端機 A：把工人跑起來。**
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -638,9 +733,11 @@ python -m app.workers.cloud_worker
 ```
 
   ⚠ 這個視窗**不要** `set -a; . ./.env`、也**不要** `unset`：工人是自己讀 `.env` 的，
-  而且它要的正是 `.env` 裡那把 `personaldocai-mac` 的 key（Phase 82 給程式用的最小權限身分）。
+  而且它要的正是 `.env` 裡那把 `personaldocai-mac` 的 key（Phase 82 給程式用的最小權限身分；
+  總覽 §10.2 追認項 N 已經把工人端要的四個 SQS 動作補進那份 policy）。
   「載入 `.env` 再 `unset`」只給**打 `aws` 指令的那個視窗**用——那個視窗要用的是
-  `~/.aws` 裡 `personaldocai-admin` 的 default profile。兩種身分別混在同一個視窗。
+  `~/.aws` 的 default profile（＝ `personaldocai-admin`，**不必也不要**加 `--profile`：
+  這台機器沒有叫那個名字的具名 profile，加了會 `ProfileNotFound`）。兩種身分別混在同一個視窗。
 
   預期**立刻**印出一行（然後就安靜地等訊息，那是對的）：
 
@@ -658,42 +755,96 @@ INFO:     cloud_worker 啟動 version=dev region=ap-northeast-1 bucket=personald
   | `cloud_worker 無法啟動：.env 少了這些設定 …` | `.env` 少了那幾個變數 | 回 §2 的檢查清單 |
   | `ModuleNotFoundError: No module named 'app'` | 用了 `python app/workers/cloud_worker.py`，**或**不是在專案根目錄下 `python -m`（`app` 沒裝進 venv，`-m` 只把目前目錄放進 `sys.path`） | `cd /Users/linjunting/personalDocAI` 之後一定用 `python -m app.workers.cloud_worker` |
   | 啟動行印出來了，接著**每 5 秒重複一段** `向 jobs 佇列要訊息失敗` 的 traceback，裡面是 `NoCredentialsError`／`InvalidClientTokenId` | `.env` 的 `AWS_ACCESS_KEY_ID`／`AWS_SECRET_ACCESS_KEY` 缺了或值打錯（Phase 82 那把 `personaldocai-mac` 的 key）。工人**不會死**——這是刻意的（EC2 上憑證暫時失效時它要撐著），所以症狀是一直重試 | Ctrl+C 停掉、修好 `.env` 再跑。`.env` 是**從 `app/core/` 往上找**的，跟你在哪個目錄啟動無關 |
+  | `AccessDenied … sqs:ReceiveMessage` | 那把 mac key 的 policy 少了工人端的四個動作（總覽 §10.2 追認項 N） | 用 admin 身分補 `deploy/aws/mac-policy.json` 的對應條目（那是 Phase 82 的事，**不在本 phase 範圍**） |
   | `EndpointConnectionError: …127.0.0.1:9` | `.env` 裡有 `AWS_ENDPOINT_URL`（那是 pytest 專用的死埠） | 把那一行刪掉 |
 
-- [ ] **④ 終端機 B：看本機 worker 容器的 log。**
+- [x] **④ 終端機 B：看本機 worker 容器的 log。**
 
 ```bash
-docker compose logs -f worker
+docker compose -f compose.yaml -f compose.dev.yaml logs -f worker
 ```
 
-  `-f` ＝跟著看；`Ctrl+C` 只離開 log，容器繼續跑。
+  `-f worker` 前面那兩個 `-f` 是**檔案**（compose 疊加），最後那個 `-f` 才是「跟著看」。
+  `Ctrl+C` 只離開 log，容器繼續跑。
 
-- [ ] **⑤ 準備一張檔名明確非敏感的圖。** 檔名**很重要**——規則版閘門只看檔名
-      （總覽 §10 追認項 f）。把任何一張 PNG 複製成 `receipt-test.png`：
+- [x] **⑤ 準備兩張內容不同的合成圖。**
+      **檔名完全不影響判定**——2026-09-01 產品負責人改判之後，閘門是把圖縮小、
+      交給同一顆看圖模型問一句短問題（總覽 §10 追認項 f、design6 D4）。
+      所以不能像舊版那樣「把任何一張圖複製成 `receipt-test.png`」，要**畫兩張內容不一樣的圖**：
 
 ```bash
-cp <任意一張圖.png> ~/Desktop/receipt-test.png
+cd /Users/linjunting/personalDocAI && source .venv/bin/activate
+python - <<'PY'
+from PIL import Image, ImageDraw, ImageFont
+
+FONT = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 40)
+
+
+def draw(lines, path):
+    image = Image.new("RGB", (900, 620), "white")
+    pen = ImageDraw.Draw(image)
+    for index, line in enumerate(lines):
+        pen.text((60, 60 + index * 60), line, fill="black", font=FONT)
+    image.save(path)
+    print("wrote", path)
+
+
+# 非敏感：一張看起來就是收據的圖
+draw(
+    [
+        "RECEIPT",
+        "TARGET STORE  #1042",
+        "2026-08-10  14:32",
+        "",
+        "Cola            1.99",
+        "Chips           3.49",
+        "----------------------",
+        "TOTAL           5.48",
+    ],
+    "/tmp/smoke-receipt.png",
+)
+
+# 敏感：一張看起來就是證件的圖（只有假資料，不要用真的證件）
+draw(
+    [
+        "REPUBLIC OF EXAMPLE",
+        "NATIONAL IDENTITY CARD",
+        "",
+        "Name:  TEST PERSON",
+        "ID No: A123456789",
+        "Date of Birth: 1990-01-01",
+        "Issued: 2020-05-05",
+    ],
+    "/tmp/smoke-id-card.png",
+)
+PY
 ```
 
-- [ ] **⑥ 上傳（第三個終端機視窗，或用瀏覽器）：**
+  ⚠ **不要用真的證件拍照**。閘門要判的是「這看起來像不像敏感文件」，
+  上面那張全是假欄位的合成圖就夠了。
+  ⚠ 合成圖畫得太抽象（例如只有幾個色塊）會被判成 `UNCERTAIN` → 走本機，
+  那不是壞掉、是規格（design6 D3：不確定一律留本機）。真的判錯方向時，
+  先看 §7 陷阱 9，不要去改閘門。
+
+- [x] **⑥ 上傳非敏感那一張（第三個終端機視窗，或用瀏覽器）：**
 
 ```bash
 curl -k -s -w '\n%{http_code}\n' \
-  -F "file=@$HOME/Desktop/receipt-test.png" \
+  -F "file=@/tmp/smoke-receipt.png" \
   https://127.0.0.1:8000/photos
 ```
 
   預期最後一行是 `202`，body 恰三鍵：
 
 ```json
-{"job_id": "…32 個十六進位字…", "filename": "receipt-test.png", "content_type": "image/png"}
+{"job_id": "…32 個十六進位字…", "filename": "smoke-receipt.png", "content_type": "image/png"}
 ```
 
-- [ ] **⑦ 終端機 A（工人）應該在幾秒內動起來：**
+- [x] **⑦ 終端機 A（工人）應該在幾秒內動起來：**
 
 ```text
 INFO:     AI 開始 kind=vlm backend=cloud model=gemma4
-INFO:     AI 結束 kind=vlm backend=cloud model=gemma4 elapsed_s=2.1 ok=true understood=true text_chars=…
+INFO:     AI 結束 kind=vlm backend=cloud model=gemma4 elapsed_s=2.1 ok=true understood=true text_chars=… item_count=…
 INFO:     job <job_id>：result.json 已放好、results 已送出（worker_version=dev）
 ```
 
@@ -704,7 +855,11 @@ INFO:     job <job_id>：result.json 已放好、results 已送出（worker_vers
   - `elapsed_s` 大約 **1〜3 秒**（雲端；本機 gemma4 是 64〜88 秒）
   - 沒有任何 `kind=embed` ← 向量不在這裡算（D13）
 
-- [ ] **⑧ 終端機 B（本機 worker 容器）應該接著動：**
+  （`AI 開始`／`AI 結束` 這兩行是 Phase 87 的 `_understand_with_retries` 用
+  `ai_timing.log_ai("vlm", target=vlm_service.vlm_timing_target(vlm))` 包出來的；
+  `understood=…`／`text_chars=…`／`item_count=…` 是它設在 `note` 上的欄位。）
+
+- [x] **⑧ 終端機 B（本機 worker 容器）應該接著動：**
 
 ```text
 INFO:     job <job_id> route=cloud verdict=NON_SENSITIVE
@@ -714,12 +869,24 @@ INFO:     AI 結束 kind=embed backend=local model=bge-m3 elapsed_s=0.4 ok=true
 INFO:     job <job_id> 雲端結果已入庫：photo_id=<n>
 ```
 
-  （`route=cloud` 那一行是 Phase 78／79 留的字樣，總覽 §5.2 的 Demo 2 也是抓它。
+  （前面還會有一組 `kind=privacy` 的計時行——那是閘門那一次短問；
+  ②b 撥到雲端的話它是 `backend=cloud`、不到 1 秒，沒撥就是 `backend=local`、1〜2 分鐘。）
+
   **這裡不該出現任何 `fallback=` 的行**——有的話代表雲端那條路沒走通，往下看 §7 陷阱。
   ⚠ 雲端路**不會**印本機路那一行「入庫完成」（它在 `_run_image_job` 裡）；
   雲端路自己的完成訊號是最後那行 **`雲端結果已入庫`**（Phase 79 的「用結果落庫」收尾時印，
-  PDF 版是「N 頁中 M 頁成功」）。用 `docker compose logs worker | grep 雲端結果已入庫` 找得到。
-  除了這一行，「做完了」還要靠下面這四樣證據互相印證。）
+  PDF 版是「N 頁中 M 頁成功」）。
+  ⚠ `route=cloud` 之後、`kind=embed` 之前，**恰好一行** `已送去雲端：documents/<job_id>/input.png`
+  ——它是 `cloud_ingest.CloudRoute.submit()` 在三步（context.json → input → jobs 紙條）都成功後印的
+  （實檔 L259）；`gated_ingest.py` 自己在 submit 成功時不另外留 log，只有失敗才
+  `logger.warning("job %s：送去雲端失敗")`。所以「送出去了」在 log 裡就看這一行；
+  懷疑它騙人時再去 S3／佇列對照。
+
+  找完成那一行：
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml logs worker | grep 雲端結果已入庫
+```
 
   然後四件事都要成立（**在第三個視窗做，不要在終端機 A**——終端機 A 是工人，
   它要的正是 `.env` 那把 key，別在那裡 unset）：
@@ -729,7 +896,9 @@ set -a; . ./.env; set +a          # 讓 .env 的變數進環境（值不要印�
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 # ↑ 不能省：.env 那把是程式用的最小權限 key（沒有 sqs:PurgeQueue、沒有 s3:CreateBucket 這類管理動作），
 #   環境變數又蓋過 ~/.aws，不 unset 的話 CLI 會默默改用它——list-objects-v2 雖然跑得過，
-#   ⑪ 的 purge-queue 就 AccessDenied（Phase 82 記過）
+#   ⑪ 的 purge-queue 就 AccessDenied（Phase 82 記過）。
+#   unset 之後 CLI 用的是 ~/.aws 的 **default** profile（admin），**不要**加 --profile：
+#   這台機器沒有具名的 personaldocai-admin profile，加了會 ProfileNotFound
 
 # 這筆 job 已經從進度清單消失（成功＝job 被刪掉；失敗會留一列 status=failed）
 curl -sk https://127.0.0.1:8000/ingest-jobs | python3 -m json.tool
@@ -755,12 +924,11 @@ psql -d PersonalDocAI -c "select id, left(text, 40) from photo order by id desc 
   最後用瀏覽器開 `https://127.0.0.1:8000/ui/pending.html`：
   剛剛那張要在待決定牆上，頂欄的「待決定（N）」比上傳前多 1。
 
-- [ ] **⑨ 敏感檔測試：工人應該完全沒反應。**
+- [x] **⑨ 敏感圖測試：工人應該完全沒反應。**
 
 ```bash
-cp <任意一張圖.png> ~/Desktop/身分證.png
 curl -k -s -w '\n%{http_code}\n' \
-  -F "file=@$HOME/Desktop/身分證.png" \
+  -F "file=@/tmp/smoke-id-card.png" \
   https://127.0.0.1:8000/photos
 ```
 
@@ -769,10 +937,14 @@ curl -k -s -w '\n%{http_code}\n' \
   - **終端機 A（工人）一行新的 log 都沒有**
   - 終端機 B 有 `route=local verdict=SENSITIVE`
   - S3 沒有任何新物件（再跑一次上面那個 `list-objects-v2`）
-  - 照片照樣進待決定（本機看圖；本機 gemma4 要 64〜88 秒，想快一點就先把
-    **頁首那顆 AI 開關**切到雲端——那是另一扇門，與 Privacy Gate 無關，design6 D6）
+  - 照片照樣進待決定（本機看圖；②b 撥到雲端的話幾秒，沒撥的話本機 gemma4 要 64〜88 秒）
 
-- [ ] **⑩ 終端機 A 按 Ctrl+C，看它優雅停止。**
+  ⚠ 若拿到的是 `route=local verdict=UNCERTAIN` 而不是 `SENSITIVE`：**這一關仍然算過**
+  （design6 D3：SENSITIVE 與 UNCERTAIN 都走本機，本步驟要證明的是「沒有東西離開這台機器」）。
+  在回報裡照實寫下拿到的是哪一個 verdict 就好，**不要**回頭去改 `PRIVACY_PROMPT`
+  （那是 Phase 75 的事，而且要產品負責人點頭）。
+
+- [x] **⑩ 終端機 A 按 Ctrl+C，看它優雅停止。**
 
 ```text
 INFO:     cloud_worker 收到停止訊號 signal=2，做完手上這一則就退出
@@ -782,20 +954,26 @@ INFO:     cloud_worker 已停止 version=dev
   ⚠ **最多要等 20 秒**才會看到第二行——那是長輪詢還沒回來（不是當掉）。
   等不及就再按一次 Ctrl+C，會直接中斷。
 
-- [ ] **⑪ 收工：把設定改回去。** 編輯 `.env`：
+- [x] **⑪ 收工：把設定改回去。** 編輯 `.env`（**controller 親自改**）：
 
 ```ini
 CLOUD_ROUTE=off
+CLOUD_RESULT_TIMEOUT_SECONDS=300
 ```
 
-  （`CLOUD_RESULT_TIMEOUT_SECONDS` 留 30 或改回 300 都可以，`off` 模式下用不到它。）
+  （`CLOUD_RESULT_TIMEOUT_SECONDS` 在 `off` 模式下用不到，但改回 300 才跟開工前逐字相同——
+  下一個 phase 的人比對 `.env` 時不會以為有人動過設定。）
 
 ```bash
-docker compose -f compose.yaml restart worker
-docker compose logs --tail=5 worker      # 確認它起來了
+docker compose -f compose.yaml -f compose.dev.yaml restart worker
+docker compose -f compose.yaml -f compose.dev.yaml logs --tail=5 worker   # 確認它起來了
+# ②b 撥過開關的話，撥回本機（或 restart app 也會回到預設的 local）
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"local"}'
 ```
 
-  順手確認兩條佇列都沒有殘留（有的話清掉；**每條佇列的 `purge-queue` 60 秒內只能做一次**）：
+  順手確認兩條佇列都沒有殘留（有的話清掉；**每條佇列的 `purge-queue` 60 秒內只能做一次**）。
+  ⚠ 這一段要在**打 `aws` 指令的那個視窗**做（admin 身分），不是終端機 A：
 
 ```bash
 set -a; . ./.env; set +a
@@ -809,18 +987,25 @@ aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"
 aws sqs purge-queue --queue-url "$SQS_RESULTS_QUEUE_URL" --region "$AWS_REGION"
 ```
 
-### - [ ] 步驟 7：`LAUNCH.md` 新增第 12 節（**英文**）
+### - [x] 步驟 7：`LAUNCH.md` 新增第 12 節（**英文**）
 
 `LAUNCH.md` 自 2026-08-27 起是**英文**（`README.md` 也是），改它一律用英文。
 
-**① 在檔案最上面的 `## Contents` 清單最後加一行：**
+**① 在檔案最上面的 `## Contents` 清單最後加一行**
+（2026-09-02 實查：`## Contents` 在 L8，清單是 1〜11 的十一列，**沒有** Appendix 那一列，
+所以新的一行直接接在 `11. [Never do these](#11-never-do-these)` 後面）：
 
 ```markdown
 12. [Cloud worker on the Mac](#12-cloud-worker-on-the-mac)
 ```
 
 **② 在 `## 11. Never do these` 那一節的結尾、`## Appendix: current architecture` 之前**
-插入下面這一整節。
+插入下面這一整節（2026-09-02 實查：`## 11.` 在 L454、`## Appendix:` 在 L483）。
+
+> 📎 §9 已經有一小節 "S3 / SQS layer (the cloud route)"（L360 起），而且它**已經**
+> 寫對了閘門的行為（"The gate looks at the **image itself** … never at the filename"）。
+> 新的 §12 不要跟它打架，也不要重複那些 `aws` 指令——§12 只講「怎麼在這台 Mac 上把
+> 雲端工人跑起來」，查狀態一律指回 §9。
 
 > 為什麼放在第 11 節後面而不是插進中間：插中間要把 11 節之後的編號全部往後推，
 > 而檔案裡（以及 `README.md`、`CLAUDE.md`）到處都是 `#9-monitoring-and-logs`
@@ -886,18 +1071,32 @@ Ctrl+C, fix `.env`, start it again.
 ```bash
 # 1. In .env:   CLOUD_ROUTE=assume      ("assume the remote worker is up; do not probe")
 #               CLOUD_RESULT_TIMEOUT_SECONDS=30    (optional, keeps mistakes short)
-# 2. Only the worker container reads this setting (add -f compose.dev.yaml in dev mode):
-docker compose -f compose.yaml restart worker
-docker compose logs -f worker
+# 2. Only the worker container reads this setting. Pass the same -f files you started with;
+#    in dev mode (the usual state on this machine) that is both of them:
+docker compose -f compose.yaml -f compose.dev.yaml restart worker
+docker compose -f compose.yaml -f compose.dev.yaml logs -f worker
 ```
 
-Now upload a photo whose **file name** clearly reads as non-sensitive — the rule-based gate
-only looks at the name, nothing else:
+Now upload a photo whose **content** is clearly not sensitive. The gate never looks at the
+file name: it shrinks the image and asks the same vision model one short question about what
+is in it. A picture of a shop receipt is the easy case; a picture of an ID card is not.
 
 ```bash
-curl -k -s -w '\n%{http_code}\n' -F "file=@$HOME/Desktop/receipt-test.png" \
+curl -k -s -w '\n%{http_code}\n' -F "file=@/tmp/smoke-receipt.png" \
   https://127.0.0.1:8000/photos          # 202
 ```
+
+The gate runs on whichever backend the header switch is set to (`GET /settings/ai-backend`).
+On `local` that one question costs 1–2 minutes per photo; on `cloud` it is under a second.
+For a hand-run smoke test, flip it to cloud first:
+
+```bash
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"cloud"}'
+```
+
+That switch is a **separate door** from the privacy gate — it only decides which model the
+gate (and the local path) talks to. The cloud worker always uses Ollama Cloud regardless.
 
 What you should see:
 
@@ -909,9 +1108,10 @@ What you should see:
 | both queues | `ApproximateNumberOfMessages` back to `0` |
 | the app | the photo is on the pending wall, exactly as with any other upload |
 
-A file named `身分證.png` (or `passport`, `salary`, …) never reaches the cloud worker at all:
-terminal A stays silent, terminal B logs `route=local verdict=SENSITIVE`, and S3 gets nothing.
-That is the whole point of the gate.
+An image **whose content** is an ID card, a passport page or a payslip never reaches the
+cloud worker at all: terminal A stays silent, terminal B logs `route=local verdict=SENSITIVE`
+(or `verdict=UNCERTAIN`, which is treated the same way), and S3 gets nothing. Renaming a file
+changes nothing in either direction — that is the whole point of the gate.
 
 ### Stop it
 
@@ -923,7 +1123,10 @@ seconds** — that is the SQS long poll finishing, not a hang. Press Ctrl+C agai
 
 ```bash
 # In .env:   CLOUD_ROUTE=off
-docker compose -f compose.yaml restart worker
+#            CLOUD_RESULT_TIMEOUT_SECONDS=300      (back to the default)
+docker compose -f compose.yaml -f compose.dev.yaml restart worker
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"local"}'   # if you flipped it
 ```
 
 If you leave `CLOUD_ROUTE=assume` behind with no worker running, every non-sensitive upload
@@ -943,10 +1146,20 @@ aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"   #
 ```
 ````
 
-### - [ ] 步驟 8：`CLAUDE.md` 指令區新增繁中小段
+### - [x] 步驟 8：`CLAUDE.md` 指令區新增繁中小段
 
-在 `CLAUDE.md` 的「指令」區塊，**接在 Phase 82 加的「AWS（增量六 Phase 82 起）」那一段之後、
-「跑測試」那一段之前**，加入下面這一段（同一個 bash 區塊裡）：
+在 `CLAUDE.md` 的「指令」區塊，**接在「── AWS（增量六 Phase 82 起）」那一大段的最後
+（＝結尾那三行 `增量六雲端路總開關：…` 的註解之後）、「── 格式與 lint：pre-commit」那一段之前**，
+加入下面這一段。
+
+> 2026-09-02 實查行號：AWS 段從 **L185** 開始，段尾那三行 `增量六雲端路總開關：…` 在
+> **L232〜234**，`# ── 格式與 lint：pre-commit` 在 **L236**。所以新的一段插在 L234 與 L236 之間。
+> ⚠ 不要插在「# 跑測試」（L218）前面——那一段本來就在 AWS 段的中間，插進去會把 AWS 段切開。
+>
+> ⚠ **L232〜234 那三行本身已經過期**（它寫「assume／ec2 要到 Phase 86／89 才接、
+> 現在 `get_cloud_route()` 會 `NotImplementedError`」，而 86 已經把 assume 接上了）。
+> 那三行**由 Phase 89 的實作者改**（ledger 裁決 R7：89 才是把 `ec2` 接上的 phase）。
+> **本 phase 不要動它們**，只在它們後面加自己的段落。
 
 ```bash
 # ── 雲端看圖工人（增量六 Phase 88；**平常不用開**）─────────────────────
@@ -958,7 +1171,9 @@ aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"   #
 # 終端機 A：把工人跑起來（**一定要在專案根目錄**——app 沒裝進 venv，`python -m` 只認
 #           目前目錄；.env 倒是從 app/core/ 往上找、在哪裡啟動都讀得到）
 #           這個視窗**不要** source .env、也不要 unset：工人自己讀 .env，要的正是裡面那把
-#           personaldocai-mac 的 key。「載入 .env 再 unset」只給打 aws 指令的視窗用（admin profile）
+#           personaldocai-mac 的 key。「載入 .env 再 unset」只給打 aws 指令的視窗用
+#           （那個視窗用 ~/.aws 的 default profile ＝ admin，**不要**加 --profile，
+#            這台機器沒有具名的 personaldocai-admin profile）
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 python -m app.workers.cloud_worker
 #   預期第一行：cloud_worker 啟動 version=dev region=ap-northeast-1 bucket=…
@@ -969,16 +1184,27 @@ python -m app.workers.cloud_worker
 # 終端機 B：讓本機那條路真的把非敏感照片送出去
 #   .env 改 CLOUD_ROUTE=assume（assume ＝假設遠端開著、不做探測；Phase 89 之後日常用 ec2）
 #   順手把 CLOUD_RESULT_TIMEOUT_SECONDS 調成 30，出錯時不必等 5 分鐘
-docker compose -f compose.yaml restart worker      # 只有 worker 會讀這個設定，app 不必動
-docker compose logs -f worker                      # 看 route=／fallback=／kind=embed
+#   ⚠ 下面兩句的 -f 要跟你當初啟動時用的一致；開發模式（這台機器的常態）是兩個 -f 都帶
+docker compose -f compose.yaml -f compose.dev.yaml restart worker   # 只有 worker 讀這個設定，app 不必動
+docker compose -f compose.yaml -f compose.dev.yaml logs -f worker   # 看 route=／fallback=／kind=embed
 #
-# ⚠⚠ 收工一定要把 .env 改回 CLOUD_ROUTE=off，再 restart worker 一次。
+# 想讓煙霧快一點：先把頁首那顆「AI 模型」開關撥到雲端再上傳——隱私閘門是**同一顆看圖模型
+# 的一次短問**，跟著這顆開關走（design6 D4／D6）：本機約 1〜2 分鐘、雲端不到 1 秒。
+#   curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+#     -H 'Content-Type: application/json' -d '{"backend":"cloud"}'
+#   ⚠ 快照是在**上傳當下**抄進 job 的，所以要先撥再上傳；收工撥回 {"backend":"local"}。
+#   ⚠ 這扇門與閘門是兩件事，雲端工人永遠走 Ollama Cloud，不受它影響。
+#
+# ⚠⚠ 收工一定要把 .env 改回 CLOUD_ROUTE=off（順手把 CLOUD_RESULT_TIMEOUT_SECONDS 改回 300），
+#     再 restart worker 一次。
 #     忘了改＝之後每一張**非敏感**照片都會先送去 S3、等到 CLOUD_RESULT_TIMEOUT_SECONDS
 #     逾時才 fallback 回本機。照片不會不見，但每張慢好幾分鐘，而且唯一的線索只有
 #     worker log 裡那行 fallback=local reason=result_timeout。
 #
-# 敏感／不確定的照片（檔名有「身分證」「passport」這類字、或看不出來）**永遠不會**
-# 進雲端管線，所以工人那一頭會完全沒反應——那是對的，不是壞了。
+# 隱私閘門**看圖不看檔名**（2026-09-01 產品負責人改判）：內容是證件、帳單這類的照片
+# ——以及模型說不準的照片——一律留在本機，所以工人那一頭會完全沒反應，那是對的、不是壞了。
+# 改檔名沒有任何用；煙霧要用**內容真的不敏感**的圖（例如用 Pillow 畫一張寫著
+# RECEIPT／TOTAL 的 PNG），另外畫一張假證件圖驗「敏感留本機」。
 #
 # 手動煙霧留下的殘訊息（每條佇列 60 秒只能清一次；在打 aws 指令的視窗做，不是終端機 A）：
 #   set -a; . ./.env; set +a
@@ -986,16 +1212,31 @@ docker compose logs -f worker                      # 看 route=／fallback=／ki
 #   aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"
 ```
 
-### - [ ] 步驟 9：commit
+### - [x] 步驟 9：**不 commit——記快照**
+
+產品負責人這一輪指示**不 commit**（ledger 裁決 R0）。所以收工不是 `git commit`，
+而是把「工作樹現在長什麼樣」記成一顆 tree 物件，讓 controller 之後可以拿兩顆 tree 相減來 review：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-git add app/workers/cloud_worker.py tests/unit/test_cloud_worker_unit.py \
-        LAUNCH.md CLAUDE.md
-git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢 20 秒、SIGTERM／SIGINT 優雅停、啟動 log 帶 version/region/bucket、python -m 進入點；Mac 端到端（真 S3／SQS／Ollama Cloud）通過，LAUNCH.md 加第 12 節、CLAUDE.md 指令區同步，+5 tests"
+git status --short          # 確認只動到本 phase 該動的四個檔（見下）
+.superpowers/sdd/phase0902-2/snapshot-tree
+# ↑ 印出一個 tree SHA。它**不建 commit、不動 index、不動 stash**，
+#   只在物件庫多一顆 tree。把這個 SHA 貼進回報，controller 會用
+#   `git diff -U10 <開工前的 tree> <這顆 tree>` 看你改了什麼
 ```
 
-> 📌 **commit 節奏由產品負責人決定**（總覽 §7 鐵律 12）。未指示前不要自己 commit。
+`git status --short` 預期恰好這四個檔（M ＝改過、?? ＝新檔由 Phase 87 建的算它的）：
+
+```text
+ M app/workers/cloud_worker.py
+ M tests/unit/test_cloud_worker_unit.py
+ M LAUNCH.md
+ M CLAUDE.md
+```
+
+> ⛔ **不 `git add`、不 `git commit`、不 `git stash`、不 `git mv`**（總覽 §7 鐵律 12 ＋ 本輪裁決 R0）。
+> `snapshot-tree` 這支腳本會複製一份 index 到暫存檔再操作，所以它**不會**把檔案 stage 起來。
 
 ---
 
@@ -1012,8 +1253,8 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
       │                      │                                           │
       │                 run_gated_ingest_job                             │
       │                      │                                           │
-      │            ① 閘門 RuleGate("receipt-test.png")                   │
-      │                      │  → NON_SENSITIVE                          │
+      │            ① 閘門 VlmGate：縮圖 → 同一顆看圖模型問一句短問題     │
+      │                      │  （看內容、不看檔名）→ NON_SENSITIVE      │
       │            ② cloud.available()  → True（assume 模式不探測）      │
       │                      │                                           │
       │            ③ submit()：                                          │
@@ -1042,8 +1283,8 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
   待決定（N）+1        log: route=cloud                         log: result 已放好
                        log: kind=embed backend=local                  version=dev
 
- ⚠ 敏感檔（身分證.png）在 ① 就轉彎：route=local、直接 run_ingest_job，
-   右邊兩欄（AWS 與終端機 A）**一個字都不會動**。
+ ⚠ 內容是證件的圖在 ① 就轉彎：route=local（verdict=SENSITIVE 或 UNCERTAIN 都一樣）、
+   直接 run_ingest_job，右邊兩欄（AWS 與終端機 A）**一個字都不會動**。檔名叫什麼無關。
 ```
 
 ### 5.2 停止訊號為什麼只豎旗標
@@ -1078,7 +1319,8 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
 
 ## 6. 驗收清單
 
-- [ ] **`python -m` 跑得起來、啟動 log 三個欄位都在**：
+- [x] **`python -m` 跑得起來、啟動 log 三個欄位都在**
+      （⚠ 本條由 controller 執行：它會真的向 SQS 要訊息）：
       ```bash
       cd /Users/linjunting/personalDocAI && source .venv/bin/activate
       python -m app.workers.cloud_worker & WORKER_PID=$!
@@ -1089,37 +1331,38 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
       （最多 20 秒後）`INFO:     cloud_worker 已停止 version=dev`，最後 `exit=0`
       （macOS 沒有 `timeout` 指令，所以用「背景執行 ＋ `kill -TERM`」；這順便把 `docker stop`
       會走的 SIGTERM 路徑真的驗過一次——5 顆自動化測試只驗了 `should_stop` 旗標，沒驗訊號）
-- [ ] **長輪詢是 20 秒**（AWS 上限；改小＝多花 API 請求費）：
+- [x] **長輪詢是 20 秒**（AWS 上限；改小＝多花 API 請求費）：
       ```bash
       grep -n "^LONG_POLL_SECONDS" app/workers/cloud_worker.py
       ```
       預期 `LONG_POLL_SECONDS = 20`
-- [ ] **兩個停止訊號都接了**：
+- [x] **兩個停止訊號都接了**：
       ```bash
       grep -n "signal.SIGTERM\|signal.SIGINT" app/workers/cloud_worker.py
       ```
       預期兩行（`docker stop` 送 SIGTERM、Ctrl+C 送 SIGINT，少接一個就會被硬殺）
-- [ ] **看圖固定用雲端、不看頁首開關**（design6 D12／D6）：
+- [x] **看圖固定用雲端、不看頁首開關**（design6 D12／D6）：
       ```bash
       grep -c "vlm_service.OllamaCloudVLM()" app/workers/cloud_worker.py
       python -c "import ast,pathlib;t=ast.parse(pathlib.Path('app/workers/cloud_worker.py').read_text());print([n.lineno for n in ast.walk(t) if isinstance(n,ast.Attribute) and n.attr=='AI_BACKEND'])"
       ```
       預期第一句印 `1`（只在 `main()` 建一次）、第二句印 `[]`（**程式碼**裡沒有任何一處讀
       `config.AI_BACKEND`。用 `ast` 而不是 `grep`：註解與 docstring 裡有提到這個名字，grep 會誤中）
-- [ ] **工人的 `app.*` import 名單沒有變**（那顆 `ast` 掃碼測試照樣綠）：
+- [x] **工人的 `app.*` import 名單沒有變**（那顆 `ast` 掃碼測試照樣綠）：
       ```bash
       pytest tests/unit/test_cloud_worker_unit.py -k import -v
       ```
       預期 `1 passed, 14 deselected`
-- [ ] `pytest tests/unit/test_cloud_worker_unit.py -v` → `15 passed`
-- [ ] **全量 `pytest -q` 全綠、0 skipped**，顆數 ＝ 開工基線 ＋ **5**（＝651）
-- [ ] **三死埠零依賴實證**（顆數與上一條相同）：
+- [x] `pytest tests/unit/test_cloud_worker_unit.py -v` → `15 passed`
+- [x] **全量 `pytest -q` 全綠、0 skipped**，顆數 ＝ 開工基線 ＋ **5**（＝**661**；
+      總覽 §9 寫 651（實 661）——絕對值差 10，只有 +5 是要對的）
+- [x] **三死埠零依賴實證**（顆數與上一條相同）：
       ```bash
       AWS_ENDPOINT_URL=http://127.0.0.1:9 \
       CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
       OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
       ```
-- [ ] **端點仍是 22**：
+- [x] **端點仍是 22**：
       ```bash
       python -c "
       from fastapi.testclient import TestClient
@@ -1129,33 +1372,59 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
       "
       ```
       預期印出 `22`
-- [ ] **人工端到端（丁段驗收）全部走過**：非敏感走雲端入庫、敏感零 S3、
-      Ctrl+C 優雅停、S3 空、兩條佇列 0 則（步驟 6 的 ⑦〜⑪）
-- [ ] **`.env` 已改回 `CLOUD_ROUTE=off` 而且 worker 重啟過**：
+- [x] **人工端到端（丁段驗收）全部走過**（⚠ controller 執行）：內容非敏感的合成圖走雲端入庫、
+      內容是證件的合成圖零 S3、Ctrl+C 優雅停、S3 空、兩條佇列 0 則（步驟 6 的 ⑦〜⑪）
+- [x] **`.env` 已改回 `CLOUD_ROUTE=off`／`CLOUD_RESULT_TIMEOUT_SECONDS=300` 而且 worker 重啟過**
+      （⚠ controller 執行）：
       ```bash
-      grep -n "^CLOUD_ROUTE=" .env
-      docker compose logs --tail=5 worker
+      grep -n "^CLOUD_ROUTE=\|^CLOUD_RESULT_TIMEOUT_SECONDS=" .env
+      docker compose -f compose.yaml -f compose.dev.yaml logs --tail=5 worker
       ```
-      預期 `CLOUD_ROUTE=off`
-- [ ] **專案的 `data/` 沒有被弄髒**（`data/staging` 只該有正在跑的）：
+      預期 `CLOUD_ROUTE=off` 與 `CLOUD_RESULT_TIMEOUT_SECONDS=300`（＝開工前的值）
+- [x] **專案的 `data/` 沒有被弄髒**（`data/staging` 只該有正在跑的）：
       ```bash
       find data/staging -type f -mmin +60 2>/dev/null | head; echo "---"
       ```
       預期 `---` 之前沒有輸出
-- [ ] **文件兩份都改了、而且 `LAUNCH.md` 是英文**：
+- [x] **文件兩份都改了、而且 `LAUNCH.md` 是英文**：
       ```bash
       grep -n "12. Cloud worker on the Mac" LAUNCH.md
       grep -n "cloud_worker" CLAUDE.md | head -3
       ```
       預期 `LAUNCH.md` 有目錄那一行與章節標題各一；`CLAUDE.md` 指令區出現 `python -m app.workers.cloud_worker`
-- [ ] **文件裡沒有寫出任何值**（總覽 §7 鐵律 10）：
+- [x] **文件裡沒有寫出任何值**（總覽 §7 鐵律 10）：
       ```bash
       grep -nE "AKIA|amazonaws\.com/[0-9]{12}|personaldocai-mailbox-[0-9]" LAUNCH.md CLAUDE.md \
         || echo "OK：沒有機密或帳號 ID"
       ```
       預期印出 `OK：沒有機密或帳號 ID`
-- [ ] **規格區一字未動**：`git status --short docs/spec/` → 零輸出
-- [ ] `ruff format --check app tests scripts && ruff check app tests scripts` 兩句都乾淨
+- [x] **規格區一字未動**：`git status --short docs/spec/` → 零輸出
+- [x] **只動到該動的四個檔、而且沒有 commit**（裁決 R0）：
+      ```bash
+      git status --short
+      git log --oneline -1        # 預期仍是 bb3921a（本輪不 commit）
+      .superpowers/sdd/phase0902-2/snapshot-tree
+      ```
+      預期 `git status --short` 恰好是 `app/workers/cloud_worker.py`、
+      `tests/unit/test_cloud_worker_unit.py`、`LAUNCH.md`、`CLAUDE.md`
+      （加上 Phase 87 留下的、與本輪其他 phase 的檔）；最後一行印出的 tree SHA 貼進回報
+- [x] `ruff format --check app tests scripts && ruff check app tests scripts` 兩句都乾淨
+- [x] **本 phase 沒有中文識別字**（裁決 R1）：
+      ```bash
+      python -c "
+      import io, tokenize, sys
+      for path in ('app/workers/cloud_worker.py', 'tests/unit/test_cloud_worker_unit.py'):
+          src = open(path, encoding='utf-8').read()
+          bad = sorted({
+              t.string
+              for t in tokenize.generate_tokens(io.StringIO(src).readline)
+              if t.type == tokenize.NAME and not t.string.isascii()
+              and not t.string.startswith('test_')
+          })
+          print(path, bad)
+      "
+      ```
+      預期兩行都印 `[]`（`test_中文` 的函式名是刻意保留的例外）
 
 ---
 
@@ -1182,15 +1451,19 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
    空等到 `CLOUD_RESULT_TIMEOUT_SECONDS`（預設 300 秒）才 fallback。
    **症狀**：照片還是會入庫（fallback 有接住），但每張慢好幾分鐘，
    而且唯一的線索是 worker log 裡那行 `fallback=local reason=result_timeout`。
-   **正解**：步驟 6 的 ⑪ 不可以跳過。Phase 89 之後日常應該用 `ec2`（會探測），
-   `assume` 只留給除錯。
+   **正解**：步驟 6 的 ⑪ 不可以跳過（`.env` 改回 `CLOUD_ROUTE=off` 與
+   `CLOUD_RESULT_TIMEOUT_SECONDS=300`，再 restart worker）。
+   Phase 89 之後日常應該用 `ec2`（會探測），`assume` 只留給除錯。
 
 4. **改了 `.env` 卻沒重啟 worker 容器。**
    `config` 只在行程啟動時讀一次 `.env`。
    **症狀**：`.env` 明明寫著 `assume`，worker log 卻一直是 `fallback=local reason=remote_unavailable`
    （或根本沒有 `route=` 那一行）。
-   **正解**：`docker compose -f compose.yaml restart worker`。
-   （只要 restart `worker`：`get_cloud_route()` 只有 Celery 任務會呼叫，`app` 用不到。）
+   **正解**：`docker compose -f compose.yaml -f compose.dev.yaml restart worker`。
+   （只要 restart `worker`：`get_cloud_route()` 只有 Celery 任務會呼叫，`app` 用不到。
+   ⚠ `-f` 要跟啟動時用的一致——這台機器 2026-09-02 的現況是**開發模式**，兩個 `-f` 都要帶；
+   只帶 `compose.yaml` 會把 worker 換成常駐模式的定義（少了 `./app` 的 bind-mount，
+   跑的是映像裡的舊碼）。）
 
 5. **以為 Ctrl+C 沒反應。**
    訊號只豎旗標，而迴圈可能正卡在最多 20 秒的長輪詢裡，所以**最多要等 20 秒**。
@@ -1199,7 +1472,7 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
    手上那一則可能沒刪，但它 900 秒後會自己回到佇列，不會不見。
 
 6. **忘了掛 logging handler，然後以為工人卡住了。**
-   工人是獨立行程，沒有 uvicorn 幫忙配置 logging。少了 `_把log印到終端機()`，
+   工人是獨立行程，沒有 uvicorn 幫忙配置 logging。少了 `_configure_logging()`，
    Python 只印 WARNING 以上——啟動行、`kind=vlm` 計時、「result 已放好」全都是 INFO。
    **症狀**：跑起來之後終端機**一片空白**，看起來像當掉了。
    **正解**：`main()` 第一行就呼叫它（寫法與 `app/main.py` 完全一樣）。
@@ -1216,10 +1489,17 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
    **症狀**：每一張都「AI 看不懂」，但 log 的 `elapsed_s` 只有零點幾秒（真的在看圖不會這麼快）。
    **正解**：`.env` 明寫 `OLLAMA_CLOUD_VLM_MODEL=gemma4`（CLAUDE.md 已經記過這個坑）。
 
-9. **上傳的檔名沒有帶關鍵字，結果整條雲端路都沒走到。**
-   規則版閘門**只看檔名**（總覽 §10 追認項 f）。`IMG_4821.png` 是 `UNCERTAIN` ＝ 走本機，
-   工人那一頭完全沒反應——那不是壞掉，是規格。
-   **正解**：煙霧用的檔案一定要叫 `receipt-test.png` 這種名字。
+9. **拿一張內容看不出是什麼的圖去煙霧，結果整條雲端路都沒走到。**
+   閘門**看圖不看檔名**（2026-09-01 產品負責人改判；總覽 §10 追認項 f、design6 D4）：
+   它把圖縮到長邊 ≤512 轉 PNG，交給同一顆看圖模型問一句短問題。
+   模型說不準時是 `UNCERTAIN`，而 `UNCERTAIN` 跟 `SENSITIVE` 一樣**留本機**（D3）——
+   工人那一頭完全沒反應，那不是壞掉，是規格。
+   **症狀**：worker log 是 `route=local verdict=UNCERTAIN`，S3 空的，終端機 A 一片安靜。
+   **正解**：煙霧要用**內容真的像收據**的圖（§4.6 ⑤ 的 Pillow 指令會畫一張帶
+   RECEIPT／TOTAL 字樣的 PNG）。**改檔名沒有任何用**——舊版計畫寫的
+   「把任何一張圖複製成 `receipt-test.png`」在改判之後完全不成立。
+   ⛔ 判不出來時**不要**回頭改 `PRIVACY_PROMPT`：那是 Phase 75 的檔，而且要產品負責人點頭
+   （★G1 的「卡住時怎麼辦」那一列寫得很清楚）。
 
 10. **上傳與詢問同時打本機模型。**
     CLAUDE.md 記載 Phase 48 曾經把 db container 壓垮（postmaster 花 2 分鐘才殺得掉子行程）。
@@ -1263,16 +1543,22 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
 `CLAUDE.md` 指令區的繁中小段，兩處都寫了「收工要改回 `off`」這個最容易忘的動作。
 
 **與總覽的差異：零。** 新增測試 5 顆，名稱與總覽 §2.7 逐字相同。
-另外多了一個**公開**函式 `run_forever(mailbox, vlm, *, should_stop)`——總覽 §2.4.1 的
-`cloud_worker.py` 簽章表只列了 `process_job_message` 與 `main`，**請 orchestrator 把
-`run_forever` 補進去**（它才是 5 顆迴圈測試的受測對象；`main()` 只是把訊號旗標接上去再呼叫它）。
+公開函式 `run_forever(mailbox, vlm, *, should_stop)` **已經在總覽 §2.4.1 的簽章表裡**
+（2026-09-02 實查：`cloud_worker.py` 那一段列了 `process_job_message`、`run_forever`、`main` 三個），
+所以不必再請 orchestrator 補。
 
-顆數：開工基線 ＋ **5** ＝ **651**。端點仍 **22**。
+顆數：開工基線 **656** ＋ **5** ＝ **661**（總覽 §9 寫 651（實 661）；ledger 裁決 R4）。端點仍 **22**。
 
 **下一個 phase：Phase 89** —— `Ec2Probe`（`DescribeInstances` ＋ 60 秒 TTL 快取），
 讓本機在送出之前先問一句「那台機器現在開著嗎」，並把 `get_cloud_route()` 的
-最後一個暫時分支 `ec2` 補上。之後 **Phase 90**（多階段 `Dockerfile` ＋ arm64 映像）做完，
-才輪到 **★G2**——**產品負責人點頭之前，一台 EC2 都不准開。**
+最後一個暫時分支 `ec2` 補上（89 的實作者順手改掉 `CLAUDE.md` L232〜234 那句過期話，裁決 R7）。
+之後 **Phase 90**（多階段 `Dockerfile` ＋ arm64 映像）做完，才輪到 **★G2**。
+
+**本 phase 的 §4.6 就是 ★G2 的兩份憑據之一**（另一份是 90 的容器端到端）。
+本輪裁決 R2：dev-prompt 已明示執行到 91，controller 親跑 88／90 兩次端到端，
+**兩者都通過才進 91**；91 全部是免費資源而且**不 run-instances**。
+即便如此，**產品負責人事後仍可否決 ★G2**——真的否決時，91 建的 SG／Gateway endpoint／
+IAM role／ECR repo 全部可以手動刪掉，而且都是免費的。**一台 EC2 在 92 之前都不會開。**
 
 ---
 
@@ -1291,3 +1577,96 @@ git commit -m "feat: Phase 88 雲端工人主迴圈——run_forever() 長輪詢
   `docs/plan/unfinish/phase-00-增量六總覽.md`（§2.4.2 設定、§2.6 工人規則、
   §2.7 本 phase 的測試清單、§5.2 Demo 2、§10 追認項 f／l）、
   `LAUNCH.md` 第 9 節（各層的 log 指令）、`CLAUDE.md` 指令區
+
+---
+
+## 9. 實作紀錄（2026-09-02，實作 subagent 補記）
+
+> ⚠ **§4 步驟 6（人工端到端）與 §6 的三條需要真連線／改 `.env` 的驗收未勾**：
+> 依本輪裁決 R3／R2，那一整段由 controller 親跑（它同時是 ★G2 的憑據之一）。
+> 本節只記「程式碼與文件」這一半。
+
+**與本文件零差異**：`app/workers/cloud_worker.py` 只**追加**了 §4 步驟 3 的內容
+（import 區加 `signal`／`time`／`typing.Callable`、兩個模組常數、`_configure_logging()`／
+`_install_stop_signal()`／`run_forever()`／`main()` 與 `if __name__ == "__main__":`），
+Phase 87 的函式一個字都沒改——快照相減對這個檔是 **+168／−1**，
+那唯一的一行刪除就是 `from typing import TYPE_CHECKING` 被換成
+`from typing import TYPE_CHECKING, Callable`（§4 步驟 3 ① 明寫要改的那一行）。
+`tests/unit/test_cloud_worker_unit.py` 是 **+168／−0**（import 區加兩行、檔尾追加 5 顆與三個 helper）。
+`tests/fakes.py`／`tests/conftest.py`／`app/` 其餘全樹／`compose*.yaml`／`Dockerfile`／
+`docs/spec/` 一列未動。
+
+**RED（步驟 2）**：`pytest tests/unit/test_cloud_worker_unit.py -q`
+→ **5 failed, 10 passed**，五顆的失敗字樣都是
+`AttributeError: module 'app.workers.cloud_worker' has no attribute 'run_forever'`
+（與本文件預期逐字相同）。
+
+**GREEN（步驟 4〜5）**：同一支檔 `15 passed`；`-k import` 那顆 `1 passed, 14 deselected`。
+全量 `pytest -q` **661 passed、0 skipped**（開工基線 656 ＋ 5，與 §2 一致；
+warning 只有基線那一個 StarletteDeprecationWarning）。
+三死埠（`AWS_ENDPOINT_URL`／`CELERY_BROKER_URL`／`OLLAMA_BASE_URL` 全指 `127.0.0.1:9`）
+同樣 **661 passed**。`ruff format --check`（113 files already formatted）與
+`ruff check`（All checks passed!）都乾淨，一個字都不必重排。
+
+**驗收清單逐條實跑結果**（除了標「controller 執行」的三條）：
+`LONG_POLL_SECONDS = 20` 在 L82；`signal.SIGTERM`／`signal.SIGINT` 各一行（L415／L416）；
+`vlm_service.OllamaCloudVLM()` 恰 1 處，`ast` 掃 `AI_BACKEND` 屬性存取 → `[]`；
+端點仍 **22**；`data/staging` 零殘留；`git status --short docs/spec/` 零輸出；
+兩份文件都改到而且沒有寫出任何值（`AKIA|amazonaws.com/<12 碼>|personaldocai-mailbox-<數字>` 掃碼 → 沒有命中）；
+tokenize 掃非 ASCII 識別字：`app/workers/cloud_worker.py` 與 `tests/unit/test_cloud_worker_unit.py` 都是 `[]`。
+
+**額外的自我審查（本文件沒要求，但做了）**：
+① `import app.workers.cloud_worker` 之後 `sys.modules` 裡**沒有** `boto3`、`redis`、`celery`、
+`app.dependencies`、`app.services.cloud_ingest`——`main()` 裡那行延遲 import 與
+`TYPE_CHECKING` 區塊都確實只在該載入時才載入；
+② `inspect.signature` 確認 `run_forever(mailbox, vlm, *, should_stop)`（`should_stop` 是
+keyword-only）與 `main()` 零參數，與總覽 §2.4.1 的契約逐字相同；
+③ `grep` 確認工人檔含註解零 `psycopg`／`get_connection`／`cursor(`／`.execute(`；
+檔內唯一出現 `boto3` 的地方是 `main()` 裡那句解釋 `ParamValidationError` 的中文註解
+（`test_boto3只在aws_mailbox裡出現` 用的是「行首 import／from」的正規表示式，不會誤中）；
+④ `LAUNCH.md` §12 引用的兩行 log 字樣都對得上實檔：`雲端結果已入庫`
+在 `gated_ingest.py` L413／L527、`已送去雲端` 在 `cloud_ingest.py` L259。
+
+**工作樹快照**（裁決 R0，未 commit）：`.superpowers/sdd/phase0902-2/T88_BASE`
+（＝ Phase 87 收工的樹）與收工快照相減，`-- app tests` 恰為
+`app/workers/cloud_worker.py`（+168／−1）與 `tests/unit/test_cloud_worker_unit.py`（+168／−0），
+其餘只有 `LAUNCH.md`／`CLAUDE.md`／本檔與 controller 自己的 `docs/plan/todo/*`。
+（快照 SHA 每寫一次文件就會變一次，所以這裡不釘死數字——controller 驗收時自己跑
+`.superpowers/sdd/phase0902-2/snapshot-tree` 取當下的值即可。）
+
+### 9.1 fix round 1（2026-09-03，controller 真跑 `python -m` 後退回）
+
+實檔與 §4 步驟 3 的碼區**有三處刻意的差異**（都是本輪 review 的裁決，計畫檔的碼區維持原樣供對照）：
+
+1. **`logger` 改用字面名**（發現 1，Important）。原本 `logging.getLogger(__name__)` 在
+   `python -m app.workers.cloud_worker` 底下拿到的是 **`__main__`** logger——**不在**
+   `_configure_logging()` 掛 handler 的「app」樹底下，於是啟動行、`result.json 已放好`、
+   `收到停止訊號`、`已停止` 四種 INFO 全被 Python 的 lastResort（只印 WARNING 以上）吞掉。
+   controller 在真機實證：worker log 檔 **0 bytes**，但行程確實卡在 SSL read（＝SQS 長輪詢），
+   而 `ai_timing` 的 `kind=vlm backend=cloud` 兩行**有**印（它的 logger 叫
+   `app.services.ai_timing`，本來就在 app 樹下）。
+   實檔現在是 `logger = logging.getLogger("app.workers.cloud_worker")`，L52〜55 的舊註解
+   （「名字一定要是 `__name__`」）也一併改寫成說明這件事。
+2. **`main()` 缺設定改走 logger ＋ `SystemExit(1)`**（發現 1 的 b）。
+   原本 `raise SystemExit(f"…")` 由直譯器印裸字串（沒有 `ERROR:     ` 前綴、也不經 handler）。
+   現在是 `logger.error("cloud_worker 無法啟動：.env 少了這些設定 %s", "、".join(missing))`
+   ＋ `raise SystemExit(1)`，退出碼仍是 1。
+3. **退避之前先問一次 `should_stop()`**（發現 2，reviewer Minor 2）。
+   `receive_job` 失敗那條路原本直接 `time.sleep(RECEIVE_ERROR_BACKOFF_SECONDS)`，
+   而 PEP 475 之後 `time.sleep` 收到訊號會**續睡**——AWS 不通時按 Ctrl+C 要等
+   20＋5 秒而不是文件寫的 20 秒。現在 `logger.exception(...)` 之後多一句
+   `if should_stop(): break`。**文件的「最多 20 秒」說法不必改**（那說的是長輪詢那條路）。
+
+**新增 2 顆測試**（`tests/unit/test_cloud_worker_unit.py`，接在主迴圈那組後面）：
+`test_退避期間收到停止旗標就不再要下一則`（用 `SleepRecorder` 替身側錄「有沒有睡」，
+RED 時 `assert [5] == []`）與 `test_用python_m跑時啟動失敗訊息帶著app的log前綴`
+（真的開一個子行程跑 `python -m`，把 `S3_BUCKET` 設成空字串讓它在檢查設定那關就退出；
+斷言退出碼 1 且 stderr 有 `ERROR:     cloud_worker 無法啟動`——那個五空格前綴是
+`_configure_logging()` 的 Formatter 才會加的東西，lastResort 印的是裸訊息。
+RED 時實得 `'cloud_worker 無法啟動：.env 少了這些設定 S3_BUCKET\n'`，沒有前綴）。
+**本 phase 顆數因此是 +7（不是 +5）：全量 656 → 663。**
+
+**連帶改到一顆既有測試**：`test_單次例外不會讓主迴圈死掉` 的 `stop_after_rounds(3)` 改成 **4**
+（＋兩行註解），因為第 3 點讓「要訊息失敗」那條路多問一次 `should_stop`；
+`stop_after_rounds` 的 docstring 也改成「前 N 次**被問到**時回 False」。
+斷言本身（`processed == ["job-ok"]`、`receive_calls == 3`、兩筆 ERROR log）一字未改。

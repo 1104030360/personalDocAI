@@ -13,6 +13,7 @@ Phase 79／80 會在本檔追加 CloudRoute 本體的測試；Phase 89 追加 Ec
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import pytest
@@ -274,13 +275,6 @@ def test_get_cloud_route預設off時回CloudRouteOff(monkeypatch):
     """
     assert config.CLOUD_ROUTE == "off", "第五道安全網應該已經把它蓋成 off"
     assert isinstance(get_cloud_route(), CloudRouteOff)
-
-    # ec2 現在還沒接（總覽 §2.7：本增量唯二允許的暫時分支，只剩這最後一個）。
-    # ⚠ 這幾行是**鬧鐘**：Phase 89 接上 ec2 時 → **拆掉**（改成驗它的探測是 Ec2Probe）。
-    #   assume 那半已由 Phase 86 拆掉——它的正面斷言在 test_dependencies_cloud_unit.py。
-    monkeypatch.setattr(config, "CLOUD_ROUTE", "ec2")
-    with pytest.raises(NotImplementedError):
-        get_cloud_route()
 
     # 打錯字要當場炸，不要默默當成 off——「我明明開了雲端路怎麼都沒送出去」是最難查的
     monkeypatch.setattr(config, "CLOUD_ROUTE", "cloudy")
@@ -573,3 +567,144 @@ def test_自己的訊息但result_json不在時回None(monkeypatch):
 
     assert mailbox.results == [], "訊息要刪掉"
     assert "delete_result_message" in mailbox.calls
+
+
+# ---------------- Ec2Probe：問「那台機器開著嗎」（Phase 89）----------------
+
+
+class ExplodingMailbox:
+    """只有 instance_state()，而且一定丟例外——模擬憑證過期／權限不足／網路斷。
+
+    為什麼不用 FakeMailbox：那顆假件的 instance_state_script 是一串**字串**，
+    排不出「這一次丟例外」。而這裡要驗的正是「炸了也要回 False，不可以往外丟」。
+    只實作被測程式真的會呼叫的那一個方法，就是 stub 的用法。
+    """
+
+    def __init__(self) -> None:
+        self.instance_state_calls = 0
+
+    def instance_state(self, instance_id: str) -> str:
+        self.instance_state_calls += 1
+        raise RuntimeError("AWS 憑證過期")
+
+
+def make_probe(states: list[str], *, instance_id: str = "i-test", ttl_seconds: int = 60):
+    """回 (探測物件, 假信箱)。假信箱的 instance_state 會依序回傳 states。"""
+    mailbox = FakeMailbox()
+    mailbox.instance_state_script = list(states)
+    return cloud_ingest.Ec2Probe(mailbox, instance_id, ttl_seconds=ttl_seconds), mailbox
+
+
+def test_實例狀態running時探測為True():
+    """只有 running 才算可用——這是雲端管線唯一的入場券。"""
+    probe, mailbox = make_probe(["running"])
+
+    assert probe.is_running() is True
+    assert mailbox.instance_state_calls == 1
+
+
+def test_實例狀態stopped與stopping與pending都是False():
+    """design6 §8 第 2 列：EC2 Stop → 本機 run_ingest_job，202 與進度面板不變。
+
+    這裡把六種狀態裡「不是 running」的五種都走一遍：pending 是**開機中**
+    （機器還沒準備好收訊息）、stopping 是**關機中**（拿了訊息也做不完）。
+    最後多一個 "unknown"：那是 Phase 83 的 AwsMailbox.instance_state() 在
+    「查無這台機器」時回的字串（instance id 打錯／機器被 Terminate 超過一小時）。
+    每一種都用一顆全新的探測物件，免得被 TTL 快取蓋住。
+    """
+    for state in ("pending", "stopping", "stopped", "shutting-down", "terminated", "unknown"):
+        probe, mailbox = make_probe([state])
+
+        assert probe.is_running() is False, f"{state} 不是 running，不可以送去雲端"
+        assert mailbox.instance_state_calls == 1
+
+
+def test_探測丟例外時回False並留log(caplog):
+    """design6 §8 第 3 列：沒有 AWS 憑證 → fallback 本機。
+
+    ⚠ 這裡**絕對不可以**把例外往外丟：往外丟的話 gated_ingest 那一層會炸，
+    一張照片會因為「查不到機器狀態」而入不了庫——完全違反 D10
+    「不上傳失敗、不要求使用者重傳」。
+    """
+    caplog.set_level(logging.WARNING)
+    mailbox = ExplodingMailbox()
+    probe = cloud_ingest.Ec2Probe(mailbox, "i-test", ttl_seconds=60)
+
+    assert probe.is_running() is False
+    assert mailbox.instance_state_calls == 1
+    assert any("EC2" in message for message in caplog.messages), (
+        f"炸掉要留 log，不可以安靜地當作不可用：{caplog.messages}"
+    )
+
+
+def test_探測丟例外時TTL內不會再問一次():
+    """失敗的答案**也要進快取**（is_running 的註解一直這樣寫，但沒有東西守著）。
+
+    AWS 真的壞掉（憑證過期、權限被收回、API 掛了）時，這件事不會只發生一秒鐘。
+    不快取的話每上傳一張照片就會再去撞一次同一面牆——每張都多一次跨海往返
+    （東京來回 50〜200 毫秒，逾時的話是好幾秒），而答案一定還是 False。
+
+    ExplodingMailbox 每被呼叫一次就 +1，所以「第二次仍然是 1」就是快取生效的證據。
+    """
+    mailbox = ExplodingMailbox()
+    probe = cloud_ingest.Ec2Probe(mailbox, "i-test", ttl_seconds=60)
+
+    assert probe.is_running() is False
+    assert probe.is_running() is False, "TTL 內應該直接給上一次（失敗）的答案"
+    assert mailbox.instance_state_calls == 1, "失敗的答案也要進快取，不可以每張照片都再撞一次牆"
+
+
+def test_探測的log不印完整的實例ID(caplog):
+    """log 只留實例 ID 的**尾 4 碼**（總覽 §7 鐵律 10：repo 是 public）。
+
+    這一行是「探測到底問到什麼」唯一的線索，所以不能不印；但 log 很常被整段貼進
+    報告、issue、REP 檔裡，而完整的實例 ID 與 bucket 名、佇列 URL 同一級——
+    它本身不是密碼（光有它做不了任何事），卻是「這個帳號有哪些資源」的直接線索。
+    尾 4 碼夠用來對照「是不是同一台」，又不會把完整名字散出去。
+    """
+    caplog.set_level(logging.INFO)
+    instance_id = "i-0abcdef1234567890"
+    probe, _ = make_probe(["running"], instance_id=instance_id)
+
+    assert probe.is_running() is True
+    assert not any(instance_id in line for line in caplog.messages), (
+        f"log 不可以出現完整的實例 ID：{caplog.messages}"
+    )
+    assert any(instance_id[-4:] in line for line in caplog.messages), (
+        f"尾 4 碼要留著，不然對不出「探測的是不是同一台」：{caplog.messages}"
+    )
+
+
+def test_TTL內不會再打一次DescribeInstances():
+    """D10 第 1 條：快取可短 TTL，避免每張圖都打 AWS。
+
+    劇本第二格是 stopped——如果快取沒生效，第二次就會拿到 False，測試立刻紅。
+    """
+    probe, mailbox = make_probe(["running", "stopped"], ttl_seconds=60)
+
+    assert probe.is_running() is True
+    assert probe.is_running() is True, "TTL 內應該直接給上一次的答案"
+    assert mailbox.instance_state_calls == 1, "TTL 內不可以再打一次 DescribeInstances"
+
+
+def test_TTL過了會再打一次(monkeypatch):
+    """快取不是永久的：機器真的被 Stop 了，最多 60 秒之後就要看得到。"""
+    probe, mailbox = make_probe(["running", "stopped"], ttl_seconds=60)
+
+    assert probe.is_running() is True
+    advance_clock_frozen(monkeypatch, 61)
+
+    assert probe.is_running() is False, "TTL 過了要重新問一次"
+    assert mailbox.instance_state_calls == 2
+
+
+def test_instance_id是空的時候回False而且零呼叫():
+    """CLOUD_ROUTE=ec2 卻沒設 EC2_WORKER_INSTANCE_ID ＝ 設定錯誤。
+
+    這時候拿空字串去打 DescribeInstances 只會換來一個看不懂的 AWS 錯誤，
+    所以**連問都不要問**：直接當作不可用、留一行 log，照片走本機照樣入庫。
+    """
+    probe, mailbox = make_probe(["running"], instance_id="")
+
+    assert probe.is_running() is False
+    assert mailbox.instance_state_calls == 0, "沒有 instance id 就不該打 AWS"

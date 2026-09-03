@@ -207,6 +207,70 @@ class AlwaysRunning:
         return True
 
 
+class Ec2Probe:
+    """問 AWS「那台工人機器現在開著嗎」，答案快取 ttl_seconds 秒。
+
+    為什麼要快取（design6 D10 第 1 條「快取可短 TTL，避免每張圖都打 AWS」）：
+    每上傳一張非敏感照片就要探測一次。DescribeInstances 本身不收費，
+    但它是一次跨海的網路往返（東京來回約 50〜200 毫秒），而且有 API 速率限制。
+    EC2 從 stopped 變成 running 本來就要一分鐘上下，所以 60 秒內問一次就夠了。
+
+    ★ 快取活在**這個物件身上**。要讓它跨照片生效，整個行程必須共用同一個
+      Ec2Probe——所以 dependencies._ec2_cloud_route() 加了 lru_cache（見那裡的說明）。
+
+    ★ 任何例外都當成「不可用」（design6 §8 錯誤表第 3 列）：沒有 AWS 憑證、
+      API 掛了、instance id 打錯……全部回 False，讓 gated_ingest 走 fallback。
+      **絕對不可以往外丟**——那會讓一張照片因為「查不到機器狀態」而入不了庫，
+      直接違反 D10「不上傳失敗、不要求使用者重傳」。
+
+    ★ 它**不會**幫你把機器開起來。design6 §1.2 第 9 列已否決「常開 EC2」，
+      D15 是「用完就 Stop」；而且開機要一分鐘上下，那張照片還是得等——
+      不如直接走本機（本來就比較快）。
+    """
+
+    def __init__(self, mailbox: CloudMailbox, instance_id: str, *, ttl_seconds: int) -> None:
+        self._mailbox = mailbox
+        self._instance_id = instance_id
+        self._ttl_seconds = ttl_seconds
+        self._cached: bool | None = None  # None ＝ 還沒問過
+        self._cached_at = 0.0
+
+    def is_running(self) -> bool:
+        """現在能不能把照片送去雲端。只有狀態是 "running" 才回 True。"""
+        if not self._instance_id:
+            # CLOUD_ROUTE=ec2 卻沒設 EC2_WORKER_INSTANCE_ID：這是設定錯誤，
+            # 但不可以讓照片入不了庫。回 False 走 fallback，並且大聲留 log。
+            # 拿空字串去打 DescribeInstances 只會換來一個看不懂的 AWS 錯誤，
+            # 所以**連問都不要問**。
+            logger.warning("沒有設定 EC2_WORKER_INSTANCE_ID，EC2 一律當作不可用")
+            return False
+
+        now = _now()
+        if self._cached is not None and now - self._cached_at < self._ttl_seconds:
+            return self._cached
+
+        try:
+            state = self._mailbox.instance_state(self._instance_id)
+        except Exception:
+            # 憑證過期、權限不足、網路不通……全部當成「不可用」。
+            # 失敗的答案**也要進快取**：AWS 壞掉時不該每張照片都再去撞一次牆。
+            logger.warning("查不到 EC2 狀態，當作遠端不可用", exc_info=True)
+            return self._remember(False, now)
+
+        # ★ 只印**尾 4 碼**（總覽 §7 鐵律 10：這個 repo 是 public，而 log 很常被
+        #   整段貼進報告與 issue）。實例 ID 本身不是密碼，但它跟 bucket 名、佇列 URL
+        #   同一級——是「這個帳號有哪些資源」的直接線索。尾 4 碼足夠對照
+        #   「探測的是不是同一台」，這也是這一行 log 唯一的用途。
+        logger.info("EC2 探測：instance=…%s state=%s", self._instance_id[-4:], state)
+        return self._remember(state == "running", now)
+
+    def _remember(self, available: bool, now: float) -> bool:
+        """把答案存進快取並回傳它（成功與失敗都存，理由見 is_running 的註解）。"""
+        self._cached = available
+        self._cached_at = now
+        return available
+
+
 class CloudRoute:
     """本機端的雲端路：把一筆任務寄出去、等結果、收尾（design6 §2）。
 

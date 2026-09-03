@@ -16,11 +16,15 @@
 
 from __future__ import annotations
 
+import pytest
+
+from app import dependencies
 from app.core import config
 from app.dependencies import get_cloud_route as real_get_cloud_route
 from app.services import aws_mailbox as aws_mailbox_module
 from app.services import cloud_ingest
 from app.services.aws_mailbox import AwsMailbox
+from tests.fakes import FakeMailbox
 
 
 def configure_assume_mode(monkeypatch) -> None:
@@ -132,3 +136,81 @@ def test_assume模式把config的四個值對應到AwsMailbox(monkeypatch):
         "results_queue_url": "https://sqs.example.invalid/queue-RESULTS",
         "region": "region-Z",
     }
+
+
+# ---------------- ec2 模式（Phase 89）----------------
+
+
+@pytest.fixture(autouse=True)
+def clear_ec2_route_cache():
+    """_ec2_cloud_route() 是「整個行程只建一次」的（lru_cache），前後都要清。
+
+    不清的話：這一顆測試建的假信箱會被留給後面的測試，或反過來被上一顆的殘留干擾
+    ——症狀是「單獨跑綠、整批跑紅」，最難查的那一種。
+    """
+    dependencies._ec2_cloud_route.cache_clear()
+    yield
+    dependencies._ec2_cloud_route.cache_clear()
+
+
+def test_ec2模式建出CloudRoute而且探測是Ec2Probe(monkeypatch):
+    """CLOUD_ROUTE=ec2 時要建出「會真的去問機器狀態」的那一條路。
+
+    怎麼證明它是 Ec2Probe 而不是 AlwaysRunning：讓假信箱回 stopped。
+    AlwaysRunning 不管三七二十一都回 True、一次 instance_state 都不叫；
+    所以 available() 是 False ＋ instance_state 恰被叫一次、而且問的是
+    config.EC2_WORKER_INSTANCE_ID 那台，就只可能是 Ec2Probe。
+
+    ★ 這裡把 AwsMailbox 整個換掉，所以**完全不會**碰到 boto3、也不會出網——
+      能這樣換是因為 _ec2_cloud_route() 的 import 寫在函式**裡面**
+      （`from … import AwsMailbox` 每次呼叫都會重新去模組上取那個名字）。
+      換的是 **aws_mailbox_module 這個模組上的屬性**（檔頭那一行
+      `from app.services import aws_mailbox as aws_mailbox_module` 就是為了這件事，
+      Phase 86 的第 3 顆已經在用同一招）。
+
+    ★ 呼叫的是檔頭早綁定的 real_get_cloud_route（Phase 86 那 3 顆就是用這個名字）：
+      第五道安全網每顆測試都會把 dependencies.get_cloud_route 換成「永遠回 CloudRouteOff」
+      的替身，寫 dependencies.get_cloud_route() 拿到的會是替身，這顆就永遠紅。
+
+    ★ 四個假值刻意**彼此不同**（沿用 Phase 86 第 3 顆的手法）：全都一樣的話，
+      「兩條佇列 URL 對調」這種完全不會報錯的設定錯，這顆測試會照樣綠。
+    """
+    captured: list[dict] = []
+    mailbox = FakeMailbox()
+    mailbox.instance_state_script = ["stopped"]
+
+    def fake_aws_mailbox(**kwargs):
+        captured.append(kwargs)
+        return mailbox
+
+    monkeypatch.setattr(aws_mailbox_module, "AwsMailbox", fake_aws_mailbox)
+    monkeypatch.setattr(config, "CLOUD_ROUTE", "ec2")
+    monkeypatch.setattr(config, "S3_BUCKET", "bucket-A")
+    monkeypatch.setattr(config, "SQS_JOBS_QUEUE_URL", "https://sqs.example.invalid/queue-JOBS")
+    monkeypatch.setattr(
+        config, "SQS_RESULTS_QUEUE_URL", "https://sqs.example.invalid/queue-RESULTS"
+    )
+    monkeypatch.setattr(config, "AWS_REGION", "region-Z")
+    monkeypatch.setattr(config, "EC2_WORKER_INSTANCE_ID", "i-test")
+    monkeypatch.setattr(config, "EC2_PROBE_TTL_SECONDS", 60)
+
+    route = real_get_cloud_route()
+
+    assert isinstance(route, cloud_ingest.CloudRoute)
+    # 四個參數都要從 config 來（打錯區或對到別的 bucket 是最難查的設定錯）
+    assert captured == [
+        {
+            "bucket": "bucket-A",
+            "jobs_queue_url": "https://sqs.example.invalid/queue-JOBS",
+            "results_queue_url": "https://sqs.example.invalid/queue-RESULTS",
+            "region": "region-Z",
+        }
+    ]
+    assert route.available() is False, "機器是 stopped，探測要說不可用"
+    assert mailbox.instance_state_calls == 1, "AlwaysRunning 不會問；問了一次就是 Ec2Probe"
+    assert mailbox.calls == ["instance_state i-test"], (
+        "要問的是 config.EC2_WORKER_INSTANCE_ID 那一台"
+    )
+    # 整個行程共用同一條路（lru_cache）：再要一次要拿到同一個物件，而且信箱只建過一次
+    assert real_get_cloud_route() is route
+    assert len(captured) == 1

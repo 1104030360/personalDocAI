@@ -18,6 +18,7 @@ you do not need to type anything.**
 9. [Monitoring and logs](#9-monitoring-and-logs)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Never do these](#11-never-do-these)
+12. [Cloud worker on the Mac](#12-cloud-worker-on-the-mac)
 
 ---
 
@@ -477,6 +478,170 @@ Always stop services with `docker compose stop`.
 So `down -v` remains absolutely forbidden — it deletes **both**. But if you ever genuinely
 need to clear only Redis, `docker volume rm personaldocai_redisdata` is an acceptable loss —
 **provided no job is running at the time**.
+
+---
+
+## 12. Cloud worker on the Mac
+
+The **cloud worker** is the process that looks at photos on the *other* side of the mailbox.
+It is not the Celery worker container — that one stays on this Mac and writes to the database.
+The cloud worker only looks at images and writes one `result.json` back into S3.
+
+From increment six it can run in two places: on this Mac (this section) or on an EC2
+instance (added later). Both run exactly the same code.
+
+**You only need this when you want to exercise the cloud pipeline by hand.**
+Day to day it should not be running, and `CLOUD_ROUTE` in `.env` should be `off`.
+
+### What has to be in place
+
+- `.env` has values for `S3_BUCKET`, `SQS_JOBS_QUEUE_URL`, `SQS_RESULTS_QUEUE_URL`,
+  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `OLLAMA_API_KEY` and
+  `OLLAMA_CLOUD_VLM_MODEL` — and **no** `AWS_ENDPOINT_URL` (that one is only for pytest,
+  where it points at a dead port so nothing can reach the internet).
+- The bucket and both queues exist:
+
+```bash
+python scripts/aws_check.py s3 sqs      # both lines must print OK
+```
+
+### Run it (terminal A)
+
+```bash
+cd /Users/linjunting/personalDocAI && source .venv/bin/activate
+python -m app.workers.cloud_worker
+```
+
+Do **not** source `.env` or `unset` anything in this terminal: the worker reads `.env` by
+itself and needs the `personaldocai-mac` key that lives there. Sourcing `.env` and then
+`unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY` is only for the shell where you type `aws`
+commands — that shell should be on the `personaldocai-admin` profile from `~/.aws`.
+
+The first line tells you which build, which region and which bucket it is talking to:
+
+```text
+INFO:     cloud_worker 啟動 version=dev region=ap-northeast-1 bucket=... vlm=cloud model=gemma4
+```
+
+`version=dev` is correct here — the real git sha is only baked in when the image is built.
+`vlm=` and `model=` say which vision backend it picked; see the next subsection.
+
+Use `python -m` (a module path), **not** `python app/workers/cloud_worker.py`: the second
+form puts `app/workers/` on the import path and `from app.core import config` fails
+immediately. It also has to be started **from the project root** — `app` is not installed
+into the venv, so `python -m` only finds it because the current directory is on `sys.path`.
+(`.env` is not the reason: `load_dotenv()` in `app/core/config.py` walks up from that file's
+own directory, so the keys are found from anywhere.) If the worker starts but then repeats a
+`NoCredentialsError` / `InvalidClientTokenId` traceback every 5 seconds, the AWS key in
+`.env` is missing or wrong — the worker deliberately keeps retrying instead of dying; press
+Ctrl+C, fix `.env`, start it again.
+
+### Which vision backend the worker uses
+
+`WORKER_VLM_BACKEND` decides which model the cloud worker itself talks to. It defaults to
+`cloud`, which is what the hand-run smoke test above uses.
+
+| value | talks to | reads |
+|---|---|---|
+| `cloud` (default — also what an empty value means) | ollama.com | `OLLAMA_API_KEY`, `OLLAMA_CLOUD_VLM_MODEL` |
+| `local` | the Ollama on **the same machine as the worker** | `OLLAMA_BASE_URL`, `VLM_MODEL` (both required) |
+
+`local` means the worker's *own* machine, not "this Mac" in general: on an EC2 instance it
+is that instance's own `127.0.0.1:11434`. It does work here on the Mac, but the local gemma4
+takes 64–88 s per photo, so this value really exists for a GPU instance (added 2026-09-03;
+it replaces the earlier rule that the worker always used Ollama Cloud).
+No EC2 worker is running yet. When one is set up it will be a **CPU box first** (`t3.xlarge`),
+which keeps `cloud` here — the box just forwards the image to ollama.com — because that box
+is only there to prove the AWS path end to end. A **GPU box** (`g4dn.xlarge`, `local`) comes
+later and only if AWS grants the GPU quota; the machine type does not decide the backend,
+this variable does. With `local` the worker
+does not need `OLLAMA_API_KEY` at all, but it does need `VLM_MODEL` (an empty model name talks
+to Ollama happily and fails on every single photo). Leaving the value empty, or leaving the line
+out entirely, both mean `cloud`; a *typo* is fatal on purpose — the worker refuses to start
+rather than quietly falling back to one of them.
+
+This is **not** the header switch in the web UI. That one decides which model the *local* path
+and the privacy gate use; it never reaches the cloud worker.
+
+### Point the local side at it (terminal B)
+
+```bash
+# 1. In .env:   CLOUD_ROUTE=assume      ("assume the remote worker is up; do not probe")
+#               CLOUD_RESULT_TIMEOUT_SECONDS=30    (optional, keeps mistakes short)
+# 2. Only the worker container reads this setting. Pass the same -f files you started with;
+#    in dev mode (the usual state on this machine) that is both of them:
+docker compose -f compose.yaml -f compose.dev.yaml restart worker
+docker compose -f compose.yaml -f compose.dev.yaml logs -f worker
+```
+
+Now upload a photo whose **content** is clearly not sensitive. The gate never looks at the
+file name: it shrinks the image and asks the same vision model one short question about what
+is in it. A picture of a shop receipt is the easy case; a picture of an ID card is not.
+
+```bash
+curl -k -s -w '\n%{http_code}\n' -F "file=@/tmp/smoke-receipt.png" \
+  https://127.0.0.1:8000/photos          # 202
+```
+
+The gate runs on whichever backend the header switch is set to (`GET /settings/ai-backend`).
+On `local` that one question costs 1–2 minutes per photo; on `cloud` it is under a second.
+For a hand-run smoke test, flip it to cloud first:
+
+```bash
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"cloud"}'
+```
+
+That switch is a **separate door** from the privacy gate — it only decides which model the
+gate (and the local path) talks to. The cloud worker is not affected by it at all: what it
+talks to is `WORKER_VLM_BACKEND` (see above).
+
+What you should see:
+
+| Where | What |
+|---|---|
+| terminal A (cloud worker) | `kind=vlm backend=cloud`, about 1–3 s, then `result.json 已放好` |
+| terminal B (worker container) | `route=cloud verdict=NON_SENSITIVE`, then `kind=embed backend=local`, then `雲端結果已入庫：photo_id=<n>` (the cloud path's own completion line; `grep 雲端結果已入庫`) — and the job disappears from `GET /ingest-jobs` |
+| S3 | empty again once it is done (the local side deletes all three objects) |
+| both queues | `ApproximateNumberOfMessages` back to `0` |
+| the app | the photo is on the pending wall, exactly as with any other upload |
+
+An image **whose content** is an ID card, a passport page or a payslip never reaches the
+cloud worker at all: terminal A stays silent, terminal B logs `route=local verdict=SENSITIVE`
+(or `verdict=UNCERTAIN`, which is treated the same way), and S3 gets nothing. Renaming a file
+changes nothing in either direction — that is the whole point of the gate.
+
+### Stop it
+
+Press **Ctrl+C** in terminal A. It prints `收到停止訊號` and then finishes the message it is
+holding before exiting, so it never leaves half a job behind. **This can take up to 20
+seconds** — that is the SQS long poll finishing, not a hang. Press Ctrl+C again to cut it short.
+
+### When you are done — this part is not optional
+
+```bash
+# In .env:   CLOUD_ROUTE=off
+#            CLOUD_RESULT_TIMEOUT_SECONDS=300      (back to the default)
+docker compose -f compose.yaml -f compose.dev.yaml restart worker
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"local"}'   # if you flipped it
+```
+
+If you leave `CLOUD_ROUTE=assume` behind with no worker running, every non-sensitive upload
+will be pushed to S3 and then sit there until `CLOUD_RESULT_TIMEOUT_SECONDS` expires before
+falling back to local processing. Nothing is lost — the photo still lands in the inbox — but
+every one of them is several minutes slower, and the only clue is a `fallback=local
+reason=result_timeout` line in the worker log.
+
+Leftover queue messages from a smoke test:
+
+```bash
+set -a; . ./.env; set +a
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY     # so the CLI uses ~/.aws, not the app's key
+aws sqs get-queue-attributes --queue-url "$SQS_JOBS_QUEUE_URL" \
+  --attribute-names ApproximateNumberOfMessages --region "$AWS_REGION"
+aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"   # once per 60 s
+```
 
 ---
 

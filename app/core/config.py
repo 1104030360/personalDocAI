@@ -103,7 +103,9 @@ CLOUD_ROUTE = os.getenv("CLOUD_ROUTE", "off")
 
 # AWS 區域：東京（design6 §7）。boto3 的 client 一律**明傳** region_name=config.AWS_REGION，
 # 不靠 ~/.aws/config——那個檔不入版控，換一台機器就會變成「在別的區域找不到 bucket」。
-AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-1")
+# `or` 而不是 getenv 的第二個參數：worker.env 範本出貨就是 `AWS_REGION=`（只寫變數名），
+# key 存在、值為空時 getenv 的預設值**不會**生效，會變成 region=""（與 WORKER_VLM_BACKEND 同一招）。
+AWS_REGION = os.getenv("AWS_REGION") or "ap-northeast-1"
 
 # ★ AWS_ACCESS_KEY_ID／AWS_SECRET_ACCESS_KEY／AWS_ENDPOINT_URL 這三個**刻意不在這裡讀**：
 #   它們是 boto3 自己認得的標準環境變數，建 client 時 boto3 會直接去環境裡撈。
@@ -134,3 +136,13 @@ CLOUD_RESULT_TIMEOUT_SECONDS = int(os.getenv("CLOUD_RESULT_TIMEOUT_SECONDS", "30
 # 只有 app/workers/cloud_worker.py 讀它，啟動時印在 log 第一行——
 # Demo 3 就是靠這個字串證明「EC2 上跑的真的是剛剛推上去的那一版」（design6 D16）。
 WORKER_VERSION = os.getenv("WORKER_VERSION", "dev")
+
+# 雲端工人看圖用哪一顆（2026-09-03 產品負責人改判，design6 D12 作廢）：
+#   cloud ＝ ollama.com（OLLAMA_API_KEY／OLLAMA_CLOUD_VLM_MODEL；Mac 上手動煙霧的預設）
+#   local ＝ 跟工人**同一台機器**上的 Ollama（OLLAMA_BASE_URL／VLM_MODEL；GPU EC2 用這個）
+# 只有 app/workers/cloud_worker.py 讀它。打錯字要當場炸（build_worker_vlm 會 ValueError）。
+# ⚠ 用 `or` 不是 os.getenv 的第二個參數：**留空也算沒填**。
+#   worker.env 範本裡那一行就是 `WORKER_VLM_BACKEND=`（範本一律只寫變數名），
+#   而 os.getenv(名字, "cloud") 只在 key 完全不存在時才給預設值，key 在、值是空的時候
+#   回的是 ""——那會被當成打錯字，工人拒絕啟動，EC2 上 Restart=always 每 10 秒重試一次。
+WORKER_VLM_BACKEND = os.getenv("WORKER_VLM_BACKEND") or "cloud"

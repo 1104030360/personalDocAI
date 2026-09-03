@@ -1,26 +1,41 @@
 # Phase 94：CD 工作流程
 
+> 📌 **2026-09-03 夜裡校準（接 92／93 同日拍板；本 phase 仍要等 ★G3 ＋ 93 完成）：**
+>
+> - 真機是 **x86_64**，不是 t4g——Phase 92 拆兩段之後有兩種（總覽 §10.2 追認項 **U**）：
+>   **92-A `t3.xlarge`**（CPU、`WORKER_VLM_BACKEND=cloud`、現在就做、收工 **Stop**）與
+>   **92-B `g4dn.xlarge`**（GPU、`local`、等 G and VT 配額、測完 **Terminate**）。
+>   **兩者皆 x86_64**，所以 CD 必須建 **`linux/amd64,linux/arm64`** 多架構 manifest——這一條不變。
+> - CD **仍然不准**開機／關機／刪機。
+>   「EC2 不是 running → job 仍成功、只推 ECR」對 **stopped 與 terminated／找不到實例** 都成立。
+> - 帳號已升 Paid。**Demo 3 不必等 GPU 配額**：★G3 在 92-A 之後，而 92-A 那台 `t3.xlarge` 是
+>   **Stop 留著**的（30 GB ≈ $2.9／月），Demo 3 直接 `start-instances` 就有一台 running 可用，
+>   做完再 **Stop**（不是 Terminate——那台還要留著）。
+> - 所以本 phase **不依賴 GPU 配額**，workflow、測試與 Demo 3 都可以照常做完。
+
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
 > 本 phase 特別不要做的四件事：
 > ① **不要**動 `.github/workflows/test.yml`（design6 D16：「現有 CI 不動契約」，`git diff` 對它必須是空的）；
-> ② **不要**讓 CD 去開機或關機（`ec2:StartInstances`／`StopInstances` 這兩個權限 Phase 93 根本沒給——
-> 開關機是人做的事，D15「用完就 Stop」是產品負責人的決定，不是自動化該搶的）；
-> ③ **不要**加 staging／production 兩套環境、matrix、多架構（`linux/arm64` **一個**就好，
-> EC2 是 t4g ＝ ARM）、Slack 通知、release note 產生器；
+> ② **不要**讓 CD 去開機、關機或刪機（`ec2:StartInstances`／`StopInstances`／`TerminateInstances`
+>    Phase 93 根本沒給——開關機與刪機是人做的事；Demo 2b 用 Stop、全程結束 Terminate 都不是自動化該搶的）；
+> ③ **不要**加 staging／production 兩套環境、matrix、Slack 通知、release note 產生器。
+>    映像架構是 **`linux/amd64,linux/arm64` 一個 manifest 兩個平台**（g4dn 要 amd64），不是「只建 arm64」。
+>    也不要用 GitHub matrix 拆成兩個 job 各建一種——buildx 一次推多架構即可；
 > ④ **不要**在 workflow 裡放任何 AWS 的長期金鑰——Phase 93 做 OIDC 就是為了不必放。
 
 > 🎯 **一句話目標：** 新增 `.github/workflows/deploy.yml`：既有的 CI（`test`）在 `main` 上跑綠之後
 > 自動觸發，用 Phase 93 的 OIDC 角色換一組臨時憑證，用 QEMU ＋ buildx 建出
-> **`linux/arm64`** 的 `cloud-worker` 映像、推到 ECR（同時打 `<commit sha>` 與 `latest` 兩個 tag），
-> 最後**只在 EC2 是 `running` 的時候**用 SSM Run Command 重啟工人；EC2 是 `stopped` 時
-> **這個 job 仍然算成功**（映像已經推上去了，下次開機自然拉到新的）。
+> **`linux/amd64,linux/arm64`** 的 `cloud-worker` 多架構映像、推到 ECR（同時打 `<commit sha>` 與 `latest` 兩個 tag），
+> 最後**只在 EC2 是 `running` 的時候**用 SSM Run Command 重啟工人；EC2 **不是** `running`
+> （`stopped`、`terminated`、找不到實例、變數沒設）時 **這個 job 仍然算成功**
+> （映像已經推上去了，下次開機自然拉到新的）。
 
 ---
 
 **為什麼要做這個：**
 
 **現在的痛（Phase 93 做完之後仍然存在）：** 鑰匙配好了，但門還沒裝。
-改工人的程式碼還是得手動做三件事：`docker buildx build --platform linux/arm64 --target cloud-worker`
+改工人的程式碼還是得手動做三件事：`docker buildx build --platform linux/amd64,linux/arm64 --target cloud-worker`
 → `docker push` → Session Manager 進去 `systemctl restart`。
 三步任何一步忘了，EC2 上跑的就還是舊程式——**而且完全不會報錯**。
 
@@ -37,12 +52,12 @@ git push ──► Actions「test」──綠──► Actions「deploy」──
 與**它測的那個 commit 的 SHA**。我們就用這兩樣東西：結論不是 `success` 就整個 job 不跑；
 要 build 的程式碼就 checkout 那個 SHA（**不是** `main` 的最新，理由見 §7 陷阱 2）。
 
-**為什麼「EC2 關著也算成功」不是偷懶？**
+**為什麼「EC2 沒開著也算成功」不是偷懶？**
 design6 D16 明文：「**EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉**」。
-產品負責人的常態是 **EC2 關著**（D15：要卡片 $0、用完就 Stop）。
+產品負責人的常態是 **EC2 關著**（92-A 那台 `t3.xlarge` Stop 著）**或已經 Terminate**（92-B 的 GPU 機測完刪機）。
 如果「機器沒開 → CD 失敗」，那 GitHub 上會永遠是一片紅 ×，紅到你不再看它——
-那才是真的危險（真正的失敗也被淹沒了）。所以：機器沒開時印一行 `::notice::` 然後
-`exit 0`，Actions 顯示綠色 ✓ 並在頁面上留一則說明。
+那才是真的危險（真正的失敗也被淹沒了）。所以：機器不是 `running` 時印一行 `::notice::` 然後
+`exit 0`（含 `stopped`、`terminated`、describe 找不到），Actions 顯示綠色 ✓ 並在頁面上留一則說明。
 
 **新名詞先解釋：**
 
@@ -63,7 +78,7 @@ design6 D16 明文：「**EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉*
 | **runner** | GitHub 提供的那台跑 job 的虛擬機。`ubuntu-latest` 的 CPU 是 **x86_64**（也叫 amd64），**不是** ARM |
 | **QEMU** | 一個模擬器。讓 x86_64 的機器「假裝」成 ARM 去跑指令，這樣才 build 得出 ARM 的映像。**慢**（第一次 5〜15 分鐘） |
 | **buildx** | Docker 的多平台建置外掛。`docker build` 只會蓋出「跟你這台一樣的架構」；buildx 才能指定 `--platform` |
-| **`--platform` / `platforms:`** | 「這個映像是給哪種 CPU 跑的」。本專案固定 **`linux/arm64`**（EC2 是 t4g ＝ AWS 自研 ARM 晶片） |
+| **`--platform` / `platforms:`** | 「這個映像是給哪種 CPU 跑的」。本專案固定 **`linux/amd64,linux/arm64`**（g4dn ＝ x86_64 要 amd64；arm64 留給以後的 Graviton／本機 Apple Silicon 對照）。GitHub runner 是 x86，amd64 那一份是原生、arm64 那一份走 QEMU |
 | **`target`** | 多階段 Dockerfile 裡「要停在哪一段」。Phase 90 把 Dockerfile 改成 `base` → `cloud-worker` → `app`；CD 要的是中間那段，所以 `target: cloud-worker` |
 | **build arg（`build-args`）** | build 當下傳給 Dockerfile 的變數。本專案傳 `GIT_SHA`，Dockerfile 把它變成映像裡的環境變數 `WORKER_VERSION`，工人啟動時印在 log 裡 |
 | **ECR registry URI** | 你的私有 registry 的網址，長得像 `<ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com`。`amazon-ecr-login` 這個 action 會把它放進 `steps.<id>.outputs.registry`，所以 workflow 裡**不必寫死帳號 ID** |
@@ -79,12 +94,15 @@ design6 D16 明文：「**EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉*
 
 ## 1. 對應 design6.md 章節
 
+> ⚠ 2026-09-03 已校準：真機是 **92-A `t3.xlarge`／92-B `g4dn.xlarge`，兩者皆 x86_64**，CD 的 buildx 建**多架構**
+> （`linux/amd64,linux/arm64`）。測試名改成 `test_CD建linux_amd64與linux_arm64的映像`。
+
 | 出處 | 說的是什麼 | 本 phase 怎麼落地 |
 |---|---|---|
-| **D16**（CI／CD 分開） | 「現有 GitHub Actions CI **不動契約**。CD：CI 綠 → OIDC 短憑證 → build `linux/arm64` → ECR `personaldocai:<git-sha>` → SSM Run Command 在 EC2 上 pull＋重啟。**EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉**」 | §4.3 的 `deploy.yml` 逐句落地；`test.yml` 零改動（§4.6 用 `git diff --stat` 證明）；最後一步的 `stopped → notice ＋ exit 0` 就是「Stop 時仍可 push」 |
+| **D16**（CI／CD 分開） | 「現有 GitHub Actions CI **不動契約**。CD：CI 綠 → OIDC 短憑證 → build 映像 → ECR `personaldocai:<git-sha>` → SSM Run Command 在 EC2 上 pull＋重啟。**EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉**」 | §4.3 的 `deploy.yml` 逐句落地；`test.yml` 零改動（§4.6 用 `git diff --stat` 證明）；最後一步的 **非 running → notice ＋ exit 0** 就是「沒開機仍可 push」（含 stopped／terminated） |
 | **§0 己那列** | 「何時可以開始：戊能手動部署。何時算過：push 後 ECR 有 `<sha>`；SSM 更新；**不靠 `latest` 當唯一 tag**」 | §4.8 的 Demo 3 逐條；tag 打**兩個**（`<sha>` ＋ `latest`），但驗證靠工人 log 的 `version=<sha>` |
-| **§12 Demo 3** | 「改 worker 一點點 → push → CI 綠 → ECR 有該 commit SHA → Start 後 SSM 跑的是新 image（Stop 時至少 ECR 已更新）」 | §4.8 是這一條的逐步操作手冊 |
-| **D15**（Free plan） | 「映像 **`linux/arm64`**，機型 **t4g.small**」 | `platforms: linux/arm64`；§4.5 有一顆測試釘住「只有 arm64」 |
+| **§12 Demo 3** | 「改 worker 一點點 → push → CI 綠 → ECR 有該 commit SHA → Start 後 SSM 跑的是新 image（Stop 時至少 ECR 已更新）」 | §4.8 是這一條的逐步操作手冊。Demo 3 當下可 Stop 再看 CD 綠燈；**整段結束 Terminate** |
+| **D15**（機型／收工） | 原文「映像 `linux/arm64`，機型 `t4g.small`、一律 Stop」。**2026-09-03 兩次改判（追認項 T／U）：** 映像多架構；機型 92-A `t3.xlarge`（收工 Stop）／92-B `g4dn.xlarge`（測完 Terminate），**兩者皆 x86_64** | `platforms: linux/amd64,linux/arm64`；§4.5 有一顆測試釘住**兩種架構都在**。CD 仍然不准 Start／Stop／Terminate |
 | **總覽 §2.8 裁決** | ECR repository ＝ `personaldocai-worker`；EC2 的 systemd 服務 ＝ `personaldocai-worker.service` | `env.ECR_REPOSITORY` 與 SSM 那句 `systemctl restart personaldocai-worker` 逐字沿用 |
 | **總覽 §10 追認項 b／e ＋ §10.2 M 列裁決** | b：分支是 `main`（design6 §6 寫 `master` 是筆誤）；M：trust 的 `sub` 前綴採 GitHub 不可變主體格式 `repo:1104030360@92135456/personalDocAI@1349196211`（Phase 93 鎖的完整字串＝前綴＋`:ref:refs/heads/main`）；e：CD 同時推 `<sha>` 與 `latest`，「跑的是不是新映像」靠 `WORKER_VERSION` 的 log 驗 | `branches: [main]`；`tags:` 兩行；§4.8 第 5 步用 `docker logs` 看 `version=` |
 | **§6 安全與隱私**（IAM 最小權限、機密不進文件） | GitHub OIDC role 只做 ECR push／SSM／Describe；trust 鎖 repo＋分支；文件只寫變數名 | workflow **零長期金鑰**（`test_CD沒有寫死任何AWS金鑰`）；job 的 `if` 只認 `push` 事件——PR（含 fork）觸發的 CI 完成時**不准**拿 secret 去部署（GitHub 官方對 `workflow_run` 的安全建議，§7 陷阱 8） |
@@ -97,12 +115,15 @@ design6 D16 明文：「**EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉*
 - **Phase 93 已完成**：OIDC provider 建好、角色 `personaldocai-github-deploy` 建好、
   GitHub repository secret **`AWS_DEPLOY_ROLE_ARN`** 已設定、4 顆掃碼測試綠。
 - **★ 閘門 G3 已由產品負責人通過**（G3 是 Phase 93 的門檻，93 過了 94 就不必再問一次）。
-- ECR repository `personaldocai-worker` 存在，而且裡面**已經有一個 Phase 91 手動推上去的
-  arm64 映像**（tag 是當時 `git rev-parse --short HEAD` 的**短** sha ＋ `latest`；
+- ECR repository `personaldocai-worker` 存在，而且裡面**已經有一個 Phase 91／92 手動推上去的
+  多架構映像**（`linux/amd64` ＋ `linux/arm64`；tag 是當時 `git rev-parse --short HEAD` 的**短** sha ＋ `latest`；
   沒有的話 §4.8 的「有沒有變新」就沒有對照組）。
 - `Dockerfile` 已經是 Phase 90 的多階段版本（`base` → `cloud-worker` → `app`，
   `cloud-worker` 這一段帶 `ARG GIT_SHA`）。
-- `.env` 的 `EC2_WORKER_INSTANCE_ID` 已填、EC2 目前是 **`stopped`**。
+- `.env` 的 `EC2_WORKER_INSTANCE_ID`：92-A 那台 `t3.xlarge` 收工是 **Stop**（碟留著），
+  所以這個值通常還填著、指向一台 stopped 的機器。CD 對非 running（含 stopped／terminated／找不到）
+  本來就 `exit 0`。Demo 3 要驗證 SSM 重啟時，**`start-instances` 把 92-A 留下的 `t3.xlarge` 開起來即可**
+  （不必等 GPU 配額、不必開 `g4dn`），做完 **Stop**。
 
 ### 開工基線（自己再驗一次，不要抄）
 
@@ -155,15 +176,17 @@ aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$A
 - `README.md` §9 "Development and testing" 段加一小段 **"CI/CD"**（**英文**——
   `README.md` 自 2026-08-27 起是英文，總覽 §3.8）。
 - 人工 **Demo 3**（design6 §12）：在 `cloud_worker.py` 加一行註解（＝「改 worker 一點點」）→ push
-  → CI 綠 → CD 綠 → ECR 有 `<sha>` → Start → SSM 看 `version=<sha>` → **Stop**。
+  → CI 綠 → CD 綠 → ECR 有 `<sha>` → **Start 92-A 留下的 `t3.xlarge`** ／SSM 看 `version=<sha>` →
+  做完 **Stop**（那台要留著；只有 92-B 的 GPU 機才 Terminate）。
 
 ### 明確不做（防手滑）
 
 | 不做 | 為什麼 |
 |---|---|
 | 改 `.github/workflows/test.yml` | design6 D16「現有 CI 不動契約」。`git diff --stat` 對它必須是空的 |
-| 讓 CD 開機／關機（`ec2:StartInstances`／`StopInstances`） | 開關機是人的決定（D15：用完就 Stop）。而且 Phase 93 的 policy 根本沒給這兩個權限——加了 workflow 也會 AccessDenied |
-| build `linux/amd64`（或用 matrix 建兩種架構） | EC2 是 **t4g ＝ ARM**。多建一份 x86 的映像只是讓 QEMU build 時間翻倍、ECR 多存一份沒人拉的東西 |
+| 讓 CD 開機／關機／刪機（`ec2:StartInstances`／`StopInstances`／`TerminateInstances`） | 開關機與刪機是人的決定。Phase 93 的 policy 根本沒給這三個權限——加了 workflow 也會 AccessDenied |
+| 用 GitHub matrix 拆成兩個 job 各建一種架構 | 一個 `platforms: linux/amd64,linux/arm64` 就夠。matrix 會讓 ECR 推兩次、也更容易漏掉其中一個 |
+| 只建 `linux/arm64`（或只建 `linux/amd64`） | 真機**兩段都是 x86_64**（92-A `t3.xlarge`、92-B `g4dn.xlarge`）。只建 arm64 → EC2 `exec format error`（安靜壞在遠端 systemd）。只建 amd64 → 以後 Graviton／本機 ARM 對照沒有映像 |
 | 加 staging／production 兩套環境、GitHub Environments、required reviewers | 單人 side project、只有一台機器。加了只會讓自己 push 不上去 |
 | 在 CD 裡跑 pytest／ruff | CI（`test`）已經跑過了，而且 CD 是「**它綠了**才觸發」。重跑一次只是多等五分鐘 |
 | 在 CD 裡建 `app` 映像、或碰 `compose.yaml` | `app` 跑在這台 Mac 上，不上雲（design6 §1.1 第 2 列：**不**把 FastAPI／Postgres／Redis／Celery／Ollama 搬上雲）。總覽 §7 鐵律 11：compose 本增量零改動 |
@@ -371,8 +394,9 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # runner 的 CPU 是 x86_64；EC2 t4g 是 ARM。QEMU 讓前者模擬後者。
-      - name: Set up QEMU (so an x86_64 runner can build for ARM)
+      # runner 的 CPU 是 x86_64。amd64 那一份原生建；arm64 那一份靠 QEMU。
+      # 真機 g4dn 要 amd64；arm64 留給對照與以後的 Graviton。
+      - name: Set up QEMU (so an x86_64 runner can also build arm64)
         uses: docker/setup-qemu-action@v4
 
       # buildx ＝ Docker 的多平台建置外掛。沒有它就沒有 platforms 這個選項。
@@ -387,8 +411,9 @@ jobs:
           # 多階段 Dockerfile 停在中間那一段（Phase 90：base -> cloud-worker -> app）。
           # 不指定 target 的話會蓋出最後一段（app），那是給這台 Mac 用的映像。
           target: cloud-worker
-          # EC2 是 t4g（AWS 自研 ARM），所以只建這一種架構。
-          platforms: linux/arm64
+          # 真機是 g4dn.xlarge（x86_64）。兩個平台打進同一個 manifest。
+          # 漏掉 amd64 → EC2 docker run 才炸 exec format error（訊息在遠端 systemd，不在 Actions）。
+          platforms: linux/amd64,linux/arm64
           push: true
           # 把 commit SHA 烙進映像：Dockerfile 的 ARG GIT_SHA -> ENV WORKER_VERSION，
           # 工人啟動時印在 log 裡。Demo 3 就是靠它證明「跑的是新映像」（D16）。
@@ -408,7 +433,7 @@ jobs:
 
       # ★ 這一步是「盡力而為」：EC2 開著就重啟工人，沒開著就印一行提示並成功結束。
       #   design6 D16 明文「EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉」——
-      #   產品負責人的常態是機器關著（D15：卡片 $0、用完就 Stop），
+      #   產品負責人的常態是機器關著或已經 Terminate（2026-09-03 選 B），
       #   所以「沒開機 = 部署失敗」會讓 Actions 永遠一片紅，紅到沒人看。
       - name: Restart the worker if the instance is running
         env:
@@ -631,19 +656,19 @@ def test_CD要求id_token寫入權限():
     )
 
 
-def test_CD只建linux_arm64的映像():
-    """D15：EC2 是 t4g.small（AWS 自研 ARM）。架構錯了的症狀是安靜的。
+def test_CD建linux_amd64與linux_arm64的映像():
+    """2026-09-03 改判：真機是 g4dn.xlarge（x86_64），CD 必須推多架構 manifest。
 
-    推上去的是 x86 映像的話，CD 一路綠燈，EC2 拉下來 docker run 才炸
+    漏掉 amd64 的症狀是安靜的：CD 一路綠燈，EC2 拉下來 docker run 才炸
     "exec format error"——而那個訊息出現在**遠端機器的 systemd log 裡**，
     不在 Actions 頁面上，所以你會以為部署成功了。
+    漏掉 arm64 則是以後 Graviton／本機 ARM 對照沒有映像。
     """
     原文 = deploy工作流程()
 
     平台 = re.findall(r"^\s*platforms:\s*(\S+)\s*$", 原文, re.M)
-    assert 平台 == ["linux/arm64"], f"只能建 linux/arm64 這一種架構，現在是 {平台}"
-    assert "linux/amd64" not in 原文, (
-        "不建 x86 架構的映像：EC2 是 ARM，多建一份只是讓 QEMU build 時間翻倍"
+    assert 平台 == ["linux/amd64,linux/arm64"], (
+        f"必須建 linux/amd64,linux/arm64 這兩種架構，現在是 {平台}"
     )
 
 
@@ -712,17 +737,17 @@ def test_CD沒有寫死任何AWS金鑰():
 **③ 先看到紅（TDD 的關鍵一步，不可以跳過）：**
 
 ```bash
-# 故意把架構改錯、target 拿掉，看兩顆會不會紅
+# 故意把架構改成只剩一種、target 拿掉，看兩顆會不會紅
 python3 - <<'PY'
 import pathlib
 p = pathlib.Path(".github/workflows/deploy.yml")
 t = p.read_text(encoding="utf-8")
-t = t.replace("platforms: linux/arm64", "platforms: linux/amd64")
+t = t.replace("platforms: linux/amd64,linux/arm64", "platforms: linux/arm64")
 t = t.replace("          target: cloud-worker\n", "")
 p.write_text(t, encoding="utf-8")
 PY
 
-pytest tests/integration/test_design6_error_paths.py -k "CD只建linux_arm64 or CD打的是cloud_worker" -q
+pytest tests/integration/test_design6_error_paths.py -k "CD建linux_amd64與linux_arm64 or CD打的是cloud_worker" -q
 ```
 
 （`-k` 的字串要挑本 phase **獨有**的片段：寫 `cloud_worker這個target` 會把 Phase 90 的
@@ -732,7 +757,7 @@ pytest tests/integration/test_design6_error_paths.py -k "CD只建linux_arm64 or 
 **預期：`2 failed, 4 deselected`**，訊息長相：
 
 ```text
-FAILED …::test_CD只建linux_arm64的映像 - AssertionError: 只能建 linux/arm64 這一種架構，現在是 ['linux/amd64']
+FAILED …::test_CD建linux_amd64與linux_arm64的映像 - AssertionError: 必須建 linux/amd64,linux/arm64 這兩種架構，現在是 ['linux/arm64']
 FAILED …::test_CD打的是cloud_worker這個target - AssertionError: target 必須是 cloud-worker；…
 ```
 
@@ -823,7 +848,7 @@ Two GitHub Actions workflows, deliberately separate:
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `test` (`.github/workflows/test.yml`) | every push and pull request | `ruff format --check` -> `ruff check` -> load `db/schema.sql` -> `pytest -q`, against a throwaway pgvector container. No Redis, no Celery worker, no Ollama, no `.env` — the autouse safety nets in `tests/conftest.py` already remove every external dependency. |
-| `deploy` (`.github/workflows/deploy.yml`) | `test` finishing **successfully on `main`** | builds the `cloud-worker` stage of the Dockerfile for `linux/arm64` (QEMU + Buildx), pushes it to ECR under two tags (`<commit sha>` and `latest`), then restarts the EC2 worker over SSM Run Command — **only if that instance happens to be running**. |
+| `deploy` (`.github/workflows/deploy.yml`) | `test` finishing **successfully on `main`** | builds the `cloud-worker` stage of the Dockerfile for **`linux/amd64,linux/arm64`** (QEMU + Buildx; amd64 is native on the runner), pushes it to ECR under two tags (`<commit sha>` and `latest`), then restarts the EC2 worker over SSM Run Command — **only if that instance happens to be running**. |
 
 The deploy workflow holds **no long-lived AWS credentials**. It asks GitHub for a
 short-lived OIDC token and exchanges it for temporary AWS credentials; the IAM role's trust
@@ -832,15 +857,18 @@ policy pins the token's subject to exactly
 can borrow it, and the deploy job itself only runs for `push`-triggered CI runs, never for pull
 requests. Only the role ARN is stored, as the repository secret `AWS_DEPLOY_ROLE_ARN`.
 
-**A stopped instance is not a failed deploy.** The EC2 worker is normally shut down (it is
-started only for a demo and stopped straight after), so when the instance is not running the
-job logs a notice and finishes green: the image is already in ECR, and the next boot pulls it.
+**A stopped or missing instance is not a failed deploy.** The EC2 worker is started only
+for a demo and **stopped** afterwards; the GPU box, if one is ever launched, is **terminated**
+instead (keep SG / IAM / S3 / SQS / ECR, drop only the 80 GB disk that would keep billing).
+When the instance is not running the job logs
+a notice and finishes green: the image is already in ECR, and the next boot pulls it.
 Whether the machine is actually running the new image is verified from the worker's own
 startup line — `cloud_worker 啟動 version=<sha> …` — never from the `latest` tag, which by
 definition always looks current.
 
-The first build takes 5–15 minutes because an x86_64 runner has to emulate ARM; later builds
-reuse the GitHub Actions build cache and take about 2–4 minutes.
+The first build takes 5–15 minutes because the runner still emulates ARM for the arm64
+half of the manifest; the amd64 half is native. Later builds reuse the GitHub Actions
+build cache and take about 2–4 minutes.
 ````
 
 - [ ] 貼進去了，位置對（在 "Code style" 與 "Project layout" 之間）。
@@ -865,12 +893,12 @@ reuse the GitHub Actions build cache and take about 2–4 minutes.
 ```bash
 git add .github/workflows/deploy.yml tests/integration/test_design6_error_paths.py README.md
 git commit -m "$(cat <<'EOF'
-ci: CD 工作流程（test 綠 → OIDC → arm64 → ECR → SSM）
+ci: CD 工作流程（test 綠 → OIDC → 多架構 → ECR → SSM）
 
 workflow_run 綁既有的 test（branches: main、conclusion==success）；
-OIDC 換臨時憑證（零長期金鑰）；QEMU+buildx 建 linux/arm64 的 cloud-worker
+OIDC 換臨時憑證（零長期金鑰）；QEMU+buildx 建 linux/amd64,linux/arm64 的 cloud-worker
 階段，推 ECR 的 <head_sha> 與 latest 兩個 tag；只有實例是 running 才
-SSM 重啟，stopped 時印 notice 並成功結束（D16）。
+SSM 重啟，非 running（含 stopped／terminated）時印 notice 並成功結束（D16）。
 test_design6_error_paths.py +6（666 → 672）。
 EOF
 )"
@@ -949,15 +977,15 @@ https://github.com/1104030360/personalDocAI/actions
       build and push → restart the worker
 
 > ⏱ **`Build and push` 那一步第一次要 5〜15 分鐘。**
-> 原因：GitHub 的 runner 是 x86_64，要用 QEMU 模擬 ARM 才跑得動 `pip install`
-> 那一層裡的每一個指令。**這不是壞掉，是慢。**
-> 之後的 build 會吃 `cache-from: type=gha` 的快取，大約 2〜4 分鐘。
-> 想確認它真的在動：點進那一步看 log，會一直有 `#N [linux/arm64 …]` 的輸出。
+> 原因：GitHub 的 runner 是 x86_64。amd64 那一半是原生；arm64 那一半才走 QEMU。
+> 想確認它真的在動：點進那一步看 log，會一直有 `#N [linux/amd64 …]` 與 `#N [linux/arm64 …]` 的輸出。
+> **這不是壞掉，是慢。** 之後的 build 會吃 `cache-from: type=gha` 的快取，大約 2〜4 分鐘。
 
 - [ ] 最後一步 `Restart the worker if the instance is running` 的 log：
 
 ```text
 instance state: stopped
+# 或 terminated／empty variable 時的 notice，只要不是 running 就算過
 ```
 
   然後 job **綠色結束**，摘要頁上有一則藍色的 notice：
@@ -1091,26 +1119,32 @@ worker restarted
 
 - [ ] 再跑一次步驟 5 的 `docker logs`，`version=` 換成第二輪那個新的 sha（`git rev-parse HEAD`）。
 
-#### 步驟 7：**Stop**（每一次都要）
+#### 步驟 7：**Stop**（Demo 3 用的是 92-A 那台 `t3.xlarge`，要留著）
+
+Demo 3 若要對 D16「Stop 時 CD 仍綠」再走一輪：先 Stop，再 push 一次看 job 綠。
+**Demo 3 收工是 Stop，不是 Terminate**——那台 `t3.xlarge` 的 30 GB 碟約 $2.9／月（在 $5 Budget 內），
+留著下次還能一分鐘就開起來。`terminate` 只用在 92-B：開 GPU 機之前先刪掉 92-A，以及 GPU 機測完（費用選項 B，
+80 GB 碟關機約 $7.7／月，超過 Budget）。
 
 ```bash
+# Demo 3 收工：Stop（92-A 那台要留著）
 aws ec2 stop-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
 aws ec2 wait instance-stopped --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
-aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION" \
-  --query 'Reservations[0].Instances[0].State.Name' --output text
 ```
 
-**預期：`stopped`**
+**預期：** 收工後 `describe-instances` 的 State 是 `stopped`、`Type` 是 `t3.xlarge`。
+`.env` 的 `EC2_WORKER_INSTANCE_ID` **留著**（下次 Demo 還要用）。SG／IAM／S3／SQS／ECR **不要刪**。
 
-- [ ] **確認是 `stopped` 才算做完這一段。**
-      **Stop ＝ 關機**（硬碟留著，開回來東西還在，只有 EBS 繼續小額從點數扣）；
-      **Terminate ＝ 銷毀**（整台連硬碟一起消失，不可逆）。**本專案一律 Stop。**
+- [ ] **確認沒有 running 的實例才算做完這一段。**
+      **Stop ＝ 關機**（硬碟留著）；**Terminate ＝ 銷毀**（整台連硬碟一起消失、不可逆）。
+      本專案：**92-A 的 `t3.xlarge` 用完 Stop**（Demo 3 也是）；**只有 92-B 的 GPU 機測完才 Terminate**
+      （2026-09-03 拍板選 B，授權違反 D15 字面；總覽 §10.2 追認項 U）。
 
 **費用影響（Demo 3 一輪）：**
 
 | 項目 | 大約 |
 |---|---|
-| EC2 `t4g.small` 開機 30 分鐘 | 點數約 1 美分（東京 on-demand 約 $0.0216／小時）；**忘了 Stop 才是問題**（一整個月約 $16 的量級，會把 $100〜200 的點數啃掉一成上下）。Phase 82 建的 Budget `personaldocai-budget` 在實際／預測花費到 80% 時會寄信，那是最後一道提醒 |
+| EC2 開機 30 分鐘 | **Demo 3 用的是 92-A 的 `t3.xlarge`：約 $0.11**（東京 on-demand $0.2176／小時）＋ 公有 IPv4 $0.005／小時；停著時 30 GB gp3 約 $2.9／月（Budget 內，刻意留著）。（92-B 的 `g4dn.xlarge` 是另一個量級：30 分鐘約 **$0.36**、$0.71／小時、停著 80 GB 約 $7.7／月，所以那台測完要 Terminate。）**忘了關才是問題**：`t3.xlarge` 一整天 ≈ $5.2、`g4dn.xlarge` 一整天 ≈ $17。帳號已升 Paid＝**扣卡**。Budget `personaldocai-budget` 在實際／預測花費到 80% 時會寄信 |
 | ECR 儲存 | 兩份小映像（幾百 MB），點數以「GB-月」計，可忽略 |
 | GitHub Actions | public repo 免費；private repo 吃免費額度（每月 2000 分鐘），一輪 CD 約 5〜15 分鐘 |
 | S3／SQS | **這一段完全沒碰**（Demo 3 不上傳照片） |
@@ -1140,7 +1174,7 @@ git log --oneline -3
 # 預期（由新到舊）：
 #   chore: cloud_worker 再加一行註解（Demo 3 第二輪）              ← 步驟 6，可選
 #   chore: cloud_worker 加一行註解（Demo 3 用，產生新 commit）      ← 步驟 2
-#   ci: CD 工作流程（test 綠 → OIDC → arm64 → ECR → SSM）    ← 步驟 0
+#   ci: CD 工作流程（test 綠 → OIDC → 多架構 → ECR → SSM）    ← 步驟 0
 ```
 
 > ⚠️ **不要自己把 `unfinish/` 搬進 `finish/`。** 歸檔隨 commit 執行，
@@ -1158,8 +1192,9 @@ git log --oneline -3
 ### 5.1 一次 `git push` 的完整時序（誰在什麼時候做什麼）
 
 ```text
-  你的 Mac                GitHub                        AWS                    EC2 t4g.small
-  ────────                ──────                        ───                    ─────────────
+  你的 Mac                GitHub                        AWS                    EC2（x86_64）
+  ────────                ──────                        ───                    92-A t3.xlarge
+                                                                               92-B g4dn.xlarge
   git push origin main
         │
         ├──────────────►  workflow「test」
@@ -1190,9 +1225,9 @@ git log --oneline -3
         │                       ├─ amazon-ecr-login ────►  ECR：換一次性密碼、docker login
         │                       │    outputs.registry ＝ <帳號>.dkr.ecr.…amazonaws.com
         │                       │
-        │                       ├─ QEMU ＋ Buildx（runner 是 x86_64，要模擬 ARM）
+        │                       ├─ QEMU ＋ Buildx（runner 是 x86_64；amd64 原生、arm64 模擬）
         │                       │
-        │                       ├─ build --target cloud-worker --platform linux/arm64
+        │                       ├─ build --target cloud-worker --platform linux/amd64,linux/arm64
         │                       │    --build-arg GIT_SHA=3f9c1ab…    5〜15 分鐘（第一次）
         │                       │         │
         │                       │         └────────────►  ECR
@@ -1237,9 +1272,9 @@ git log --oneline -3
   permissions: id-token: write 換憑證那一步失敗，訊息看起來像 AWS 的    test_CD要求id_token
                                問題（其實是 GitHub 沒開權限）           寫入權限
 
-  platforms: linux/arm64       CD 一路綠燈；EC2 拉下來 docker run       test_CD只建linux_
-                               才炸 exec format error——而那個訊息      arm64的映像
-                               在遠端的 systemd log 裡，不在 Actions
+  platforms: linux/amd64,      漏掉 amd64 → EC2 exec format error     test_CD建linux_
+  linux/arm64                  （訊息在遠端 systemd，不在 Actions）    amd64與linux_arm64
+                               漏掉 arm64 → 以後 ARM 機沒有映像        的映像
 
   target: cloud-worker         推上去的是 app 映像（uvicorn）；         test_CD打的是cloud_
                                EC2 起了一個 web server，SQS 訊息        worker這個target
@@ -1302,10 +1337,10 @@ git log --oneline -3
 - [ ] **Demo 3 全部做過**（§4.8 步驟 0〜7）：
   - [ ] 步驟 0：第一次 push 之後 `test` 綠（這一輪 `deploy` 有沒有跑都不算數）
   - [ ] 步驟 3：`test` 綠 → `deploy` 出現 → 七個 step 全綠
-  - [ ] 步驟 3：最後一步 log 是 `instance state: stopped` ＋ notice「image pushed, next Start pulls latest」，**而且 job 是綠的**（D16）
+  - [ ] 步驟 3：最後一步 log 是 `instance state:` **不是 running** ＋ notice「image pushed, next Start pulls latest」，**而且 job 是綠的**（D16）
   - [ ] 步驟 4：`aws ecr describe-images` 看得到那次 push 的**完整 sha**，而且 `latest` 那張映像的 tag 清單裡也有它
   - [ ] 步驟 5：Start 之後 `docker logs cloud-worker | head` 的第一行 `version=` **逐字等於**那個 sha
-  - [ ] 步驟 7：**機器已經 `stopped`**
+  - [ ] 步驟 7：**Stop**（92-A 那台 `t3.xlarge` 留著；沒有 running）
 - [ ] **`git log` 裡沒有任何機密**（帳號 ID、實例 ID、role ARN 的真值）
 
   ```bash
@@ -1377,8 +1412,8 @@ git log --oneline -3
    `pip install` 那一層。這是**慢**，不是壞。
    **正解：** 第一次（沒有快取）5〜15 分鐘是正常的；之後吃 `cache-from: type=gha`
    大約 2〜4 分鐘。`timeout-minutes: 40` 已經留足餘裕。
-   真的想確認它在動：點進那一步看 log，會一直有 `#N [linux/arm64 …]` 的輸出。
-   **不要**為了加速改成 x86 架構——EC2 是 ARM，那樣推上去的映像根本跑不動。
+   真的想確認它在動：點進那一步看 log，會一直有 `#N [linux/amd64 …]` 與 `#N [linux/arm64 …]` 的輸出。
+   **不要**為了加速拿掉其中一個平台——漏掉 amd64，真機（`t3.xlarge` 與 `g4dn.xlarge` 都是 x86_64）上的映像根本跑不動。
 
 8. **以為「fork 來的 PR 反正拿不到 secret」，所以 `workflow_run` 不必防。**
    **症狀：** 沒有 `event == 'push'` 那個條件時：別人從 fork 開一個 PR、分支剛好也叫 `main`，
@@ -1400,12 +1435,14 @@ git log --oneline -3
    早就停止支援的 **v1**，而且會蓋掉 v2 在 PATH 上的位置。
    **正解：** 直接用 `aws`，什麼都不必裝。
 
-10. **Demo 3 做完忘了 Stop。**
-    **症狀：** 一個月後發現點數少了一成，而且完全想不起來是什麼時候開始的。
-    **原因：** `t4g.small` 一直開著大約是每月 $16 的量級（從 $100 點數扣）。
-    **正解：** §4.8 的步驟 7 是**驗收清單上的一條**，不是「順便」。
+10. **Demo 3 做完忘了關機。**
+    **症狀：** 隔天發現帳單多了，而且完全想不起來是什麼時候開始的。
+    **原因：** 忘了 Stop。`t3.xlarge`（Demo 3 用的那台）一直開著約每天 **$5.2**、每月 $160；
+    `g4dn.xlarge`（92-B）更是每天 $17、每月 $515。帳號已升 Paid＝扣卡。
+    **正解：** §4.8 的步驟 7 是**驗收清單上的一條**。Demo 3 收工 **Stop**（那台要留著）。
     養成習慣：每次 `start-instances` 之後**立刻**在同一個終端機視窗
     把 `stop-instances` 那一行先打好、不要按 Enter，做完直接按。
+    ⚠️ 只有 92-B 的 GPU 機才用 `terminate`（80 GB 碟關機仍約 $7.7／月，超過 Budget）。
 
 11. **機器剛 Start 完 1〜2 分鐘內 push，`deploy` 最後一步紅了：`InvalidInstanceId`。**
     **症狀：** log 先印 `instance state: running`，下一行 `send-command` 就炸

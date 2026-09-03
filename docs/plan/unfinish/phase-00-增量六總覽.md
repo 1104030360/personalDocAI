@@ -121,6 +121,8 @@ Phase 86 把 `CLOUD_ROUTE=assume` 這條路接上真 AWS，然後做一次**故�
 
 ### 1.3 階段丁、戊、己：工人、EC2 與自動部署（Phase 87〜95）
 
+> ⚠ **2026-09-03 改判（追認項 T）**：本節與 §1.4〜§1.7 的圖表寫的「t4g.small／arm64／看圖打 Ollama Cloud」是 9/1 的版本。產品負責人 9/3 改成 **GPU 機（`g4dn.xlarge`）自裝 Ollama 看圖**：工人依 `WORKER_VLM_BACKEND`（`cloud`｜`local`）挑後端、映像改推多架構、phase-92 已改寫。圖表不逐字重畫，以 §2.4／§2.8／§10.2 T 與 phase-92 為準。 ⚠ **再一次改判（追認項 U）**：phase-92 拆成 **92-A（`t3.xlarge` CPU 機、`worker.env` 走 `cloud`、現在就做）** 與 **92-B（`g4dn.xlarge` GPU 機、走 `local`、G and VT 配額核准後）**，★G3 移到 92-A 之後。**兩者皆 x86_64**，所以多架構映像那一條不變。
+
 #### 第五段：工人 cloud_worker（丁，Phase 87〜88）
 
 **現在的痛：** 寄物櫃有了、佇列有了，但**沒有人在另一頭做事**。
@@ -151,7 +153,8 @@ Phase 86 把 `CLOUD_ROUTE=assume` 這條路接上真 AWS，然後做一次**故�
 使用者完全無感——**這就是 Demo 2b**。
 
 Phase 90（做 arm64 映像）做完就要停下來過 **★G2**：**G2 之後才開始花點數建 EC2。**
-Phase 92 做完（真機 Demo 2／2b 都過了、機器 Stop 了）再停下來過 **★G3**。
+Phase **92-A** 做完（真機 Demo 2／2b 都過了、CPU 機 Stop 了）再停下來過 **★G3**——
+**不等 GPU 配額**（追認項 U）；92-B 是配額核准後的獨立後續步驟，93〜95 不依賴它。
 
 #### 第六段後半：CD（己，Phase 93〜94）＋收尾（95）
 
@@ -442,15 +445,15 @@ git branch --show-current             # 預期：main
 | 84 | `phase-84-建S3寄物櫃.md` | 乙 | AWS CLI 建 bucket（BPA、SSE-S3、Lifecycle 2 天）；`scripts/aws_check.py s3`；`.env` 填 `S3_BUCKET` | 83 | D8、§6「Bucket 非公開」「用完刪 mailbox」 | +0 | 632（實 641） | [ ] |
 | 85 | `phase-85-建SQS兩條佇列.md` | 丙 | 建 `personaldocai-jobs`／`personaldocai-results`；`aws_check.py sqs`；`.env` 填兩個 URL | 84 | D9、§2.3 全節 | +0 | 632（實 641） | [ ] |
 | 86 | `phase-86-真AWS雲端路接線.md` | 丙 | `get_cloud_route()` 補 `assume`；**真 AWS 逾時煙霧**（沒工人 → 30 秒 fallback → S3 清空） | 85 | D10、§2.1、§8 第 5 列 | +2（實 +3） | 634（實 **644**） | [ ] |
-| 87 | `phase-87-cloud_worker核心.md` | 丁 | `app/workers/cloud_worker.py` 的 `process_job_message()`＋`result.json` 組裝；假信箱端到端（單圖＋PDF） | 86 | D11、D12、D13、D17、§2 下半、§8 第 6／7 列 | +12 | 646 | [ ] |
-| 88 | `phase-88-cloud_worker主迴圈與Mac端到端.md` | 丁 | `main()` 迴圈、SIGTERM、啟動 log；**Mac 上真跑一次端到端**（真 S3／真 SQS／真 Ollama Cloud） | 87 | D12、§0 丁那列、§12 Demo 2 的前身 | +5 | 651 | [ ] |
-| 89 | `phase-89-EC2探測running.md` | 戊 | `Ec2Probe`：`DescribeInstances` ＋ 60 秒 TTL 快取；任何例外→False；`get_cloud_route()` 補 `ec2` | 88 | D10 第 1 條、§2.1、§8 第 2／3 列 | +7 | 658 | [ ] |
-| 90 | `phase-90-worker映像arm64.md` | 戊 | `Dockerfile` 改多階段（base → cloud-worker → **app 放最後**）；Mac 上用容器重跑 88 的端到端 | 88 | D15、D16、§11 第 5 列 | +4 | 662 | [ ] |
+| 87 | `phase-87-cloud_worker核心.md` | 丁 | `app/workers/cloud_worker.py` 的 `process_job_message()`＋`result.json` 組裝；假信箱端到端（單圖＋PDF） | 86 | D11、D12、D13、D17、§2 下半、§8 第 6／7 列 | +12 | 646（實 656） | [ ] |
+| 88 | `phase-88-cloud_worker主迴圈與Mac端到端.md` | 丁 | `main()` 迴圈、SIGTERM、啟動 log；**Mac 上真跑一次端到端**（真 S3／真 SQS／真 Ollama Cloud） | 87 | D12、§0 丁那列、§12 Demo 2 的前身 | +5 | 651（實 661） | [ ] |
+| 89 | `phase-89-EC2探測running.md` | 戊 | `Ec2Probe`：`DescribeInstances` ＋ 60 秒 TTL 快取；任何例外→False；`get_cloud_route()` 補 `ec2` | 88 | D10 第 1 條、§2.1、§8 第 2／3 列 | +7 | 658（實 668） | [ ] |
+| 90 | `phase-90-worker映像arm64.md` | 戊 | `Dockerfile` 改多階段（base → cloud-worker → **app 放最後**）；Mac 上用容器重跑 88 的端到端 | 88 | D15、D16、§11 第 5 列 | +4 | 662（實 672） | [ ] |
 | **★G2** | （人的動作，沒有檔案） | — | 丁的驗收 ＋ arm64 映像在 Mac 上跑得起來；**之後才開始花點數建 EC2** | 90 | §0 丁那列、§0 戊那列 | — | 662 | [ ] |
-| 91 | `phase-91-EC2的網路IAM與ECR.md` | 戊 | 人＋CLI：SG（inbound 空）、S3 Gateway endpoint、IAM role＋instance profile、ECR repo、第一次手動 push | ★G2 | D11、D15、§6、§7 網路那列 | +0 | 662 | [ ] |
-| 92 | `phase-92-EC2真機與文件.md` | 戊 | 啟動 t4g.small、SSM 放 `worker.env`、**Demo 2／2b**、**Stop**；`LAUNCH.md`／`CLAUDE.md`／`README.md` | 91 | D12、D15、§7、§12 Demo 2／2b、§3「Free plan 約束寫進文件」 | +0 | 662 | [ ] |
-| **★G3** | （人的動作，沒有檔案） | — | 戊的驗收（真機 Demo 2／2b 親眼看過、機器已 Stop）；**之後才做 OIDC／CD** | 92 | §0 戊那列、§0 己那列 | — | 662 | [ ] |
-| 93 | `phase-93-GitHub_OIDC與部署角色.md` | 己 | IAM OIDC provider＋deploy role；trust 的 `sub` **精確鎖 `main`**；GitHub secret `AWS_DEPLOY_ROLE_ARN` | ★G3 | D16、§6 最後一列、§8 第 9 列 | +4 | 666 | [ ] |
+| 91 | `phase-91-EC2的網路IAM與ECR.md` | 戊 | 人＋CLI：SG（inbound 空）、S3 Gateway endpoint、IAM role＋instance profile、ECR repo、第一次手動 push | ★G2 | D11、D15、§6、§7 網路那列 | +0 | 662（實 672） | [ ] |
+| 92 | `phase-92-EC2真機與文件.md` | 戊 | **拆兩段（追認項 U）**：**92-A**（現在做）啟動 `t3.xlarge`（CPU、`WORKER_VLM_BACKEND=cloud`、30 GB）、SSM 放 `worker.env`、**Demo 2／2b**、**Stop**；`LAUNCH.md`／`CLAUDE.md`／`README.md`（**兩段式誠實版**）。**92-B**（G and VT 配額核准後）先 Terminate 92-A → 開 `g4dn.xlarge`（GPU、`local`、80 GB）→ 重跑 Demo 2 → **Terminate** | 91 | D12、D15、§7、§12 Demo 2／2b、§3「Free plan 約束寫進文件」；追認項 T／U | +0 | 662 | [ ] |
+| **★G3** | （人的動作，沒有檔案） | — | 戊的驗收（真機 Demo 2／2b 親眼看過、機器已 Stop）；**之後才做 OIDC／CD** | **92-A**（追認項 U：不等 GPU；92-B 是獨立後續、不設新閘門） | §0 戊那列、§0 己那列 | — | 662 | [ ] |
+| 93 | `phase-93-GitHub_OIDC與部署角色.md` | 己 | IAM OIDC provider＋deploy role；trust 的 `sub` **精確鎖 `main`**；GitHub secret `AWS_DEPLOY_ROLE_ARN` | ★G3（＝92-A 之後；**不等 GPU**） | D16、§6 最後一列、§8 第 9 列 | +4 | 666 | [ ] |
 | 94 | `phase-94-CD工作流程.md` | 己 | `.github/workflows/deploy.yml`：`workflow_run`→OIDC→buildx `linux/arm64`→ECR→SSM；**Demo 3** | 93 | D16、§12 Demo 3 | +6 | 672 | [ ] |
 | 95 | `phase-95-增量六錯誤收尾與驗收包.md` | 收尾 | §8 十列逐列點名＋六禁與被否決清單掃碼＋三死埠實證＋驗收包 | 74〜94 | §0 六禁、§1.2、§3「不做」、§8 全表、§9、§12 | +10 | **682** | [ ] |
 
@@ -679,7 +682,8 @@ def run_forever(
     mailbox: CloudMailbox, vlm: vlm_service.VLMClient, *, should_stop: Callable[[], bool]
 ) -> None: ...
 
-def main() -> None: ...   # 組 AwsMailbox（boto3 import 在函式內）＋ OllamaCloudVLM，接 SIGTERM／SIGINT 後呼叫 run_forever
+def build_worker_vlm() -> vlm_service.VLMClient: ...   # 2026-09-03（D12 作廢）：config.WORKER_VLM_BACKEND=cloud→OllamaCloudVLM｜local→OllamaVLM（工人所在機器的 Ollama）；其他值 ValueError
+def main() -> None: ...   # 組 AwsMailbox（boto3 import 在函式內）＋ build_worker_vlm()，接 SIGTERM／SIGINT 後呼叫 run_forever；啟動行尾多 vlm=… model=…
 # 可執行：python -m app.workers.cloud_worker
 # ⛔ 本模組不得 import：photo_repository／app.db／資料庫驅動程式（套件名刻意不寫：design3 掃碼對 app/ 全樹做子字串比對）／celery／redis（D11、D13）
 ```
@@ -713,6 +717,7 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff: .
 | `EC2_PROBE_TTL_SECONDS` | `60` | `DescribeInstances` 結果快取秒數（D10 第 1 條「快取可短 TTL」） |
 | `CLOUD_RESULT_TIMEOUT_SECONDS` | `300` | 送出後最多等 results 幾秒，到了→D10 fallback |
 | `WORKER_VERSION` | `dev` | 只給 cloud_worker：build 時由 `ARG GIT_SHA` 烙進去，啟動 log 印出 |
+| `WORKER_VLM_BACKEND` | `cloud` | **2026-09-03 加（D12 作廢）**：只給 cloud_worker：`cloud`＝ollama.com（`OLLAMA_API_KEY`／`OLLAMA_CLOUD_VLM_MODEL`）、`local`＝工人所在機器的 Ollama（`OLLAMA_BASE_URL`／`VLM_MODEL`；GPU EC2 用這個）；其他值 `build_worker_vlm()` 當場 ValueError |
 
 > **`.env.example` 若不存在就不要新建**（既有做法是在 `CLAUDE.md`／`README.md` 列變數名）。
 > 讀環境變數**只在 `app/core/config.py`**；程式碼裡一律 `config.X` 即時讀，
@@ -997,7 +1002,7 @@ results 佇列 `ApproximateNumberOfMessages` 為 `0`。
 results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `fallback=local reason=result_timeout`；
 再傳一張**內容**是身分證的合成圖 → 零 S3；最後 `aws sqs purge-queue` 清 jobs。
 
-#### Phase 87 · 階段丁 · +12 顆（累計 646）
+#### Phase 87 · 階段丁 · +12 顆（累計 646；2026-09-02 實查基線 644 → 656）
 
 **動到的檔：** `app/workers/__init__.py`（新）、`app/workers/cloud_worker.py`（新）、
 `tests/unit/test_cloud_worker_unit.py`（新）、`tests/integration/test_cloud_roundtrip.py`（新）
@@ -1006,7 +1011,7 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 
 `test_result先PutObject才SendMessage`、`test_看圖三次都失敗_result標understood_false而且attempts是3`、`test_一次就成功_attempts是1`、`test_result已存在時不看圖只補送results並刪jobs訊息`、`test_input不在時只刪jobs訊息什麼都不寫`、`test_context缺檔時三份清單都當空的`、`test_content_type由s3_key的副檔名推出來`、`test_PDF拆不開時pages是空清單`、`test_PDF每一頁各自最多三次`、`test_工人不import資料庫與Celery與Redis`（掃碼）、`test_單圖端到端_本機送出_假工人處理_本機入庫`（在 `test_cloud_roundtrip.py`）、`test_PDF端到端_兩頁都回來_入庫兩列`（在 `test_cloud_roundtrip.py`）
 
-#### Phase 88 · 階段丁 · +5 顆（累計 651）
+#### Phase 88 · 階段丁 · +5 顆（累計 651；實 661）
 
 **動到的檔：** `app/workers/cloud_worker.py`、`tests/unit/test_cloud_worker_unit.py`、
 `LAUNCH.md`（新增 **§12** "Cloud worker on the Mac"，**英文**）、`CLAUDE.md`
@@ -1019,18 +1024,19 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 `CLOUD_ROUTE=assume` 上傳非敏感圖 → 真 S3／真 SQS／真 Ollama Cloud → 本機入庫；
 敏感 → 本機；Ctrl+C 工人優雅停。
 
-#### Phase 89 · 階段戊 · +7 顆（累計 658）
+#### Phase 89 · 階段戊 · +7 顆（累計 658；實 668）
 
 **動到的檔：** `app/services/cloud_ingest.py`、`app/dependencies.py`、
-`tests/unit/test_cloud_ingest_unit.py`、`tests/unit/test_dependencies_cloud_unit.py`
+`tests/unit/test_cloud_ingest_unit.py`、`tests/unit/test_dependencies_cloud_unit.py`、
+`CLAUDE.md`（2026-09-02 裁決 R7：指令區 AWS 段結尾那句「assume／ec2 要到 86／89 才接」在 89 接上 ec2 時改正）
 
 **新增測試（`test_cloud_ingest_unit.py` 6 顆 ＋ `test_dependencies_cloud_unit.py` 1 顆）：**
 
 `test_實例狀態running時探測為True`、`test_實例狀態stopped與stopping與pending都是False`、`test_探測丟例外時回False並留log`、`test_TTL內不會再打一次DescribeInstances`、`test_TTL過了會再打一次`、`test_instance_id是空的時候回False而且零呼叫`、`test_ec2模式建出CloudRoute而且探測是Ec2Probe`（在 `test_dependencies_cloud_unit.py`）
 
-#### Phase 90 · 階段戊 · +4 顆（累計 662）
+#### Phase 90 · 階段戊 · +4 顆（累計 662；實 672）
 
-**動到的檔：** `Dockerfile`、`tests/integration/test_design6_error_paths.py`（**新檔，先放 Dockerfile 掃碼**）
+**動到的檔：** `Dockerfile`、`.dockerignore`（加一行 `deploy/`）、`tests/integration/test_design6_error_paths.py`（**新檔，先放 Dockerfile 掃碼**；第 4 顆依 2026-09-02 裁決 R10 同時守「compose 兩檔零 AWS 字樣」）
 
 **新增測試（`test_design6_error_paths.py` 4 顆）：**
 
@@ -1042,7 +1048,7 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 
 **★G2 在本 phase 之後、91 之前。**
 
-#### Phase 91 · 階段戊 · +0 顆（累計 662）
+#### Phase 91 · 階段戊 · +0 顆（累計 662；實 672）
 
 **動到的檔：** `deploy/aws/worker-role-trust.json`、`deploy/aws/worker-role-policy.json`、
 `deploy/ec2/user-data.sh`、`deploy/ec2/personaldocai-worker.service`、`deploy/ec2/worker.env.example`（只有變數名）、
@@ -1051,7 +1057,7 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 **新增測試：** 無。驗收＝`aws ec2 describe-security-groups`（`IpPermissions` 為 `[]`）、
 `aws iam get-role`、`aws ecr describe-images` 看得到 tag。**本 phase 尚未啟動實例。**
 
-#### Phase 92 · 階段戊 · +0 顆（累計 662）
+#### Phase 92（92-A ＋ 92-B）· 階段戊 · +0 顆（累計 662）
 
 **動到的檔：** `.env`（填 `EC2_WORKER_INSTANCE_ID`、`CLOUD_ROUTE=ec2`）、
 `LAUNCH.md`（新章節 **§13** "Cloud worker (EC2)"，英文；§12 已由 Phase 88 使用）、`CLAUDE.md`（指令區）、`README.md`（兩句改誠實）
@@ -1107,7 +1113,7 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 | IAM role（EC2 用） | `personaldocai-worker-role` ＋ **同名** instance profile（`deploy/aws/worker-role-trust.json`／`worker-role-policy.json`；inline policy 名 `personaldocai-worker-inline`） | S3 該 prefix 的 Get／Put ＋ **bucket ARN 的 `s3:ListBucket`**（同 §10.2 P 的理由：工人的冪等檢查 `get_object(result_key)` 靠 404）；jobs 的 `Receive`／`Delete`／`ChangeMessageVisibility`；results 的 `Send`；ECR pull 三項 ＋ `ecr:GetAuthorizationToken`；managed policy `AmazonSSMManagedInstanceCore` | **91** |
 | IAM role（GitHub OIDC） | `personaldocai-github-deploy`（`deploy/aws/github-oidc-trust.json`／`github-deploy-policy.json`；inline policy 名 `personaldocai-github-deploy-policy`） | trust：provider `token.actions.githubusercontent.com`、`aud=sts.amazonaws.com`、**`sub` 精確等於 `repo:1104030360@92135456/personalDocAI@1349196211:ref:refs/heads/main`（不准 `*`；⚠ 這是 GitHub 2026-07-15 起新 repo 的「不可變主體」格式——owner 與 repo 各帶數字 ID，本 repo 2026-08-28 建立、`gh api repos/1104030360/personalDocAI/actions/oidc/customization/sub` 實查 `sub_claim_prefix` 就是它；design6 §6 寫的舊格式 `repo:OWNER/REPO:ref:…` 對這個 repo 永遠對不上，總覽 §10.2 M）**；policy：ECR push（`GetAuthorizationToken` ＋ repo 上的 Put／Initiate／Upload／Complete／BatchCheck／**BatchGetImage**）、`ssm:SendCommand`（資源＝該實例 ＋ document `AWS-RunShellScript`）、`ssm:GetCommandInvocation`、`ec2:DescribeInstances` | **93** |
 | ECR repository | `personaldocai-worker`（private） | tag `<git-sha>` ＋ `latest` | **91** |
-| EC2 instance | Name tag `personaldocai-worker` | `t4g.small`、AL2023 **arm64**（AMI 由 SSM 公開參數 `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64` 取得）、預設 VPC 公有子網、自動公有 IPv4、根碟 gp3 8 GB。**用完 Stop（不是 Terminate）** | **92** |
+| EC2 instance | Name tag `personaldocai-worker`（**兩段共用同一個名字，同時只准有一台**） | ~~`t4g.small`、AL2023 arm64、根碟 8 GB~~ → **2026-09-03 兩次改判（D12 作廢＝追認項 T；拆兩段＝追認項 U）**。**92-A（現在做）**：`t3.xlarge`（x86_64、4 vCPU／16 GiB、**無 GPU**）、AMI ＝一般 AL2023 x86_64（SSM 參數 `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`）、根碟 gp3 **30 GB**、`worker.env` 填 **`WORKER_VLM_BACKEND=cloud`**（看圖轉送 ollama.com）；吃 **Standard** 配額 `L-1216C47A`（本帳號實查 **8**，不必申請）；用完 **Stop**（30 GB ≈ $2.9／月，在 $5 Budget 內，留給 Phase 94 的 Demo 3）。**92-B（G and VT 配額 `L-DB2E81BA` 核准 ≥4 之後）**：先 Terminate 92-A → `g4dn.xlarge`（x86_64、T4 16 GB；替代 `g5g.xlarge` arm64）、AMI ＝ **Deep Learning Base OSS NVIDIA Driver GPU AMI (AL2023)**（SSM 參數 `/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-amazon-linux-2023/latest/ami-id`）、根碟 gp3 **80 GB**（AMI 快照 75 GB）、`worker.env` 改 **`local`**；測完 **Terminate**（80 GB 關機約 $7.7／月，超過 Budget——拍板選 B）。**兩段共用**：host 自裝 Ollama（`ollama.service`、只聽 127.0.0.1）跑 `gemma4:e2b`（92-A 上只是閒著應門，unit 的 `ExecStartPre` 會等 11434）、工人容器 `--network host`、預設 VPC 公有子網、自動公有 IPv4、IMDSv2 且 hop limit 2、不帶 `--key-name`。 | **92** |
 | Security group | `personaldocai-worker-sg` | **inbound 空**、outbound 只開 TCP 443 | **91** |
 | VPC endpoint | （S3 Gateway，掛在預設路由表） | 免費；讓 S3 流量不出公網 | **91** |
 | Budget | `personaldocai-budget` | 每月 $5，**實際與預測各設 80% 寄信** | **82**（開戶第一天） |
@@ -1164,10 +1170,10 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 | **D9** | 完成訊號＝results 佇列（方案 B）；工人 **PutObject 成功後才 Send**；本機禁止輪詢 HeadObject | **79**（本機 Receive→GetObject）、**87**（工人的順序鐵律） | `test_result先PutObject才SendMessage`（記錄呼叫順序）；掃碼無 `head_object` |
 | **D10** | 遠端關掉＝fallback 本機；不上傳失敗、不要求重傳；進度面板語意不變 | **78**（不可用／探測例外）、**79**（送出失敗）、**80**（逾時、重送無結果）、**89**（`Ec2Probe`） | 四種 `reason=` 各有一顆 `caplog` 測試；**95** `test_遠端不可用時上傳仍然回202不會變5xx` |
 | **D11** | EC2 只當工人：無公開 HTTP／網站／API；SG inbound 全關；出站只 TCP 443 | **87**（工人不碰 DB／Celery／Redis）、**91**（SG）、**92**（真機） | `test_工人不import資料庫與Celery與Redis`；`aws ec2 describe-security-groups` 的 `IpPermissions` 為 `[]` |
-| **D12** | EC2 看圖一律 Ollama Cloud；與頁首開關無關 | **87**（工人固定用 `OllamaCloudVLM`）、**92**（`worker.env` 放 `OLLAMA_API_KEY`） | 工人原始碼掃碼無 `OllamaVLM`；`ai_timing` log `kind=vlm backend=cloud` |
+| **D12** | ~~EC2 看圖一律 Ollama Cloud；與頁首開關無關~~ **2026-09-03 產品負責人改判作廢**：工人看圖後端由 `WORKER_VLM_BACKEND` 決定（`cloud`＝ollama.com、`local`＝工人所在機器的 Ollama；GPU EC2 用 `local`）；仍與頁首開關無關 | **87／88**（`build_worker_vlm()`、啟動行 `vlm=…`）、**92**（`worker.env` 放 `WORKER_VLM_BACKEND=local`＋`OLLAMA_BASE_URL`＋`VLM_MODEL`） | `ai_timing` log `kind=vlm backend=local model=gemma4:e2b`（EC2）／`backend=cloud`（Mac 煙霧） |
 | **D13** | 本機入庫：拉回 `result.json` 後，**embedding（bge-m3）與 INSERT／原圖／縮圖仍在本機** | **79**（`embed_understanding` 在本機）、**87**（`result.json` 不含 embedding） | `test_雲端路的計時log裡embed是本機`；`result.json` 掃碼無 `embedding` 鍵 |
 | **D14** | 作品集為主、順便卸壓：成功標準是三條 demo ＋ EC2 開著時非敏感不佔本機 GPU／Celery 名額 | **92**（Demo 2／2b）、**94**（Demo 3）、**95**（驗收包） | §5 的四個 Demo 逐條 |
-| **D15** | Free plan、點數制、目標卡片 $0、用完 **Stop**、映像 `linux/arm64`、機型 t4g.small | **82**（開戶＋Budget）、**90**（arm64）、**92**（Stop） | `aws budgets describe-budgets`；`docker image inspect` 看 `Architecture: arm64`；實例狀態 `stopped` |
+| **D15** | Free plan、點數制、目標卡片 $0、用完 **Stop**、~~映像 `linux/arm64`、機型 t4g.small~~ **2026-09-03 改判（追認項 T）**：機型 `g4dn.xlarge`（GPU、x86_64）、映像**多架構**（amd64＋arm64）；stopped 仍付 80 GB gp3 ≈ $7.7／月，Stop／Terminate 待拍板 | **82**（開戶＋Budget）、**90**（映像）、**92**（Stop） | `aws budgets describe-budgets`；`docker manifest inspect <ECR_URI>:latest` 看到兩個平台；實例狀態 `stopped` |
 | **D16** | CI／CD 分開；CI 契約不動；CD＝OIDC→build arm64→ECR `<git-sha>`→SSM；**EC2 Stop 時 CD 仍可 push** | **93**（OIDC role）、**94**（workflow） | `.github/workflows/test.yml` **零改動**（`git diff` 空）；Demo 3 |
 | **D17** | SQS at-least-once：工人與本機收結果都必須冪等；同一 `job_id` 不得 INSERT 兩張 | **80**（本機端）、**87**（工人端） | `test_同一個job_id的結果送兩次_照片仍然只有一列`；`test_result已存在時不看圖只補送results並刪jobs訊息` |
 
@@ -1540,7 +1546,8 @@ Ollama 不進本機 Docker、`postgresql@14` 不動、待決定／詢問流程�
 
   aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION" \
     --query 'Reservations[0].Instances[0].{Type:InstanceType,Arch:Architecture,State:State.Name}'
-  # 預期：t4g.small / arm64 / stopped（demo 做完要是 stopped）
+  # 預期（92-A）：t3.xlarge / x86_64 / stopped（demo 做完要是 stopped）——追認項 U；
+  # 92-B（配額核准後）：g4dn.xlarge / x86_64 / terminated。原本是 t4g.small / arm64
   ```
 
 - [ ] **pytest 全綠且不碰真 AWS**
@@ -1600,7 +1607,8 @@ Ollama 不進本機 Docker、`postgresql@14` 不動、待決定／詢問流程�
 
 ── 階段戊後半：真的 EC2 ────────────────────────────────────────────
 [ ] Phase 91  SG（inbound 空）、S3 endpoint、IAM role＋instance profile、ECR、手動 push
-[ ] Phase 92  啟動 t4g.small、SSM 放 worker.env、Demo 2／2b、**Stop**、文件三份
+[ ] Phase 92-A 啟動 **t3.xlarge（CPU、worker.env 走 cloud、30 GB）**、SSM 放 worker.env、Demo 2／2b、**Stop**、文件三份（兩段式誠實版）——計畫已改、**尚未實作**；前置只要 Standard 配額（本帳號 8，夠）
+[ ] Phase 92-B 配額核准後：先 Terminate 92-A → 開 **g4dn.xlarge（GPU、worker.env 走 local、80 GB）** → 重跑 Demo 2 → **Terminate**；**不設新閘門**、文件零改動
 [ ] ★★★ G3   產品負責人照 §5.2／§5.3 看過並明示「可以做 CD」
 
 ── 階段己：CI 之後的 CD ────────────────────────────────────────────
@@ -1835,11 +1843,11 @@ design5 §3 的兩條限制**本增量不改**：3 次自動重試做完就是�
 | 84 | 建 bucket（驗收＝AWS CLI 輸出） | +0 | 632（實 641） | 22 |
 | 85 | 建兩條佇列（驗收＝AWS CLI 輸出） | +0 | 632（實 641） | 22 |
 | 86 | 新檔 `test_dependencies_cloud_unit.py`（2 顆）＋人工真 AWS 逾時煙霧 | **+2**（實 +3：review fix wave 補 `test_assume模式把config的四個值對應到AwsMailbox`） | 634（實 644） | 22 |
-| 87 | 新檔 `test_cloud_worker_unit.py`（10）＋新檔 `test_cloud_roundtrip.py`（2） | **+12** | 646 | 22 |
-| 88 | `test_cloud_worker_unit.py` 追加 5 ＋人工 Mac 端到端 | **+5** | 651 | 22 |
-| 89 | `test_cloud_ingest_unit.py` 追加 6 ＋ `test_dependencies_cloud_unit.py` 追加 1 | **+7** | 658 | 22 |
-| 90 | 新檔 `tests/integration/test_design6_error_paths.py`（Dockerfile／compose 掃碼 4 顆） | **+4** | 662 | 22 |
-| 91 | 人工＋CLI（SG／IAM／ECR） | +0 | 662 | 22 |
+| 87 | 新檔 `test_cloud_worker_unit.py`（10）＋新檔 `test_cloud_roundtrip.py`（2） | **+12** | 646（實 656） | 22 |
+| 88 | `test_cloud_worker_unit.py` 追加 5 ＋人工 Mac 端到端 | **+5** | 651（實 661） | 22 |
+| 89 | `test_cloud_ingest_unit.py` 追加 6 ＋ `test_dependencies_cloud_unit.py` 追加 1 | **+7** | 658（實 668） | 22 |
+| 90 | 新檔 `tests/integration/test_design6_error_paths.py`（Dockerfile／compose 掃碼 4 顆） | **+4** | 662（實 672） | 22 |
+| 91 | 人工＋CLI（SG／IAM／ECR） | +0 | 662（實 672） | 22 |
 | 92 | 人工（真機 Demo 2／2b）＋文件三份 | +0 | 662 | 22 |
 | 93 | `test_design6_error_paths.py` 追加 4（OIDC trust 掃碼） | **+4** | 666 | 22 |
 | 94 | 同檔追加 6（CD workflow 掃碼）＋人工 Demo 3 | **+6** | 672 | 22 |
@@ -1900,7 +1908,7 @@ OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
 | **k** | 工人程式放 **`app/workers/cloud_worker.py`**，不是 `scripts/cloud_worker.py` | `.dockerignore` 排除 `scripts/`——放那裡的話工人程式**不會進映像**，而且是**安靜地**不進去（build 成功、run 時才 `ModuleNotFoundError`） | **87**（建檔位置） |
 | **l** | `CLOUD_ROUTE=assume`（假設遠端開著）只給**階段丁**（Mac 上跑工人）與除錯用；戊之後日常用 `ec2` | `assume` 不做任何探測，EC2 關著時它會傻傻送出、然後等到逾時才 fallback（多浪費 5 分鐘）。日常一定要用 `ec2` | **86**（建立它）、**92**（`.env` 改成 `ec2`） |
 
-### 10.2 撰寫本總覽時另外發現、必須裁決的 19 條（A〜S）
+### 10.2 撰寫本總覽時另外發現、必須裁決的 21 條（A〜U）
 
 | # | design6 怎麼寫的（或沒寫） | 計畫層怎麼裁決 | 落在哪個 phase |
 |---|---|---|---|
@@ -1922,6 +1930,8 @@ OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
 | **P** | design6 §6 只寫「指定 prefix 的 s3:Put／Get／Delete」 | **兩份 policy 都要加 bucket ARN 的 `s3:ListBucket`**（`personaldocai-mac-policy` 與 `personaldocai-worker-role`）：S3 官方規則——呼叫者沒有 `ListBucket` 時，對不存在的 key 做 `GetObject` 回 403 AccessDenied 而非 404 NoSuchKey；本增量三處靠 404 判「還沒有」（工人冪等 `get_object(result_key)`、本機 `fetch_result`、`aws_check.py` 的 get-after-delete），少了它一張圖都處理不了。**不**改成把 AccessDenied 當「不在」（會把真的權限錯誤吞掉） | **82**（mac policy）、**91**（worker role policy）、**83**（陷阱） |
 | **Q** | design6 §1.2 寫「把 PDF／JPEG 塞進 SQS 超過 256 KB 上限」 | SQS 標準佇列上限已是 **1 MiB**（boto3 `send_message` 現行文件）；結論不變——影像仍不進 SQS（多頁 PDF 動輒幾十 MB），只是理由的數字要更新 | 文件層 |
 | **R** | D17 只說「同一 job_id 不得 INSERT 兩張」，沒說收據要在哪一步寫 | 雲端路落庫的順序固定為 **INSERT → 立刻 `store.update(job_id, photo_ids=[photo_id])` → `cleanup()`（S3 網路呼叫，boto3 重試可拖數十秒）→ `finish_image_job`**。`cleanup` 期間 worker 被殺的話，沒先寫 photo_ids 的版本會在重送時（result.json 已刪 → fallback 本機）再 INSERT 一張（phase-79 reviewer 抓到）。PDF 路每頁本來就同一次寫 `pages_done`／`photo_ids`，只要確保它在該頁的 cleanup 之前 | **79**（單圖）、**80**／**81**（整檔重貼要帶著） |
+| **T** | design6 D12「EC2 看圖一律 Ollama Cloud、實例無 GPU」＋D15「t4g.small、映像 arm64」 | **2026-09-03 產品負責人改判**：EC2 改 **GPU 機自裝 Ollama**。工人加 `config.WORKER_VLM_BACKEND`（`cloud` 預設｜`local`）與 `build_worker_vlm()`；Ollama 跑 host、容器 `--network host`；映像改推**多架構**（amd64＋arm64）；phase-92 改 `g4dn.xlarge`＋DL Base GPU AMI＋80 GB 根碟；**新前置：G and VT 配額（現況 0）先申請**；費用（stopped 仍付 EBS ≈ $7.7／月）Stop／Terminate 兩選項待拍板。隱私閘門、S3／SQS 契約、工人六規則、Demo 2／2b 意義不變 | **87／88**（程式）、**91**（deploy/ec2 三檔）、**92-B**（GPU 那一段；計畫已改、**尚未實作**——先做 92-A，見追認項 U） |
+| **U** | 追認項 T 之後仍留兩個開放問題：GPU 配額（`L-DB2E81BA`）是 0 且審核中（`CASE_OPENED`），以及 stopped 仍付 80 GB gp3 ≈ $7.7／月 —— design6 與 phase-92 都寫成「等配額核准才能開機」 | **2026-09-03 產品負責人拍板：Phase 92 拆成兩段，不等配額。**① **92-A（現在做）**：`t3.xlarge`（x86_64、一般 AL2023、**30 GB gp3**）、`worker.env` 填 `WORKER_VLM_BACKEND=cloud`，把整條 AWS 流程（instance profile 憑證、SG 只出不進、從 EC2 拉 ECR、SSM 進機器、systemd 開機自起、`Ec2Probe` 對真實例的 running／stopped、amd64 映像第一次在真 x86 上跑）與 Demo 2／2b 全部驗掉——**這些一顆 GPU 都用不到**；前置只要 Standard 配額 `L-1216C47A` ≥4（本帳號實查 **8**，新帳號 Standard 預設常是 5 vCPU）。② **92-B（配額核准 ≥4 之後）**：先 Terminate 92-A → 用**同一份** user-data／unit／映像開 `g4dn.xlarge`＋DL Base GPU AMI＋**80 GB** → `worker.env` 改 `local` → 多驗 `nvidia-smi`／`ollama ps` 兩關 → 重跑 Demo 2 → **Terminate**。**現有的 GPU 內容全部保留在 92-B。**③ **★G3 改在 92-A 之後**（93／94／95 都不依賴 GPU）；92-B 是獨立後續、**不設新閘門**。④ **收工三種**：92-A 用完 **Stop**（30 GB ≈ $2.9／月，在 $5 Budget 內，留給 Phase 94 的 Demo 3 隨時 Start）；開 92-B 之前先 **Terminate** 92-A（同時只留一台）；92-B 測完 **Terminate**（既有拍板 B 不變）。⑤ 92-A 選配「同一台切 `local` 試 CPU 推論」**若做，必須先把 Mac `.env` 的 `CLOUD_RESULT_TIMEOUT_SECONDS` 從 300 暫調 900（對齊 jobs 佇列 Visibility 900）並 restart 本機 worker，做完改回 300**——否則 CPU 看一張圖大概率超過 5 分鐘，本機先 `fallback=local reason=result_timeout`、工人稍後放好的 `result.json` 變孤兒（2026-09-03 Mac 煙霧踩過的同一個坑）。這是**測試期的暫時覆蓋**，`60`／`300` 對日常仍是 §2.4.2 的契約。⑥ 92-A 的 Demo 2 上傳**之前**先把頁首 AI 開關撥「雲端」（閘門跟它走：雲端 0.6 秒 vs 本機 1〜2 分鐘），做完撥回本機；驗的是**流程**不是 GPU。⑦ 文案裡凡「真機一定是 g4dn」的敘述一律改成「92-A `t3.xlarge`／92-B `g4dn.xlarge`，**兩者皆 x86_64**，所以 CD 的多架構 manifest（amd64＋arm64）不變」。**兩段共用、一個字都不動**：`deploy/ec2/` 三份檔、Phase 91 的 SG／IAM／endpoint／ECR、Mac 端全部程式碼、隱私閘門、S3／SQS 契約與順序鐵律、工人六規則、`result.json` 形狀、Demo 2／2b 的意義。**零產品碼、零測試變更。**（progress.md 裁決 **R28**） | **92**（全檔兩段式）、**93**／**94**／**95**（把「真機一定是 g4dn」改成兩段、費用列補 t3.xlarge；多架構 CD 邏輯不變）、`docs/design/design6.md`（D12 那列補一句實作順序） |
 | **S** | D6 說「閘門跟著頁首開關走」，D4 說用同一顆看圖模型；沒說**閘門跑在哪個行程**。閘門跑在 Celery worker（D5），而 `celery_app.ingest_task` 的 docstring 早就寫明：worker 行程的 `config.AI_BACKEND` **永遠是預設 `local`**，開關值只存在入列當下抄進 job 的 `ai_backend` 快照（design5 D14） | 若 worker 用 `dependencies.get_privacy_gate()` 建閘門，頁首撥到雲端時閘門仍打本機——**違反 D6 而且安靜**（log 會誠實印 `backend=local`，但沒人會去比對）。裁決：Phase 75 在 `dependencies.py` 加 `build_privacy_gate_for_backend(ai_backend)`（比照 `build_vlm_for_backend`），`get_privacy_gate()` ＝ `build_privacy_gate_for_backend(config.AI_BACKEND)`；Phase 78 的 `ingest_task` 傳 `gate=dependencies.build_privacy_gate_for_backend(job["ai_backend"])`，conftest 的 monkeypatch 同時蓋兩支。2026-09-01 開工校準（phase0901）時發現 | **75**（建）、**78**（celery_app＋conftest＋`test_ingest_task把gate與cloud都傳進去` 多斷言快照） |
 
 ---

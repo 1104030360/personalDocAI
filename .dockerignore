@@ -19,6 +19,8 @@ certs/
 docs/
 tests/
 scripts/
+# IAM policy JSON 與 EC2 的 user-data／systemd 設定（Phase 82／91）：只給人與 AWS CLI 用，映像用不到
+deploy/
 .playwright-mcp/
 .superpowers/
 .claude/

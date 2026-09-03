@@ -1,5 +1,19 @@
 # Phase 95：增量六錯誤收尾與驗收包
 
+> 📌 **2026-09-03 夜裡校準（接 92〜94 同日拍板；本 phase 仍要等 74〜94 全綠）：**
+>
+> - 帳號已升 **Paid**。E 段「確認仍是 Free plan／未升 Paid」作廢，改成「確認是 Paid、Budget 還會寄信」。
+> - 真機拆兩段（總覽 §10.2 追認項 **U**）：**92-A `t3.xlarge`**（CPU、收工 **Stop**，30 GB ≈ $2.9／月，
+>   在 Budget 內、留給 Phase 94 的 Demo 3）與 **92-B `g4dn.xlarge`**（GPU、等 G and VT 配額、測完 **Terminate**）。
+>   E 段／§4.6「EC2 必須是 `t4g.small` + `stopped`」改成：**沒有 running 的實例**
+>   （`stopped`、`terminated`、`.env` 的 ID 已清空，三者都算過）。
+>   Demo **2b 的 Stop** 仍是 G3 證據，不在本 phase 重做。
+> - CD 映像是 **`linux/amd64,linux/arm64`**。已知限制「GitHub runner 模擬 arm64 很慢」仍成立（多架構的 ARM 那一半）。
+> - design6 §3「EC2 不跑 GPU」隨 D12 作廢——92-B 的工人**就是** g4dn 上自裝 Ollama。
+>   §8 第 10 列「誤開 GPU」**不要**掃成禁止 g4dn；掃的是 NAT／EIP／ALB／Lambda／ECS 等沒核准的服務。
+> - **本 phase 不依賴 GPU 配額**：★G3 在 92-A 之後，92-B 是獨立後續。
+>   配額核准與否都**不必、也不該**為了勾 E5 去開機。
+
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
 > 本 phase 特別不要做的四件事：
 > ① **不要**為了讓某顆測試變綠而改產品行為（這是**收尾**，不是重寫——首跑紅了＝揪到真缺陷，
@@ -64,12 +78,12 @@ Phase 74〜94 是「把隱私閘門與可關掉的雲端 worker 做出來」。�
 | **§8 錯誤表**（10 列） | 每一種出錯情況的預期行為 | §4.1 逐列盤點（大多已由 74〜94 各自的測試檔釘住）；§4.2 補**兩個**真缺口 |
 | **§0 六條禁止** | 甲沒綠不准開 AWS／影像不進 SQS／EC2 不開 inbound／不做 NAT 等／Gate 不管頁首開關／遠端不可用不准 5xx | §4.3 的 8 顆掃碼（能自動化的全部自動化）＋ §4.6 的 AWS CLI 檢查（inbound 那條要問真 AWS） |
 | **§1.2「被否決」11 列** | 產品負責人**已經考慮過並否決**的方案，不是「暫時不做」 | §4.3 逐列對應（見那一節的對照表） |
-| **§3「不做」6 條** | Gate 覆蓋頁首開關／EC2 跑 Postgres·Redis·Celery·GPU／S3 當備份／NAT·ALB·EIP·RDS·Lambda·ECS·Macie／常開 EC2／未核准前改 `.feature` | §4.3 ＋ §4.6 ＋ §4.9（`.feature` 零改動的證明） |
+| **§3「不做」6 條** | Gate 覆蓋頁首開關／EC2 跑 Postgres·Redis·Celery／S3 當備份／NAT·ALB·EIP·RDS·Lambda·ECS·Macie／常開 EC2／未核准前改 `.feature`。⚠ 「EC2 跑 GPU」原列已隨 D12 作廢——工人就是 g4dn | §4.3 ＋ §4.6 ＋ §4.9（`.feature` 零改動的證明）。掃碼**不**把 `g4dn` 當違規 |
 | **§4 資料流與冪等** | 影像不進 Redis／SQS／Celery 參數；`photo` 表不加 `job_id`、不加處理狀態欄 | §4.3 的 `test_兩條佇列的訊息body都不含影像位元組`、`test_photo表沒有為了雲端新增任何欄位` |
 | **§5 API 與端點** | 不新增端點；上傳仍 202；openapi 零 DELETE | §4.3 的 `test_端點仍是22支而且openapi零DELETE` |
 | **§9 測試策略** | 「必釘」9 條 ＋「pytest **不連真 AWS**」 | §4.1 的盤點表把 9 條逐條點名；§4.4 的三死埠實證 |
-| **§12 驗收清單** | Demo 1／2／2b／3 ＋ 費用／安全 3 條 | §4.7 的**驗收包**逐條抄錄 ＋ 每條的指令 |
-| **§13 風險與已知限制**（7 條） | EC2 Stop 不卸壓、敏感檔仍可去 ollama.com、不會更快、Free plan 會關帳、t4g 試用不一致、Classifier 會漏、套件分岔 | §4.7 驗收包的「已知限制」段照抄，**讓產品負責人在簽名之前看到** |
+| **§12 驗收清單** | Demo 1／2／2b／3 ＋ 費用／安全 3 條 | §4.7 的**驗收包**逐條抄錄 ＋ 每條的指令。E1＝已升 Paid；E5＝terminated／無 running |
+| **§13 風險與已知限制**（7 條） | EC2 沒開就不卸壓、敏感檔仍可去 ollama.com、不會更快、Paid 會扣卡、Classifier 會漏、套件分岔。t4g 試用／Free 關帳兩條已過時 | §4.7 驗收包的「已知限制」段已改寫，**讓產品負責人在簽名之前看到** |
 | **總覽 §10 誠實揭露**（a〜l ＋ A〜K） | design6 沒寫、由計畫層裁決的 23 條 | §4.7 驗收包的最後一段做成**逐條打勾的追認清單** |
 
 ---
@@ -78,8 +92,9 @@ Phase 74〜94 是「把隱私閘門與可關掉的雲端 worker 做出來」。�
 
 - **Phase 74〜94 全部完成且全綠。** 這是收尾 phase，不是開發 phase。
 - **★ 閘門 G1／G2／G3 都已由產品負責人通過**（G1 在 82 前、G2 在 91 前、G3 在 93 前）。
-- **EC2 目前是 `stopped`**（Phase 94 的 Demo 3 步驟 7 做完的狀態）。
-  本 phase §4.6 會**確認**它是 stopped，但**不需要**把它開機。
+- **EC2 目前沒有 running。** 92-A 那台 `t3.xlarge` 收工是 **Stop**（碟留著給 Demo 3），
+  92-B 的 GPU 機（若已做）測完 Terminate。本 phase §4.6 確認
+  **沒有 running 的實例**（`stopped`／`terminated`／ID 已清空都算過），**不需要、也不准**再開機。
 - 本檔所有指令都在**專案根目錄**執行（`grep`／`ls`／`git` 用的都是相對路徑，
   位置跑掉就會查到別的東西、甚至誤判成「通過」）。
 
@@ -120,7 +135,8 @@ git status --short -- app tests deploy compose.yaml Dockerfile db requirements.t
 
 aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION" \
   --query 'Reservations[0].Instances[0].State.Name' --output text
-# 預期：stopped
+# 預期：stopped（92-A 那台 t3.xlarge）或 terminated（或 InvalidInstanceID.NotFound／空——ID 已清掉也算過）
+# 不准是 running
 ```
 
 把數字填進這張表（**執行時填入，不要留空交差**）：
@@ -130,7 +146,7 @@ aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$A
 | 開工時 `pytest -q` | ＿＿＿ passed ＋ 0 skipped（總覽 §9 寫 **672**） |
 | 開工時 `test_design6_error_paths.py` 顆數 | ＿＿＿（總覽 §9 寫 **14**） |
 | `docker compose ps` 服務數 | ＿＿＿（應為 **4**） |
-| EC2 狀態 | ＿＿＿（應為 `stopped`） |
+| EC2 狀態 | ＿＿＿（應為 `stopped`（92-A 的 `t3.xlarge`）／`terminated`／查無此實例；**不准 running**） |
 | `aws sts get-caller-identity` 的 Arn 結尾 | ＿＿＿（應為 `user/personaldocai-admin`） |
 
 ---
@@ -149,7 +165,7 @@ aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$A
   Tests 表格列、第 470 行附近的 `pytest -q` 註解；Phase 92 §4.10 明寫留給本 phase）。
 - **§4.4** 三死埠零依賴實證（AWS ＋ Redis ＋ Ollama 一起指）。
 - **§4.5** 正式庫健檢（四個查詢，比照 phase-71 §4.6）。
-- **§4.6** 四個服務都在 ＋ EC2 是 `stopped` ＋ S3 是空的 ＋ 兩條佇列訊息數 0。
+- **§4.6** 四個服務都在 ＋ **沒有 running 的 EC2** ＋ S3 是空的 ＋ 兩條佇列訊息數 0。
 - **§4.7** 產出 `docs/plan/report/<日期>-增量六驗收包-請產品負責人確認.md`。
 - **§4.8** 產出 `docs/plan/todo/<日期>-增量六收尾95-TODO.md` 進度檔。
 - **§4.9** 寫下歸檔清單（74〜95 ＋ 總覽），但**不執行**——等產品負責人決定 commit 時機。
@@ -162,7 +178,7 @@ aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$A
 | 重複測已經有人測的東西 | 每一列先找「誰已經測了」，只補真正的缺口。重複的測試是負債：改一次程式要改兩個地方 |
 | 動 `docs/spec/` 任何一個字 | design6 §10 明文：本增量對外上傳契約仍是 202、**不必**為了 fallback 改 Gherkin。要加「敏感不上雲」的 Example **需要另外核准**——那不在本增量的範圍 |
 | 在測試裡連真的 AWS／Redis／Ollama、或啟動 Celery | design6 §9 明文。五道 autouse 安全網已經把外部依賴全擋掉；本檔的兩顆行為測試用 `CloudRoute(FakeMailbox(), FakeProbe(...))` |
-| 開 EC2「順便再 demo 一次」 | Phase 92 的 Demo 2／2b 與 Phase 94 的 Demo 3 都做過了。本 phase 只**確認機器是 stopped**。開了就在燒點數（D15） |
+| 開 EC2「順便再 demo 一次」 | Phase 92 的 Demo 2／2b 與 Phase 94 的 Demo 3 都做過了。本 phase 只**確認沒有 running**。再開機就是在扣卡（`t3.xlarge` 約 $0.2176／小時、`g4dn.xlarge` 約 $0.71／小時） |
 | 為了「湊滿十列」而每一列都寫一顆 | §4.1 的盤點就是在防這件事。十列裡有八列已經有人測了 |
 | 自己 commit、自己把 `unfinish/` 搬進 `finish/` | 歸檔隨 commit 執行，時機由產品負責人決定（總覽 §7 鐵律 12）。`git mv` 會直接 stage，自己搬等於替人決定了 commit 內容 |
 | 自己勾驗收包的 B〜E 段 | 那幾段是**產品負責人**要親自點、親自看、親自簽的。實作者只填 A 段的數字 |
@@ -193,7 +209,7 @@ aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$A
 | 7 | VLM 三次失敗（本機或雲端看圖） | 不留 photo 列、清 staging；雲端路還要清 S3 | ✓ **P79** `test_雲端結果說看不懂_job標failed且不留照片` ＋ **P87** `test_看圖三次都失敗_result標understood_false而且attempts是3`；★ **「這是整筆失敗，不是 fallback 本機」沒有人測** → 本檔【補A】 |
 | 8 | 格式 415 | 不變；不建 job | ✓ 既有 `test_photos_upload.py` 的三顆：`test_upload_non_image_returns_415_with_message`、`test_upload_octet_stream_returns_415`、`test_415不建任務也不寫staging`（`test_design5_error_paths.py` 檔頭表只**點名**最後那一顆，自己沒有 415 測試）。**本增量一個字都沒改 HTTP 層**，所以這一列是**點名**，不補測 |
 | 9 | GitHub OIDC 未鎖 `sub` | 不准合併；trust 必須釘 repo ＋ branch | ✓ **P93** `test_OIDC信任文件的sub逐字鎖住main分支` ＋ `test_OIDC信任文件沒有星號萬用字元`（＋ `test_OIDC信任文件的aud是sts`） |
-| 10 | 誤開 NAT／EIP／GPU | 本文件禁止；驗收掃 compose／文件／Console | ★ 本檔 `test_產品碼與部署檔都沒有NAT或EIP或ALB或Lambda或ECS字樣`（§4.3）＋ §4.6 的 `describe-nat-gateways`／`describe-addresses` 預期空 |
+| 10 | 誤開 NAT／EIP／（未核准的）貴服務 | 本文件禁止；驗收掃 compose／文件／Console。⚠ 原文寫「GPU」＝當時禁止誤開 GPU 機；**2026-09-03 改判工人就是 g4dn**，不要把 `g4dn`／`nvidia` 掃成違規 | ★ 本檔 `test_產品碼與部署檔都沒有NAT或EIP或ALB或Lambda或ECS字樣`（§4.3）＋ §4.6 的 `describe-nat-gateways`／`describe-addresses` 預期空；收工後 **無 running 實例** |
 
 - [ ] 逐列打勾。**表上的 ✓ 要用 `--collect-only` 對過才算數。**
 - [ ] 反過來也一樣：發現某列已被完整測過而你手癢想在本檔再寫一顆 → **不寫**。
@@ -524,7 +540,9 @@ pytest tests/integration/test_design6_error_paths.py -k "三次失敗 or 不會�
 
 
 def test_產品碼與部署檔都沒有NAT或EIP或ALB或Lambda或ECS字樣():
-    """design6 §0 禁止第 4 條：這些服務全都沒有需求，而且 NAT 會直接打爆 Free plan 點數。
+    """design6 §0 禁止第 4 條：這些服務全都沒有需求，而且 NAT 東京約 $45／月。
+
+    ⚠ 不掃 GPU／g4dn／nvidia：2026-09-03 改判工人就是 g4dn 上自裝 Ollama。
 
     掃三棵樹：app/（產品碼）、deploy/（IAM policy 與 EC2 開機腳本）、
     .github/workflows/（CI 與 CD）＋ compose*.yaml。
@@ -1029,7 +1047,7 @@ find data/staging -type f -mmin +1440 2>/dev/null | head
 # 預期：沒有輸出（-mmin +1440 ＝超過 24 小時沒被動過的檔案）
 ```
 
-### 4.6 四個服務、EC2 是 stopped、S3 是空的、佇列是空的
+### 4.6 四個服務、EC2 沒有 running、S3 是空的、佇列是空的
 
 ```bash
 # ① 本機四個服務
@@ -1043,10 +1061,16 @@ unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY      # 下面的 aws 指令要用 
 AWS_REGION=${AWS_REGION:-ap-northeast-1}
 aws sts get-caller-identity --query Arn --output text   # 預期結尾 :user/personaldocai-admin
 
-# ② EC2 必須是 stopped（Demo 都做完了，用完就關；D15）
-aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION" \
-  --query 'Reservations[0].Instances[0].{Type:InstanceType,Arch:Architecture,State:State.Name}'
-# 預期：{"Type": "t4g.small", "Arch": "arm64", "State": "stopped"}
+# ② EC2 不准 running（Demo 都做完了）
+aws ec2 describe-instances --region "$AWS_REGION" \
+  --filters Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].{Id:InstanceId,Type:InstanceType}' --output table
+# 預期：空表格。
+# 若 .env 還留著舊 ID，也可以查那一筆：
+# aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION" \
+#   --query 'Reservations[0].Instances[0].{Type:InstanceType,Arch:Architecture,State:State.Name}'
+# 預期 Arch=x86_64；Type/State 兩種都算過：t3.xlarge/stopped（92-A 留著給 Demo 3）
+#      或 g4dn.xlarge/terminated（92-B 測完刪機）；InvalidInstanceID.NotFound 也算過
 
 # ③ S3 寄物櫃是空的（處理完就刪；D8）
 aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ --region "$AWS_REGION"
@@ -1219,6 +1243,8 @@ docker compose logs --tail=200 worker | grep -e "route=" -e "fallback="
 
 > 💡 **C8／C9 就是這個增量的核心承諾：遠端關掉時，你完全感覺不到。**
 > 唯一的差別在 worker 的 log 多一行字。
+> 2b **必須先 Stop**（碟還在、探測才會說不是 running）。C9 過了之後**不要留 running 的機器**：
+> 92-A 那台 `t3.xlarge` 停著即可（30 GB ≈ $2.9／月，Demo 3 還要用）；只有 92-B 的 GPU 機才 Terminate（見 D6／E5）。
 
 ---
 
@@ -1230,26 +1256,27 @@ docker compose logs --tail=200 worker | grep -e "route=" -e "fallback="
 | # | 請做什麼 / 看什麼 | 結果 |
 |---|---|---|
 | D1 | 到 GitHub 的 Actions 頁面看那次 push：**`test` 綠了之後，`deploy` 才出現並開始跑**（不是同時） | ⬜ |
-| D2 | `deploy` 的七個 step 全綠。⏱ `Build and push` 第一次要 **5〜15 分鐘**（GitHub 的機器是 x86，要模擬 ARM，很慢——這是預期的，不是壞掉） | ⬜ |
-| D3 | 最後一步的 log 是 `instance state: stopped`，並印一則藍色提示 `instance not running; image pushed, next Start pulls latest`，**而且 job 是綠的**（機器沒開不算部署失敗） | ⬜ |
+| D2 | `deploy` 的七個 step 全綠。⏱ `Build and push` 第一次要 **5〜15 分鐘**（多架構：amd64 原生、arm64 走 QEMU——這是預期的，不是壞掉） | ⬜ |
+| D3 | 最後一步的 log 是 `instance state:` **不是** `running`（`stopped`／`terminated`／查無此實例都算），並印一則藍色提示 `instance not running; image pushed, next Start pulls latest`，**而且 job 是綠的**（機器沒開不算部署失敗） | ⬜ |
 | D4 | ECR 上看得到那次 commit 的完整 sha，而且與 `latest` 在**同一組**（＝同一份映像掛兩個 tag）<br>`aws ecr describe-images --repository-name personaldocai-worker --region "$AWS_REGION" --query 'imageDetails[?imageTags].imageTags[]' --output json` | ⬜ |
 | D5 | Start 之後，遠端工人的啟動 log 的 `version=` **逐字等於**那個 sha（＝真的跑的是新映像；**不是**看 `latest` 這個標籤）<br>指令見 phase-94 §4.8 步驟 5 | ⬜ |
-| D6 | **做完 Stop。** | ⬜ |
+| D6 | **做完收工**：Demo 3 用的是 92-A 那台 `t3.xlarge` → **Stop**（30 GB ≈ $2.9／月，Budget 內，下次還要用）；只有 92-B 的 GPU 機才 **Terminate**（80 GB 關機約 $7.7／月）。SG／IAM／S3／SQS／ECR 一律留下。 | ⬜ |
 
 ---
 
 ## E. 費用／安全（design6 §12 剩下的三條）
 
-> 原文三條：**Free plan、未升 Paid；Budget 有寄信設定** ／
+> 原文三條經 2026-09-03 改寫：**Paid plan、Budget 有寄信設定** ／
 > **Security group inbound 空；無 NAT、無 EIP** ／ **pytest 全綠且不碰真 AWS**。
+> （原文「Free plan、未升 Paid」已過時——帳號已升 Paid。）
 
 | # | 請做什麼 / 看什麼 | 結果 |
 |---|---|---|
-| E1 | AWS Console → Billing and Cost Management → 確認方案仍是 **Free plan**（**未升 Paid**）、點數還有剩 | ⬜ |
+| E1 | AWS Console → Billing and Cost Management → 確認方案是 **Paid**（2026-09-03 已升）。忘關機器會**扣卡**（`t3.xlarge` $0.2176／小時、`g4dn.xlarge` $0.71／小時）。Budget 上限仍 $5：92-A 停著的 30 GB 碟約 $2.9／月（在額度內），GPU 機跑一小時就可能觸發 80% 警報——這是提醒不是 bug | ⬜ |
 | E2 | Budget 還在而且會寄信（**用 `personaldocai-admin` 身分**：它是 `~/.aws` 的 default profile，前提是「準備」那段已經 `unset` 掉 `.env` 的兩把 key，而且 root 已開「IAM user and role access to billing information」——Phase 82 §4.3 最後一步；最小權限的 `personaldocai-mac` 沒有 `budgets:ViewBudget`，用它會 AccessDenied）：`aws budgets describe-budgets --account-id "$ACCOUNT_ID" --query 'Budgets[].{Name:BudgetName,Limit:BudgetLimit}' --output table`（預期：`personaldocai-budget`、5 USD）<br>`aws budgets describe-notifications-for-budget --account-id "$ACCOUNT_ID" --budget-name personaldocai-budget --query 'Notifications[].{Type:NotificationType,Th:Threshold}'`（預期：ACTUAL 與 FORECASTED 各一筆、80） | ⬜ |
 | E3 | Security group 的 inbound 是**空的**、outbound 只有 tcp 443：<br>`aws ec2 describe-security-groups --region "$AWS_REGION" --filters Name=group-name,Values=personaldocai-worker-sg --query 'SecurityGroups[0].IpPermissions'`（預期 `[]`） | ⬜ |
 | E4 | 沒有 NAT、沒有 Elastic IP：<br>`aws ec2 describe-nat-gateways --region "$AWS_REGION" --filter Name=state,Values=pending,available --query 'NatGateways[].NatGatewayId' --output text`（預期空；`--filter` 是單數，這支指令的怪癖）<br>`aws ec2 describe-addresses --region "$AWS_REGION" --query 'Addresses[].AllocationId' --output text`（預期空） | ⬜ |
-| E5 | **EC2 現在是 `stopped`**：`aws ec2 describe-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION" --query 'Reservations[0].Instances[0].{Type:InstanceType,Arch:Architecture,State:State.Name}'`（預期 `t4g.small` / `arm64` / **`stopped`**） | ⬜ |
+| E5 | **沒有 running 的 EC2**：`aws ec2 describe-instances --region "$AWS_REGION" --filters Name=instance-state-name,Values=running --query 'Reservations[].Instances[].{Id:InstanceId,Type:InstanceType}' --output table`（預期空表）。若 `.env` 的 ID 還在：State 是 **`stopped`**（92-A 的 `t3.xlarge`，刻意留著給 Demo 3）或 **`terminated`**（92-B 的 `g4dn.xlarge`）都算過；Arch 都應是 `x86_64`。**只有「running」不算過** | ⬜ |
 | E6 | S3 是空的、兩條佇列訊息數都是 0（見上面 §4.6 的 ③④ 指令） | ⬜ |
 | E7 | 看一眼 A 段第一行與第二行：`pytest -q` 全綠、三死埠顆數相同 | ⬜ |
 
@@ -1287,7 +1314,7 @@ docker compose logs --tail=200 worker | grep -e "route=" -e "fallback="
 | D | 等雲端結果時 job 的 status **維持 `analyzing`**，不新增第五種狀態 | ⬜ |
 | E | 雲端看圖的次數**不回寫** `job["attempt"]`（進度面板的「第 N 次」不會忽然跳） | ⬜ |
 | F | PDF 走雲端路時，每頁 PNG **本機自己再 `render_pages()` 一次**，不把工人拆好的頁放 S3 | ⬜ |
-| G | ★G1 ＝ 甲的驗收 ＋ 你明示「可以開始花 AWS 資源」；**Phase 82 排在 G1 之後**（開戶就開始算 Free plan 的 6 個月） | ⬜ |
+| G | ★G1 ＝ 甲的驗收 ＋ 你明示「可以開始花 AWS 資源」；**Phase 82 排在 G1 之後**。帳號其後已升 Paid（2026-09-03）；GPU 配額是另一筆申請 | ⬜ |
 | H | **Phase 76 是計畫層加的一份純重構**（design6 完全沒提）；沒有它，Phase 79 只能複製一份會漂移的同款程式碼 | ⬜ |
 | I | 多建一個 **`personaldocai-admin`**（AdministratorAccess）**只給 Mac 上的 `aws` CLI 用**；程式用的 `personaldocai-mac` 仍是最小權限，它的 key 只在 `.env`（載進 shell 後要 `unset`） | ⬜ |
 | J | Phase 83 **多加 1 顆** `test_get_object拿得回位元組而delete_objects送出鍵清單`（+16 不是 +15）；顆數軌跡自 83 起 +1，終值 **682** | ⬜ |
@@ -1301,27 +1328,28 @@ docker compose logs --tail=200 worker | grep -e "route=" -e "fallback="
 「本增量對外上傳契約仍是 202 ＋ 分析成功才有照片；**不必**為了 fallback 改 Gherkin
 （那是內部路由）」。要加「敏感不上雲」的 Example **需要另外核准**，不在本增量範圍。
 
-**已知限制（design6 §13 ＋ 計畫層補充，照抄；請在簽名之前看過）：**
+**已知限制（design6 §13 ＋ 計畫層補充，2026-09-03 改寫過時條；請在簽名之前看過）：**
 
-- **EC2 Stop 的時候不卸壓。** 機器關著就等於沒有雲端管線，每一張非敏感照片都會退回本機看圖。
-  這是用來換「卡片 $0」的代價。要卸壓就先 Start。
+- **EC2 沒開（Stop 或 Terminate）的時候不卸壓。** 沒有雲端管線，每一張非敏感照片都會退回本機看圖。
+  要卸壓就先 Start（或重建一台）。92-A 那台 `t3.xlarge` 停著只要 ≈ $2.9／月，刻意留著；
+  但**不要**留 stopped 的 80 GB GPU 碟（≈ $7.7／月，超過 Budget）。
 - **頁首撥雲端時，敏感檔的影像仍然可以去 ollama.com。** Privacy Gate 管的是
   S3／SQS／EC2 這條管線，**不管**頁首那顆開關（D6）。
   ⚠ **對外說法不可以寫成「敏感資料完全不出雲」**（design6 §6 明文）。
-- **EC2 ＋ Ollama Cloud 不會比「本機 ＋ 頁首雲端開關」更快。** 多了 S3 上傳、SQS 來回、
-  S3 下載三段來回。開機的價值是**卸掉本機的 Celery／GPU 名額**與**作品集管線**，不是延遲。
-- **Free plan 滿 6 個月或點數用完會關帳。** 不是扣卡，是**資源消失**（90 天內可升 Paid 救回）。
+- **EC2 不會 magically 讓「本機 ＋ 頁首雲端開關」變快**（不論工人是 92-A 的轉送 `ollama.com`
+  還是 92-B 的自跑 GPU）。
+  多了 S3 上傳、SQS 來回、S3 下載。開機的價值是**卸掉本機的 Celery 名額**與**作品集管線**。
+- **帳號已升 Paid。** 忘關機器會**扣卡**：`t3.xlarge` 約 $0.2176／小時（一天 ≈ $5.2）、
+  `g4dn.xlarge` 約 $0.71／小時（一天 ≈ $17），兩者都另加 IPv4 $0.005／小時。
   雲端上沒有正本——S3 只有處理中的暫存檔、EC2 只有一支無狀態工人，照片一張都不會少。
-- **t4g 試用與 Free plan 的文件可能不一致。** 開機後看帳單；沒有 $0 那一列就立刻 Stop，
-  只吃微量點數。
-- **Classifier 一定會漏。** 規則版只看**檔名**；證件照未必有關鍵字。所以「不確定」一律當本機。
+- **Classifier 一定會漏。** 閘門是 VLM 短問（不看檔名）；證件照未必被判敏感。所以「不確定」一律當本機。
   **這不是合規等級的 DLP。**
-- **等雲端結果的時候佔一個 Celery 名額。** 兩個名額之一在長輪詢（不佔 GPU）。
+- **等雲端結果的時候佔一個 Celery 名額。** 兩個名額之一在長輪詢（不佔本機 GPU）。
 - **results 佇列是共用的**，會收到別人的訊息；本機會還回去或當殘訊息刪掉。
 - **開機拉的是 `latest`**，不是某個固定 sha。
-- **GitHub runner 模擬 arm64 很慢**（第一次 build 5〜15 分鐘）。
+- **GitHub runner 建多架構的 arm64 那一半很慢**（第一次 build 5〜15 分鐘；amd64 是原生）。
 - **host 的 `.venv` 與映像裡的套件會分岔**（`requirements.txt` 全是 `>=`），
-  ARM worker 映像同樣有這個問題。所以「重建映像」要當成需要手動煙霧一次的動作。
+  worker 映像同樣有這個問題。所以「重建映像」要當成需要手動煙霧一次的動作。
 `````
 
 - [ ] 交出去之前，把 A 段的 `＿＿＿` 全部填上實際數字、標題的日期換成當天。
@@ -1539,7 +1567,7 @@ git add tests/integration/test_design6_error_paths.py \
 
 - [ ] **正式庫四個查詢全部符合預期**；`find data/staging -mmin +1440` 無輸出
 - [ ] **`docker compose ps --no-trunc` ＝ 四個服務**，worker 的 COMMAND 有 `--concurrency=2`
-- [ ] **EC2 是 `stopped`**、**S3 `documents/` 是空的**、**兩條佇列訊息數都是 0**；
+- [ ] **沒有 running 的 EC2**、**S3 `documents/` 是空的**、**兩條佇列訊息數都是 0**；
       **沒有 NAT、沒有 EIP、SG 的 `IpPermissions` 是 `[]`、Budget 還會寄信**（§4.6 的 ②〜⑦）
 - [ ] **`ruff format --check app tests scripts && ruff check app tests scripts`** exit 0
 - [ ] **§4.3.1 的兩句註解已改**（`grep -n "_fail\b\|_insert_photo_with_files" tests/integration/test_ingest_job_pdf.py` 零命中；該檔顆數不變）
@@ -1612,8 +1640,8 @@ git add tests/integration/test_design6_error_paths.py \
 
 8. **看到「24 passed」就以為 §0／§1.2／§3 全部守住了。**
    §4.6 那七項是**人工**的（EC2 狀態、S3 空不空、佇列殘訊息、NAT／EIP、SG inbound、Budget），
-   測試跑再多次也不會幫你做。尤其 **EC2 是不是 `stopped`**——
-   忘了 Stop 就是在燒點數，而且 pytest 永遠不會告訴你。
+   測試跑再多次也不會幫你做。尤其 **有沒有 running 的 EC2**——
+   忘了 Terminate 就是在扣卡，而且 pytest 永遠不會告訴你。
 
 9. **`docs/spec/` 被「順手」改了一個字。**
    **症狀：** `git status --short docs/spec/` 有輸出。

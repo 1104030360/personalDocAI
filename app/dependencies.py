@@ -278,6 +278,43 @@ def get_task_dispatcher() -> TaskDispatcher:
 # ---------------- 增量六 Phase 77：雲端路的注入點（design6 D7／D10）----------------
 
 
+@lru_cache(maxsize=1)
+def _ec2_cloud_route() -> cloud_ingest.CloudRoute:
+    """ec2 模式的雲端路，**整個行程只建一次**（手法與 _ollama_vlm 相同）。
+
+    ★ 為什麼一定要共用同一個物件：Ec2Probe 的 TTL 快取是**物件身上的狀態**。
+      每次呼叫都 new 一個的話，快取永遠是空的——等於每張照片都打一次
+      DescribeInstances，design6 D10 第 1 條要的「避免每張圖都打 AWS」就落空了。
+      順便也省下每次重建 boto3 client 的成本（那不是免費的）。
+
+    ★ 代價：改了 .env 之後要重啟 worker 才生效。這與本專案既有的規則一致
+      （CLAUDE.md 指令區：「改 .env → restart app worker」）。
+
+    ★ AwsMailbox 的 import 寫在函式**裡面**（與 get_task_dispatcher 同一個理由）：
+      pytest 收集階段不必為了一顆字串測試就載入 AWS SDK；
+      而且測試可以 monkeypatch aws_mailbox.AwsMailbox 把它整個換掉。
+    """
+    # 只有真的要走雲端時才載入 boto3（唯一入口是 aws_mailbox；與 assume 那支同一句）
+    from app.services.aws_mailbox import AwsMailbox
+
+    mailbox = AwsMailbox(
+        bucket=config.S3_BUCKET,
+        jobs_queue_url=config.SQS_JOBS_QUEUE_URL,
+        results_queue_url=config.SQS_RESULTS_QUEUE_URL,
+        region=config.AWS_REGION,
+    )
+    # 同一顆信箱同時給 CloudRoute（S3／SQS）與 Ec2Probe（DescribeInstances）用
+    return cloud_ingest.CloudRoute(
+        mailbox,
+        cloud_ingest.Ec2Probe(
+            mailbox,
+            config.EC2_WORKER_INSTANCE_ID,
+            ttl_seconds=config.EC2_PROBE_TTL_SECONDS,
+        ),
+        timeout_seconds=config.CLOUD_RESULT_TIMEOUT_SECONDS,
+    )
+
+
 def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
     """這一台現在要不要走雲端路、怎麼走。**全系統只有這一個地方決定。**
 
@@ -287,7 +324,8 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
       assume → CloudRoute ＋ AwsMailbox ＋ AlwaysRunning：假設遠端開著、**不做探測**
                （階段丁：工人跑在這台 Mac 上時用；機器沒開時它會傻傻送出、等到逾時才
                fallback，所以不要拿來當日常設定——總覽 §10.1 追認項 l）
-      ec2    → Phase 89 才接（探測換成 Ec2Probe）
+      ec2    → CloudRoute ＋ AwsMailbox ＋ Ec2Probe：用 DescribeInstances 問那台機器
+               現在是不是 running（戊之後的日常；整個行程共用一條，見 _ec2_cloud_route）
 
     ★ 打錯字要當場炸（ValueError），不要默默當成 off：
       「我明明把 CLOUD_ROUTE 設成 cloud 了，怎麼都沒送出去」是最難查的一種壞法。
@@ -321,5 +359,6 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
             timeout_seconds=config.CLOUD_RESULT_TIMEOUT_SECONDS,
         )
     if mode == "ec2":
-        raise NotImplementedError("CLOUD_ROUTE=ec2 要等 Phase 89 的 Ec2Probe 才能用")
+        # 整個行程共用一條（lru_cache）：Ec2Probe 的 TTL 快取住在物件身上
+        return _ec2_cloud_route()
     raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{mode!r}")

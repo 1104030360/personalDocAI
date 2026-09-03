@@ -74,7 +74,7 @@
 | D9 | **完成訊號＝results queue（方案 B）** | 兩條 Standard Queue，FIFO 不做。**jobs**：本機 Send、工人 Receive，body `{"job_id","s3_key"}`（s3_key＝input）。**results**：工人 `PutObject result.json` **成功後**才 Send、本機 Receive，body `{"job_id"}`（不含位元組）；本機再 GetObject `documents/{job_id}/result.json`。S3 Event→SQS 不做（避免「物件出現但 JSON 還沒寫完」誤醒）。**禁止**本機用輪詢 HeadObject 當完成訊號。逾時仍走 D10 |
 | D10 | **遠端關掉＝fallback 本機** | EC2 Stop、不是 `running`、AWS 憑證／API 失敗、S3／SQS 不可達、或送出後逾時 results 沒有該 `job_id` → **這筆 job 改走現有 `run_ingest_job`**，行為與增量五相同。不上傳失敗、不要求使用者重傳、進度面板仍是 queued／analyzing／成功消失。見 §2.1 |
 | D11 | EC2 只當工人 | Docker cloud worker。無公開 HTTP、無網站、無公網 API。Security group inbound 全關。出站 TCP 443（S3、SQS、ECR、SSM、ollama.com） |
-| D12 | EC2 看圖一律 Ollama Cloud | 實例無 GPU、不跑本機 Ollama。與頁首開關無關 |
+| D12 | ~~EC2 看圖一律 Ollama Cloud~~ | ~~實例無 GPU、不跑本機 Ollama。~~ **2026-09-03 產品負責人改判作廢**：EC2 改成 GPU 機、自己裝 Ollama 看圖；工人看圖後端由 `WORKER_VLM_BACKEND`（`cloud`｜`local`）決定，D15 的機型（t4g.small）與映像架構（僅 arm64）跟著改（見計畫總覽 §10.2 追認項 T 與 phase-92）。仍與頁首開關無關。**實作順序：先 CPU `t3.xlarge` 驗流程（92-A），配額核准後再 GPU（92-B）；見總覽 §10.2 U** |
 | D13 | 本機入庫 | 拉回 `result.json` 後，**embedding（bge-m3）與 INSERT／原圖／縮圖仍在本機**。向量必須與庫裡同源 |
 | D14 | 作品集為主、順便卸壓 | 成功標準是三條 demo（§12）＋EC2 開著時非敏感不佔這台 GPU／Celery 名額。不是「比頁首雲端開關更快」，也不是改詢問 UX |
 | D15 | AWS 帳號 Free plan | 新帳號點數制（最多 $200 點數、Free plan 不扣卡）。目標卡片 **$0**。用完 EC2 就 **Stop**。映像 **`linux/arm64`**，機型 **t4g.small**。見 §7 |
@@ -383,7 +383,7 @@ openapi 仍零 DELETE。
 | 主目標 | 作品集／學 AWS；順便 EC2 開著時卸本機看圖壓力 | D14 |
 | 頁首 AI 開關 | 不管它、也不准閘門去關它；閘門**跟著**走同一顆看圖模型。本機太慢才有 ollama.com；2026-09-01：閘門短問也跟開關，雲端時接受圖先去 ollama.com | D6、D2、D4 |
 | 閘門怎麼分類 | 只用 VLM 短問題，不看檔名、無關鍵字表。失敗＝不確定＝本機。完整看圖仍是入庫那一次 | D4 |
-| EC2 看圖 | 無 GPU，只打 Ollama Cloud | D12 |
+| EC2 看圖 | ~~無 GPU，只打 Ollama Cloud~~ 2026-09-03 改判：GPU 機自裝 Ollama（`WORKER_VLM_BACKEND=local`），`cloud` 仍可選 | D12（作廢） |
 | 帳號 | Free plan，不想扣卡 | D15 |
 | 開機 | 部署／demo 完立刻 Stop | D10、D15 |
 | 映像 | 能打 `linux/arm64` | D15、D16 |

@@ -1,5 +1,30 @@
 # Phase 87：cloud_worker 核心（`process_job_message`）
 
+> 📌 **2026-09-02 校準紀錄**（ledger：`.superpowers/sdd/phase0902-2/progress.md`；
+> 共同事實：`.superpowers/sdd/phase0902-2/brief-common.md`）。本檔已依 2026-09-02 晚間
+> 工作樹（HEAD `bb3921a`，Phase 83〜86 已 commit）逐項校準，實作者**照著做就會對**：
+>
+> | 裁決 | 本檔怎麼落地 |
+> |---|---|
+> | **R0** 不 commit、用工作樹快照相減驗收 | 步驟 9 從「commit」改成「記快照」；§6 驗收清單的 `git diff --stat` 改成兩顆 tree 相減／`git status --short` |
+> | **R1** 識別字一律英文 | §2 的兩段檢查指令與 §4 步驟 1／3a／3b／5 五個程式碼區塊，中文變數／函式／常數全改英文（`test_中文` 名**不動**、註解／docstring／log 仍中文）；對照表見 `.superpowers/sdd/phase0902-2/calib-A-report.md`。**唯一保留的中文識別字是 `tests/conftest.py` 既有的 `目前的任務清單`**——那是別的檔的公開 API，本 phase 不准改名（實作者也不要順手改） |
+> | **R2** ★G2 條件式通過 | 與本 phase 無關（G2 在 Phase 90 之後） |
+> | **R3** AWS／docker／`.env`／restart／煙霧一律 controller 親做 | 本 phase **零 `aws` 指令**；§2 開工基線裡唯一一行 `docker compose ps` 已標為 controller 事先確認，實作 subagent 不下任何 docker 指令 |
+> | **R4** 顆數以實查 **644** 起算 | 開工基線 634 → **644**、收工 646 → **656**（總覽 §9 寫 646，是以 543 起算的舊絕對值；**要對的仍是「本 phase 新增 12 顆」**） |
+> | **R5** 五份計畫檔平行校準、各改各的 | 本次只動本檔，跨檔問題寫進校準回報交 controller |
+> | **R6**／**R7**／**R8**／**R9**／**R10** | 都不落在本 phase（手機／`CLAUDE.md` 過期句／dev overlay／`worker.env.example`／compose 掃碼分屬 88〜91） |
+>
+> 另外三項**事實更正**（不是裁決，是實查後的修正）：
+> ① `OllamaCloudVLM.understand()` **內部沒有** `ai_timing`（實查 `app/services/vlm_service.py`
+> L298〜335 只有「重試一次」那一層），所以計時 log **必須由工人自己包**——寫法與
+> `app/services/ingest_job.py` L403 逐字相同，總覽 §2.6 第 5 條也明寫「ai_timing kind=vlm backend=cloud」。
+> ② 計畫檔全文**不再出現資料庫驅動程式的套件名**（design3 掃碼是子字串比對，寫在文件裡遲早會被抄進 `app/`）；
+> §4.3a 的掃碼測試改用「白名單 ＋ 不含驅動名的黑名單」，驅動名那一層由既有的
+> `test_SQL只出現在repository與db層` 負責（它掃 `app/` 全樹）。
+> ③ §4.3b 的端到端不再 monkeypatch `CloudRoute.wait_result`，改用**既有慣例**——
+> 比照 `tests/integration/test_gated_ingest.py` 的 `WorkerMailbox`（`FakeMailbox` 子類，
+> 覆寫 `receive_result` 讓「另一頭」動一次），只是把 `fake_worker_process_one` 換成**真工人**。
+
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
 > 本 phase 特別**不要**做這四件事：①不要寫主迴圈、訊號處理與 `python -m`（那是 Phase 88）；
 > ②不要連任何真的 AWS（本 phase 一次 AWS 呼叫都沒有，全部用假信箱）；
@@ -86,15 +111,20 @@ AWS 指令、不花任何點數**，它排在這裡是因為端到端測試要�
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-docker compose ps --no-trunc          # db 要 Up (healthy)，否則測試會一整片連線錯誤
-pytest --collect-only -q | tail -1    # 預期：634 tests collected
-pytest -q                             # 預期尾巴：634 passed，0 skipped
+pytest --collect-only -q | tail -1    # 預期：644 tests collected
+pytest -q                             # 預期尾巴：644 passed，0 skipped
 git branch --show-current             # 預期：main
 ```
 
-> **開工基線 ＝ 634**（總覽 §9：543 起算，74〜86 累計 +91）。
-> 本 phase 結束時應該是 **646**（+12）。
-> 交錯做的話絕對數字會不一樣，**要對的是「本 phase 新增 12 顆」**，不是絕對值。
+> ⚠ **容器狀態由 controller 事先確認**（`docker compose ps --no-trunc`：`db` 要 `Up (healthy)`，
+> 否則端到端那兩顆會紅在連線錯誤）。2026-09-02 實查：`db`／`redis` healthy、`app` 走 dev overlay、
+> `worker` bind-mount。**實作 subagent 不下任何 `docker` 指令**（裁決 R3）——
+> 真的連不上就停下回報 BLOCKED，不要自己 `docker compose up`。
+
+> **開工基線 ＝ 644**（2026-09-02 實查：`pytest -q` 644 passed／0 skipped、43.6 秒）。
+> 本 phase 結束時應該是 **656**（+12）。
+> ⚠ 總覽 §9 那一欄寫的是 **646**，那是以 543 起算的舊絕對值（實際工作樹多 10 顆）——
+> 交錯做的話絕對數字本來就會不一樣，**要對的是「本 phase 新增 12 顆」**，不是絕對值。
 
 再確認四個前置模組真的存在（沒有就先回去做對應的 phase，**不要在這裡自己補一個**）：
 
@@ -107,8 +137,8 @@ print('cloud_ingest OK：', [n for n in ('CloudRoute','CloudRouteOff','AlwaysRun
 print('gated_ingest OK：', hasattr(gated_ingest, 'run_gated_ingest_job'))
 print('MailboxMessage 欄位：', list(MailboxMessage.__dataclass_fields__))
 print('FakeMailbox 方法：', [n for n in ('put_object','get_object','delete_objects','send_job','receive_job','delete_job_message','send_result','receive_result','input_key','context_key','result_key') if hasattr(FakeMailbox(), n)])
-信箱 = FakeMailbox(); 信箱.put_object(信箱.result_key('job-1'), b'{}', 'application/json'); 信箱.send_result('job-1')
-print('流水帳格式：', 信箱.calls)
+mailbox = FakeMailbox(); mailbox.put_object(mailbox.result_key('job-1'), b'{}', 'application/json'); mailbox.send_result('job-1')
+print('流水帳格式：', mailbox.calls)
 "
 ```
 
@@ -165,10 +195,10 @@ print('流水帳格式：', 信箱.calls)
 
 > 🧪 **順序採 TDD（先紅再綠）**：步驟 1 確認假信箱的流水帳、步驟 2 建套件 → 步驟 3 寫**會紅**的 12 顆測試 →
 > 步驟 4 真的跑它、親眼看到紅 → 步驟 5 寫實作 → 步驟 6 轉綠 → 步驟 7 全量回歸 →
-> 步驟 8 ruff → 步驟 9 commit。
+> 步驟 8 ruff → 步驟 9 記快照（**不 commit**，裁決 R0）。
 > 「跑它確認紅」不可以跳過——沒看過紅的測試，你不知道它有沒有在測東西。
 
-### - [ ] 步驟 1：確認假信箱的呼叫流水帳（Phase 77 已經做好，本 phase 只用不改）
+### - [x] 步驟 1：確認假信箱的呼叫流水帳（Phase 77 已經做好，本 phase 只用不改）
 
 **為什麼要先看它：** 本 phase 最重要的一條規則是**順序**——`result.json` 一定要先落地，
 才准發 results 訊息（design6 D9）。順序寫反不會有任何錯誤訊息，只會偶爾出現
@@ -199,19 +229,19 @@ print('流水帳格式：', 信箱.calls)
 ```bash
 python -c "
 from tests.fakes import FakeMailbox
-信箱 = FakeMailbox()
-信箱.put_object(信箱.result_key('job-1'), b'{}', 'application/json')
-信箱.send_result('job-1')
-print(信箱.calls)
+mailbox = FakeMailbox()
+mailbox.put_object(mailbox.result_key('job-1'), b'{}', 'application/json')
+mailbox.send_result('job-1')
+print(mailbox.calls)
 "
 ```
 
 預期印出：`['put_object documents/job-1/result.json', 'send_result job-1']`。
 
 印出來不是這個樣子（中間是冒號、鍵名不對、或根本沒有 `calls` 這個屬性）＝ Phase 77 沒照總覽 §2.4.5 做，
-**回去修 Phase 77**；不要在本 phase 動 `tests/fakes.py`（本 phase 對它零改動，步驟 7 的 `git diff` 會驗）。
+**回去修 Phase 77**；不要在本 phase 動 `tests/fakes.py`（本 phase 對它零改動，步驟 7 的工作樹快照相減會驗）。
 
-### - [ ] 步驟 2：建立 `app/workers/` 套件
+### - [x] 步驟 2：建立 `app/workers/` 套件
 
 ```bash
 mkdir -p app/workers
@@ -249,7 +279,7 @@ python -c "import app.workers; print(app.workers.__doc__.splitlines()[0])"
 
 預期印出：`在**別台機器**上跑的行程（目前只有一支：雲端看圖工人 `cloud_worker`）。`
 
-### - [ ] 步驟 3：先寫會紅的測試
+### - [x] 步驟 3：先寫會紅的測試
 
 #### 3a. `tests/unit/test_cloud_worker_unit.py`（10 顆）
 
@@ -261,9 +291,9 @@ python -c "import app.workers; print(app.workers.__doc__.splitlines()[0])"
 這一層完全不碰網路、不碰資料庫、不碰 Celery：
 信箱是 tests/fakes.py 的 FakeMailbox（一顆假件同時扮演 S3 ＋ 兩條佇列），
 看圖是 FakeVLM／ScriptedVLM。所以這 10 顆跑起來是毫秒等級，而且**永遠不會**
-連到真 AWS（就算第五道安全網漏接，boto3 也只會撞死埠）。
+連到真 AWS（就算第五道安全網漏接，AWS SDK 也只會撞死埠）。
 
-刻意的兩條規矩：
+刻意的三條規矩：
 1. 訊息一律**從假佇列拿**（send_job → receive_job），不自己 new 一個 MailboxMessage。
    這樣 receipt_handle 是假信箱自己發的，delete_job_message 才對得起來——
    與正式路徑（Phase 88 的主迴圈也是 receive_job 拿的）長得一模一樣。
@@ -284,9 +314,9 @@ from app.services.vlm_service import PhotoUnderstanding
 from app.workers import cloud_worker
 from tests.fakes import FakeMailbox, FakeVLM, ScriptedVLM, make_pdf_bytes, make_png_bytes
 
-專案根目錄 = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-收據理解 = PhotoUnderstanding(
+RECEIPT_UNDERSTANDING = PhotoUnderstanding(
     understood=True,
     text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
     category="收據",
@@ -295,11 +325,11 @@ from tests.fakes import FakeMailbox, FakeVLM, ScriptedVLM, make_pdf_bytes, make_
     content_time="2026-08-10",
 )
 
-看不懂 = PhotoUnderstanding(understood=False)
+NOT_UNDERSTOOD = PhotoUnderstanding(understood=False)
 
 
-def 準備一則工作(
-    信箱: FakeMailbox,
+def queue_one_job(
+    mailbox: FakeMailbox,
     job_id: str = "job-1",
     *,
     content_type: str = "image/png",
@@ -311,19 +341,19 @@ def 準備一則工作(
     payload 給 None ＝ 這次刻意不放 input 檔（測「input 不在」那條路）。
     s3_key 給值 ＝ 不用 input_key() 算，直接塞一個怪鍵名（測副檔名認不得那條路）。
     """
-    鍵 = s3_key if s3_key is not None else 信箱.input_key(job_id, content_type)
+    key = s3_key if s3_key is not None else mailbox.input_key(job_id, content_type)
     if payload is not None:
-        信箱.put_object(鍵, payload, content_type)
-    信箱.send_job(job_id, 鍵)
-    訊息 = 信箱.receive_job(0)
-    assert 訊息 is not None, "假信箱應該要收得到剛剛送進去的那一則"
-    return 訊息
+        mailbox.put_object(key, payload, content_type)
+    mailbox.send_job(job_id, key)
+    message = mailbox.receive_job(0)
+    assert message is not None, "假信箱應該要收得到剛剛送進去的那一則"
+    return message
 
 
-def 讀回result(信箱: FakeMailbox, job_id: str = "job-1") -> dict:
+def read_result(mailbox: FakeMailbox, job_id: str = "job-1") -> dict:
     """把工人寫進假信箱的 result.json 解回 dict。"""
-    原始 = 信箱.objects[信箱.result_key(job_id)]
-    return json.loads(原始.decode("utf-8"))
+    raw = mailbox.objects[mailbox.result_key(job_id)]
+    return json.loads(raw.decode("utf-8"))
 
 
 # ---------------- 順序鐵律（design6 D9）----------------
@@ -335,16 +365,16 @@ def test_result先PutObject才SendMessage():
     反過來的話，本機會被叫醒去拿一個還沒寫完（或根本不存在）的檔案——
     那是最難查的一種壞法：安靜地拿到半截 JSON。
     """
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, payload=make_png_bytes())
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, payload=make_png_bytes())
 
-    cloud_worker.process_job_message(信箱, 訊息, FakeVLM(收據理解))
+    cloud_worker.process_job_message(mailbox, message, FakeVLM(RECEIPT_UNDERSTANDING))
 
-    順序 = 信箱.calls
-    放結果 = 順序.index(f"put_object {信箱.result_key('job-1')}")
-    送通知 = 順序.index("send_result job-1")
-    刪訊息 = 順序.index("delete_job_message")
-    assert 放結果 < 送通知 < 刪訊息, f"順序不對：{順序}"
+    calls = mailbox.calls
+    put_at = calls.index(f"put_object {mailbox.result_key('job-1')}")
+    send_at = calls.index("send_result job-1")
+    delete_at = calls.index("delete_job_message")
+    assert put_at < send_at < delete_at, f"順序不對：{calls}"
 
 
 # ---------------- 看圖與重試 ----------------
@@ -357,40 +387,40 @@ def test_看圖三次都失敗_result標understood_false而且attempts是3():
     只是 AI 看不懂，本機再看三次多半一樣。它照樣把 understood=false 寫出去，
     由本機收到之後標 failed、清 S3。
     """
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, payload=make_png_bytes())
-    看圖 = ScriptedVLM([看不懂, RuntimeError("雲端 401"), 看不懂])
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, payload=make_png_bytes())
+    vlm = ScriptedVLM([NOT_UNDERSTOOD, RuntimeError("雲端 401"), NOT_UNDERSTOOD])
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.calls == 3, "上限沒守住"
-    結果 = 讀回result(信箱)
-    assert 結果["kind"] == "image"
-    assert 結果["understood"] is False
-    assert 結果["attempts"] == 3
-    assert 結果["understanding"] is None
+    assert vlm.calls == 3, "上限沒守住"
+    result = read_result(mailbox)
+    assert result["kind"] == "image"
+    assert result["understood"] is False
+    assert result["attempts"] == 3
+    assert result["understanding"] is None
     # 失敗也照樣走完順序鐵律：不刪訊息的話它每 900 秒就回來一次
-    assert 信箱.calls.count("delete_job_message") == 1
+    assert mailbox.calls.count("delete_job_message") == 1
 
 
 def test_一次就成功_attempts是1():
     """看得懂就不再看第二次；九個欄位原樣進 result.json，而且**沒有** embedding。"""
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, payload=make_png_bytes())
-    看圖 = FakeVLM(收據理解)
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, payload=make_png_bytes())
+    vlm = FakeVLM(RECEIPT_UNDERSTANDING)
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.calls == 1
-    結果 = 讀回result(信箱)
-    assert 結果["understood"] is True
-    assert 結果["attempts"] == 1
-    assert 結果["understanding"]["text"] == 收據理解.text
-    assert 結果["understanding"]["items"] == ["可樂", "洋芋片"]
-    assert 結果["job_id"] == "job-1"
-    assert 結果["worker_version"] == config.WORKER_VERSION
+    assert vlm.calls == 1
+    result = read_result(mailbox)
+    assert result["understood"] is True
+    assert result["attempts"] == 1
+    assert result["understanding"]["text"] == RECEIPT_UNDERSTANDING.text
+    assert result["understanding"]["items"] == ["可樂", "洋芋片"]
+    assert result["job_id"] == "job-1"
+    assert result["worker_version"] == config.WORKER_VERSION
     # D13：向量一律本機算，工人的產出裡不可以有任何向量
-    assert "embedding" not in json.dumps(結果)
+    assert "embedding" not in json.dumps(result)
 
 
 # ---------------- 冪等（design6 D17）----------------
@@ -402,18 +432,20 @@ def test_result已存在時不看圖只補送results並刪jobs訊息():
     第二次要**完全不看圖**（看圖是要花錢的），也不可以蓋掉已經寫好的 result.json
     ——本機可能正在讀它。
     """
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, payload=make_png_bytes())
-    既有結果 = b'{"job_id": "job-1", "kind": "image", "understood": true}'
-    信箱.put_object(信箱.result_key("job-1"), 既有結果, "application/json")
-    看圖 = FakeVLM(收據理解)
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, payload=make_png_bytes())
+    existing_result = b'{"job_id": "job-1", "kind": "image", "understood": true}'
+    mailbox.put_object(mailbox.result_key("job-1"), existing_result, "application/json")
+    vlm = FakeVLM(RECEIPT_UNDERSTANDING)
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.calls == 0, "重送不可以再看一次圖"
-    assert 信箱.objects[信箱.result_key("job-1")] == 既有結果, "既有的 result.json 被蓋掉了"
-    assert 信箱.calls.count("send_result job-1") == 1, "還是要補送一則 results 叫醒本機"
-    assert 信箱.calls.count("delete_job_message") == 1
+    assert vlm.calls == 0, "重送不可以再看一次圖"
+    assert mailbox.objects[mailbox.result_key("job-1")] == existing_result, (
+        "既有的 result.json 被蓋掉了"
+    )
+    assert mailbox.calls.count("send_result job-1") == 1, "還是要補送一則 results 叫醒本機"
+    assert mailbox.calls.count("delete_job_message") == 1
 
 
 def test_input不在時只刪jobs訊息什麼都不寫():
@@ -422,16 +454,16 @@ def test_input不在時只刪jobs訊息什麼都不寫():
     這時候**寫任何東西都是有害的**：多一份 result.json，下一次重送就會以為
     「有結果可用」而去補送 results，把本機叫醒去處理一張早就入庫的照片。
     """
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, payload=None)  # 刻意不放 input
-    看圖 = FakeVLM(收據理解)
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, payload=None)  # 刻意不放 input
+    vlm = FakeVLM(RECEIPT_UNDERSTANDING)
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.calls == 0
-    assert 信箱.result_key("job-1") not in 信箱.objects, "什麼都不該寫"
-    assert 信箱.calls.count("send_result job-1") == 0
-    assert 信箱.calls.count("delete_job_message") == 1, "訊息一定要刪，不然每 900 秒回來一次"
+    assert vlm.calls == 0
+    assert mailbox.result_key("job-1") not in mailbox.objects, "什麼都不該寫"
+    assert mailbox.calls.count("send_result job-1") == 0
+    assert mailbox.calls.count("delete_job_message") == 1, "訊息一定要刪，不然每 900 秒回來一次"
 
 
 # ---------------- context.json ----------------
@@ -441,15 +473,15 @@ def test_context缺檔時三份清單都當空的():
     """沒有 context.json 不是失敗：少了資料夾清單只是少了「建議收進哪個資料夾」，
     照片內容照樣看得懂。三份清單都當空的，prompt 照樣組得出來。
     """
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, payload=make_png_bytes())  # 沒有放 context.json
-    看圖 = FakeVLM(收據理解)
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, payload=make_png_bytes())  # 沒有放 context.json
+    vlm = FakeVLM(RECEIPT_UNDERSTANDING)
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.last_folders == []
-    assert 看圖.last_entities == []
-    assert 看圖.last_corrections == []
+    assert vlm.last_folders == []
+    assert vlm.last_entities == []
+    assert vlm.last_corrections == []
     # 有 context.json 時三份清單原樣傳進去這件事，由端到端那兩顆負責驗
     # （tests/integration/test_cloud_roundtrip.py，那裡的 context 是真的從資料庫來的）
 
@@ -470,15 +502,15 @@ def test_content_type由s3_key的副檔名推出來():
     assert cloud_worker.content_type_from_key("documents/a/input") is None
 
     # 認不得的鍵名走到 process_job_message：不看圖、不寫東西、只把訊息刪掉
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, payload=b"x", s3_key="documents/job-1/input.txt")
-    看圖 = FakeVLM(收據理解)
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, payload=b"x", s3_key="documents/job-1/input.txt")
+    vlm = FakeVLM(RECEIPT_UNDERSTANDING)
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.calls == 0
-    assert 信箱.result_key("job-1") not in 信箱.objects
-    assert 信箱.calls.count("delete_job_message") == 1
+    assert vlm.calls == 0
+    assert mailbox.result_key("job-1") not in mailbox.objects
+    assert mailbox.calls.count("delete_job_message") == 1
 
 
 # ---------------- PDF ----------------
@@ -490,17 +522,17 @@ def test_PDF拆不開時pages是空清單():
     工人照樣把 result.json 寫出去、照樣刪訊息（不然它會一直重送）；
     本機收到空清單之後依既有規則把整筆標成「這份 PDF 讀不開或沒有內容」。
     """
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, content_type="application/pdf", payload=b"this is not a pdf")
-    看圖 = FakeVLM(收據理解)
+    mailbox = FakeMailbox()
+    message = queue_one_job(mailbox, content_type="application/pdf", payload=b"this is not a pdf")
+    vlm = FakeVLM(RECEIPT_UNDERSTANDING)
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.calls == 0, "拆不開就不該送任何一次模型"
-    結果 = 讀回result(信箱)
-    assert 結果["kind"] == "pdf"
-    assert 結果["pages"] == []
-    assert 信箱.calls.count("send_result job-1") == 1
+    assert vlm.calls == 0, "拆不開就不該送任何一次模型"
+    result = read_result(mailbox)
+    assert result["kind"] == "pdf"
+    assert result["pages"] == []
+    assert mailbox.calls.count("send_result job-1") == 1
 
 
 def test_PDF每一頁各自最多三次():
@@ -509,22 +541,26 @@ def test_PDF每一頁各自最多三次():
     第 1 頁一次就過（1 次），第 2 頁三次都失敗（3 次）＝總共 4 次呼叫。
     劇本只寫 4 張卡：多打一次模型就會 AssertionError，這正是我們要抓的錯。
     """
-    信箱 = FakeMailbox()
-    訊息 = 準備一則工作(信箱, content_type="application/pdf", payload=make_pdf_bytes(pages=2))
-    看圖 = ScriptedVLM([收據理解, 看不懂, 看不懂, RuntimeError("雲端逾時")])
+    mailbox = FakeMailbox()
+    message = queue_one_job(
+        mailbox, content_type="application/pdf", payload=make_pdf_bytes(pages=2)
+    )
+    vlm = ScriptedVLM(
+        [RECEIPT_UNDERSTANDING, NOT_UNDERSTOOD, NOT_UNDERSTOOD, RuntimeError("雲端逾時")]
+    )
 
-    cloud_worker.process_job_message(信箱, 訊息, 看圖)
+    cloud_worker.process_job_message(mailbox, message, vlm)
 
-    assert 看圖.calls == 4
-    結果 = 讀回result(信箱)
-    assert 結果["kind"] == "pdf"
-    assert [頁["page"] for 頁 in 結果["pages"]] == [1, 2]
-    assert 結果["pages"][0]["understood"] is True
-    assert 結果["pages"][0]["attempts"] == 1
-    assert 結果["pages"][0]["understanding"]["text"] == 收據理解.text
-    assert 結果["pages"][1]["understood"] is False
-    assert 結果["pages"][1]["attempts"] == 3
-    assert 結果["pages"][1]["understanding"] is None
+    assert vlm.calls == 4
+    result = read_result(mailbox)
+    assert result["kind"] == "pdf"
+    assert [page["page"] for page in result["pages"]] == [1, 2]
+    assert result["pages"][0]["understood"] is True
+    assert result["pages"][0]["attempts"] == 1
+    assert result["pages"][0]["understanding"]["text"] == RECEIPT_UNDERSTANDING.text
+    assert result["pages"][1]["understood"] is False
+    assert result["pages"][1]["attempts"] == 3
+    assert result["pages"][1]["understanding"] is None
 
 
 # ---------------- 掃碼：工人碰不到的東西 ----------------
@@ -533,32 +569,49 @@ def test_PDF每一頁各自最多三次():
 def test_工人不import資料庫與Celery與Redis():
     """design6 D11／D13：工人只看圖，不寫 Postgres、不算 embedding、不碰佇列框架。
 
-    用 ast 解析真正的 import 名單，不用 grep——grep 會誤中註解與 docstring
-    （工人模組的 docstring 刻意寫成「不 import 資料庫驅動程式」——不能把 psycopg 這幾個字母寫進
-    app/ 底下任何檔案，design3 的 SQL 掃碼對 app/ 全樹做子字串比對，連註解也算）。
+    用 ast 解析真正的 import 名單，不用 grep——grep 會誤中註解與 docstring。
+
+    ⚠ 黑名單裡**刻意沒有**資料庫驅動程式的套件名：那幾個字母不可以出現在 app/ 底下
+      （design3 的 test_SQL只出現在repository與db層 對 app/ 全樹做子字串比對，連註解也算），
+      而本檔雖然在 tests/ 掃不到，但寫在這裡遲早會被人抄進工人模組。
+      驅動名那一層由那顆既有測試負責，這裡只守「模組層級的相依」。
     """
-    原始碼 = (專案根目錄 / "app" / "workers" / "cloud_worker.py").read_text(encoding="utf-8")
-    樹 = ast.parse(原始碼)
+    source = (PROJECT_ROOT / "app" / "workers" / "cloud_worker.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
 
     # 記「完整的點分名稱」：from app.services import ai_timing → app.services.ai_timing。
-    # 只記 節點.module（＝app.services）的話，下面的白名單分不出 ai_timing 與 ingest_job，
+    # 只記 node.module（＝app.services）的話，下面的白名單分不出 ai_timing 與 ingest_job，
     # 而且 app.services 本身不在白名單裡，測試會對著正確的實作一直紅。
-    匯入的: set[str] = set()
-    for 節點 in ast.walk(樹):
-        if isinstance(節點, ast.Import):
-            匯入的.update(別名.name for 別名 in 節點.names)
-        elif isinstance(節點, ast.ImportFrom) and 節點.module:
-            匯入的.update(f"{節點.module}.{別名.name}" for 別名 in 節點.names)
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.update(f"{node.module}.{alias.name}" for alias in node.names)
 
-    禁止 = ("psycopg", "redis", "celery", "sqlalchemy", "app.db", "app.repositories")
-    違規 = sorted(名 for 名 in 匯入的 for 前綴 in 禁止 if 名 == 前綴 or 名.startswith(前綴 + "."))
-    assert 違規 == [], f"工人不可以 import 這些：{違規}"
+    forbidden = (
+        "redis",
+        "celery",
+        "app.db",
+        "app.repositories",
+        "app.dependencies",  # 它會拉進 JobStore ＝ Redis（工人是獨立行程，沒有那些東西）
+        "app.services.ingest_job",  # 本機入庫那一整條（會拉進資料庫層）
+        "app.services.staging_service",  # data/staging 是本機的暫存區，EC2 上沒有
+    )
+    violations = sorted(
+        name
+        for name in imported
+        for prefix in forbidden
+        if name == prefix or name.startswith(prefix + ".")
+    )
+    assert violations == [], f"工人不可以 import 這些：{violations}"
 
     # 正面表列：工人只准碰這幾個自家模組（總覽 §2.6 最後一行）。
+    # 這一段才是真正的防線——黑名單漏列的東西（例如 ingest_job_store）都會被它抓到。
     # cloud_ingest 是型別註記用的（TYPE_CHECKING，執行時不載入）；
     # aws_mailbox 先放進白名單，因為 Phase 88 的 main() 會在函式裡 import 它建真信箱
     # （ast.walk 連函式裡的 import 也看得到，所以現在就要放行）。
-    允許的自家模組 = {
+    allowed_app_modules = {
         "app.core.config",
         "app.services.ai_timing",
         "app.services.aws_mailbox",
@@ -566,13 +619,15 @@ def test_工人不import資料庫與Celery與Redis():
         "app.services.pdf_service",
         "app.services.vlm_service",
     }
-    多出來的 = {
-        名
-        for 名 in 匯入的
-        if 名.startswith("app")
-        and not any(名 == 允 or 名.startswith(允 + ".") for 允 in 允許的自家模組)
+    extra = {
+        name
+        for name in imported
+        if name.startswith("app")
+        and not any(
+            name == allowed or name.startswith(allowed + ".") for allowed in allowed_app_modules
+        )
     }
-    assert 多出來的 == set(), f"工人多 import 了自家模組：{多出來的}"
+    assert extra == set(), f"工人多 import 了自家模組：{extra}"
 ```
 
 #### 3b. `tests/integration/test_cloud_roundtrip.py`（2 顆端到端）
@@ -582,28 +637,33 @@ def test_工人不import資料庫與Celery與Redis():
 ```python
 """端到端：本機送出 → 工人處理 → 本機收回入庫（Phase 87；design6 §9 必釘第 3 條）。
 
-⚠ 名稱裡的「假工人」是沿用 Phase 79 的講法。**從本 phase 起它不再是假的**：
-   處理訊息的是真正的 app/workers/cloud_worker.process_job_message()，
+⚠ Phase 79〜81 的同款測試裡，「另一頭」是 tests/fakes.py 的 fake_worker_process_one。
+   **從本 phase 起它不再是假的**：處理訊息的是真正的
+   app/workers/cloud_worker.process_job_message()，
    假的只剩「信箱」（FakeMailbox 同時扮演 S3 ＋ 兩條佇列）與「看圖」（FakeVLM）。
    換句話說，這兩顆測試涵蓋的程式碼路徑，與 EC2 上真的跑起來時**完全相同**，
-   差別只在 boto3 那一層被換掉了。
+   差別只在 AWS SDK 那一層被換掉了。
 
 【怎麼安排先後】
 run_gated_ingest_job() 是一條龍：送出 → 長輪詢等 results → 用結果落庫。
 測試只有一條執行緒，如果不做任何事，wait_result() 會空等到逾時然後 fallback，
 根本走不到雲端成功那條路。
 
-做法：monkeypatch CloudRoute.wait_result，讓它「**先讓工人把 jobs 佇列清空，
-再呼叫原本的 wait_result**」。這樣：
+做法**沿用既有慣例**（tests/integration/test_gated_ingest.py 的 WorkerMailbox）：
+在本檔自己做一顆 FakeMailbox 子類，覆寫 receive_result()——本機每次去收結果的
+那一刻，就是「另一台機器上的工人」動手的那一刻。這樣：
   - submit() 是真的（真的 PutObject 兩個物件、真的 SendMessage jobs）
-  - process_job_message() 是真的
+  - process_job_message() 是**真的**（本 phase 的主角）
   - wait_result() 是真的（真的 ReceiveMessage results、真的 GetObject result.json）
   只有「工人在哪一個時間點動手」是我們安排的——而那件事在正式環境本來就是
   另一台機器上非同步發生的，測試沒有辦法、也不需要重現它的時序。
 
-（另一個做法是讓 FakeMailbox 支援 on_send_job 回呼。不採用的理由：那會為了
- 這兩顆測試在共用假件上多開一個只有這裡用得到的鉤子，而且「誰在什麼時候動手」
- 會藏在 fakes.py 裡，讀測試的人看不到。）
+（不用 monkeypatch CloudRoute.wait_result 的理由：那會把產品碼的方法換掉，
+ 讀測試的人得先確認「換掉之後還有沒有在測原本那支」。子類只多接一個 hook，
+ 產品碼一個字都沒被動到，而且與既有那份測試長得一樣。）
+
+（也不在 tests/fakes.py 上開 on_send_job 之類的回呼：那會為了這兩顆測試在共用假件上
+ 多開一個只有這裡用得到的鉤子——本專案的慣例是「跨測試檔不共用只有一處要用的假件」。）
 """
 
 from __future__ import annotations
@@ -627,7 +687,7 @@ from tests.fakes import (
     make_png_bytes,
 )
 
-收據理解 = PhotoUnderstanding(
+RECEIPT_UNDERSTANDING = PhotoUnderstanding(
     understood=True,
     text="在 Target 購買可樂與洋芋片的收據，日期 2026-08-10",
     category="收據",
@@ -636,89 +696,101 @@ from tests.fakes import (
     content_time="2026-08-10",
 )
 
-
-def 讓工人在本機等結果之前先做完(monkeypatch, 信箱: FakeMailbox, 工人的看圖) -> None:
-    """把「工人在另一台機器上做事」這件事插在 wait_result 之前（理由見檔頭）。"""
-    原本的 = cloud_ingest.CloudRoute.wait_result
-
-    def 先讓工人做一輪(self, job_id, *, store):
-        訊息 = 信箱.receive_job(0)
-        while 訊息 is not None:
-            cloud_worker.process_job_message(信箱, 訊息, 工人的看圖)
-            訊息 = 信箱.receive_job(0)
-        return 原本的(self, job_id, store=store)
-
-    monkeypatch.setattr(cloud_ingest.CloudRoute, "wait_result", 先讓工人做一輪)
+NOW = FixedClock(datetime(2026, 8, 18, 10, 0))
 
 
-def 上傳並拿到job_id(client, *, filename: str, payload: bytes, content_type: str) -> str:
+class WorkerMailbox(FakeMailbox):
+    """本機在等結果的時候，「另一頭」剛好把工作做完了——而且是**真的**工人。
+
+    寫法沿用 tests/integration/test_gated_ingest.py 的同名類別（那邊接的是
+    fake_worker_process_one），差別只有一個：這裡呼叫的是 Phase 87 的
+    cloud_worker.process_job_message()。
+
+    while 迴圈是為了 PDF：一份 PDF 只有一則 jobs 訊息，但把佇列排空的寫法
+    對「將來一次送多則」也不會壞掉，而且空佇列時 receive_job 立刻回 None。
+    """
+
+    def __init__(self, vlm) -> None:
+        super().__init__()
+        self.vlm = vlm
+        self.worker_runs = 0
+
+    def receive_result(self, wait_seconds: int):
+        message = self.receive_job(0)
+        while message is not None:
+            cloud_worker.process_job_message(self, message, self.vlm)
+            self.worker_runs += 1
+            message = self.receive_job(0)
+        return super().receive_result(wait_seconds)
+
+
+def upload_and_get_job_id(client, *, filename: str, payload: bytes, content_type: str) -> str:
     """走真的 HTTP 端點把檔案收下來（202），回傳 job_id。
 
     刻意不直接呼叫 staging_service／JobStore：入列的順序（先落 staging、
     再建 job、再派工）本身就是增量五的契約，端到端測試要連它一起走一遍。
     """
-    回應 = client.post("/photos", files={"file": (filename, payload, content_type)})
-    assert 回應.status_code == 202, 回應.text
-    return 回應.json()["job_id"]
+    response = client.post("/photos", files={"file": (filename, payload, content_type)})
+    assert response.status_code == 202, response.text
+    return response.json()["job_id"]
 
 
-def 收件箱的照片() -> list[dict]:
-    收件箱 = next(f for f in photo_repository.list_folders() if f["is_inbox"])
-    return photo_repository.list_photos_in_folder(收件箱["id"])
+def inbox_photos() -> list[dict]:
+    inbox = next(f for f in photo_repository.list_folders() if f["is_inbox"])
+    return photo_repository.list_photos_in_folder(inbox["id"])
 
 
-def test_單圖端到端_本機送出_假工人處理_本機入庫(client, monkeypatch):
-    信箱 = FakeMailbox()
-    工人的看圖 = FakeVLM(收據理解)
-    本機的看圖 = FakeVLM(收據理解)  # 雲端路走通的話，這一顆**一次都不該被呼叫**
-    讓工人在本機等結果之前先做完(monkeypatch, 信箱, 工人的看圖)
+def test_單圖端到端_本機送出_假工人處理_本機入庫(client):
+    worker_vlm = FakeVLM(RECEIPT_UNDERSTANDING)
+    local_vlm = FakeVLM(RECEIPT_UNDERSTANDING)  # 雲端路走通的話，這一顆**一次都不該被呼叫**
+    mailbox = WorkerMailbox(worker_vlm)
 
-    job_id = 上傳並拿到job_id(
+    job_id = upload_and_get_job_id(
         client, filename="receipt-2026.png", payload=make_png_bytes(), content_type="image/png"
     )
 
     gated_ingest.run_gated_ingest_job(
         job_id,
         store=目前的任務清單(),
-        vlm=本機的看圖,
+        vlm=local_vlm,
         embeddings=FakeEmbeddings(),
-        now=FixedClock(datetime(2026, 8, 18, 10, 0)),
+        now=NOW,
         gate=FakePrivacyGate(Verdict.NON_SENSITIVE),
-        cloud=cloud_ingest.CloudRoute(信箱, FakeProbe(True), timeout_seconds=5),
+        cloud=cloud_ingest.CloudRoute(mailbox, FakeProbe(True), timeout_seconds=5),
     )
 
     # ① 工人看了一次圖；本機一次都沒看（雲端路不重看圖，D13 只把 embedding 留在本機）
-    assert 工人的看圖.calls == 1
-    assert 本機的看圖.calls == 0
+    assert mailbox.worker_runs == 1
+    assert worker_vlm.calls == 1
+    assert local_vlm.calls == 0
 
     # ② context.json 真的把本機資料庫裡的資料夾清單送到了工人手上
     #    （總覽 §10 追認項 a 的靠山：沒有它，工人組出來的 prompt 會少掉三段）
-    assert len(工人的看圖.last_folders) == 6, "reset_tables 種了六筆資料夾，六筆都要送過去"
-    assert "收據" in [資料夾["name"] for 資料夾 in 工人的看圖.last_folders]
-    assert 工人的看圖.last_entities == []
-    assert 工人的看圖.last_corrections == []
+    assert len(worker_vlm.last_folders) == 6, "reset_tables 種了六筆資料夾，六筆都要送過去"
+    assert "收據" in [folder["name"] for folder in worker_vlm.last_folders]
+    assert worker_vlm.last_entities == []
+    assert worker_vlm.last_corrections == []
 
     # ③ 照片真的進了收件箱，內容是工人看出來的那一份
-    照片們 = 收件箱的照片()
-    assert len(照片們) == 1
-    assert 照片們[0]["text"] == 收據理解.text
+    photos = inbox_photos()
+    assert len(photos) == 1
+    assert photos[0]["text"] == RECEIPT_UNDERSTANDING.text
 
     # ④ 寄物櫃與兩條佇列都清乾淨了（input／context／result 三個物件都被刪）
-    assert 信箱.objects == {}
-    assert 信箱.jobs == []
-    assert 信箱.results == []
+    assert mailbox.objects == {}
+    assert mailbox.jobs == []
+    assert mailbox.results == []
 
     # ⑤ staging 刪了、job 也刪了（成功＝job 消失，與增量五同語意）
     assert not staging_service.staging_path(job_id, "image/png").exists()
     assert 目前的任務清單().get(job_id) is None
 
 
-def test_PDF端到端_兩頁都回來_入庫兩列(client, monkeypatch):
-    信箱 = FakeMailbox()
-    工人的看圖 = FakeVLM(收據理解)
-    讓工人在本機等結果之前先做完(monkeypatch, 信箱, 工人的看圖)
+def test_PDF端到端_兩頁都回來_入庫兩列(client):
+    worker_vlm = FakeVLM(RECEIPT_UNDERSTANDING)
+    mailbox = WorkerMailbox(worker_vlm)
 
-    job_id = 上傳並拿到job_id(
+    job_id = upload_and_get_job_id(
         client,
         filename="menu-2026.pdf",
         payload=make_pdf_bytes(pages=2),
@@ -728,22 +800,22 @@ def test_PDF端到端_兩頁都回來_入庫兩列(client, monkeypatch):
     gated_ingest.run_gated_ingest_job(
         job_id,
         store=目前的任務清單(),
-        vlm=FakeVLM(收據理解),
+        vlm=FakeVLM(RECEIPT_UNDERSTANDING),
         embeddings=FakeEmbeddings(),
-        now=FixedClock(datetime(2026, 8, 18, 10, 0)),
+        now=NOW,
         gate=FakePrivacyGate(Verdict.NON_SENSITIVE),
-        cloud=cloud_ingest.CloudRoute(信箱, FakeProbe(True), timeout_seconds=5),
+        cloud=cloud_ingest.CloudRoute(mailbox, FakeProbe(True), timeout_seconds=5),
     )
 
     # 工人逐頁看：兩頁＝兩次呼叫（拆頁在工人那邊做，存檔用的 PNG 由本機自己再拆一次）
-    assert 工人的看圖.calls == 2
-    assert len(收件箱的照片()) == 2
-    assert 信箱.objects == {}
+    assert worker_vlm.calls == 2
+    assert len(inbox_photos()) == 2
+    assert mailbox.objects == {}
     assert not staging_service.staging_path(job_id, "application/pdf").exists()
     assert 目前的任務清單().get(job_id) is None
 ```
 
-### - [ ] 步驟 4：跑它，親眼看到紅
+### - [x] 步驟 4：跑它，親眼看到紅
 
 ```bash
 pytest tests/unit/test_cloud_worker_unit.py tests/integration/test_cloud_roundtrip.py -q
@@ -763,7 +835,7 @@ ImportError: cannot import name 'cloud_worker' from 'app.workers' (…/app/worke
 ⚠ 若這裡出現的是 `ImportError: cannot import name 'FakeMailbox' from 'tests.fakes'`，
 代表 Phase 77 還沒做完，**回去做完再回來**——不要在這裡自己補一個假信箱。
 
-### - [ ] 步驟 5：寫實作
+### - [x] 步驟 5：寫實作
 
 新建 `app/workers/cloud_worker.py`，**完整內容**如下（本 phase 結束時這個檔就長這樣；
 Phase 88 會在它後面再加主迴圈，**現有的函式一個字都不會改**）：
@@ -811,7 +883,7 @@ from app.services import ai_timing, pdf_service, vlm_service
 if TYPE_CHECKING:
     # 只給型別檢查與讀程式的人看，**執行時不會真的 import**。
     # 這樣「import app.workers.cloud_worker」不會把 AWS SDK 一起拉進來，
-    # 單元測試（假信箱）因此完全不必碰 boto3。
+    # 單元測試（假信箱）因此完全不必碰那個套件。
     # ★ CloudMailbox（Phase 77，總覽 §2.4.1）一份 Protocol 涵蓋本機端＋工人端的全部操作：
     #   工人用到的 receive_job()／delete_job_message() 就在裡面（註記「工人端（87）」），
     #   AwsMailbox 與 FakeMailbox 兩個實作也都有，所以不必另立一個工人專用的 Protocol。
@@ -841,7 +913,7 @@ RESULT_CONTENT_TYPE = "application/json"
 
 # PDF 的每一頁渲染出來都是 PNG（pdf_service.render_pages 回的就是 PNG 位元組）。
 # ★ ingest_job.py 也有一個同名常數、同一個值。**不可以** import 它——
-#   那個模組會拉進 photo_repository（＝資料庫驅動程式），違反 D11。
+#   那個模組會拉進 photo_repository ＝ 資料庫層，違反 D11。
 #   兩行字的重複換一個「工人與資料庫零關係」的硬保證，很划算。
 PDF_PAGE_CONTENT_TYPE = "image/png"
 
@@ -862,9 +934,9 @@ def content_type_from_key(s3_key: str) -> str | None:
     推不出來時**不要亂猜**：把一份 .txt 當成 JPEG 送去看圖，錯誤會在很後面
     才以「AI 看不懂」的樣子出現，比當場承認「這個鍵名我不認得」難查十倍。
     """
-    小寫 = s3_key.lower()
-    for 副檔名, content_type in CONTENT_TYPE_BY_SUFFIX.items():
-        if 小寫.endswith(副檔名):
+    lowered = s3_key.lower()
+    for suffix, content_type in CONTENT_TYPE_BY_SUFFIX.items():
+        if lowered.endswith(suffix):
             return content_type
     return None
 
@@ -879,19 +951,19 @@ def read_context(mailbox: CloudMailbox, job_id: str) -> tuple[list[dict], list[d
     缺檔或內容壞掉 → 三份都當空清單，**不是失敗**：
     少了資料夾清單只是少了「建議收進哪個資料夾」，照片內容照樣看得懂。
     """
-    原始 = mailbox.get_object(mailbox.context_key(job_id))
-    if 原始 is None:
+    raw = mailbox.get_object(mailbox.context_key(job_id))
+    if raw is None:
         logger.info("job %s：沒有 context.json，三份清單都當空的", job_id)
         return [], [], []
     try:
-        內容 = json.loads(原始.decode("utf-8"))
+        payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         logger.warning("job %s：context.json 解不開，三份清單都當空的", job_id, exc_info=True)
         return [], [], []
     return (
-        list(內容.get("folders") or []),
-        list(內容.get("entities") or []),
-        list(內容.get("corrections") or []),
+        list(payload.get("folders") or []),
+        list(payload.get("entities") or []),
+        list(payload.get("corrections") or []),
     )
 
 
@@ -917,18 +989,22 @@ def _understand_with_retries(
     """
     for attempt in range(1, config.VLM_MAX_ATTEMPTS + 1):
         try:
+            # ★ 計時 log 由**工人自己包**（總覽 §2.6 第 5 條「ai_timing kind=vlm backend=cloud」）。
+            #   2026-09-02 實查：OllamaCloudVLM.understand() 內部**沒有** log_ai，
+            #   它只有「失敗再試一次」那一層；全站唯一包 vlm 計時的地方是
+            #   ingest_job.py L403，本函式與它逐字相同。
             # target 從 vlm 物件身上拿：正式的 OllamaCloudVLM 建構時就把
             # backend=cloud 與模型名記在 timing_target 上，所以工人的 log 會誠實地
             # 印 kind=vlm backend=cloud。不帶 target 的話 ai_timing 會退回讀
             # 這個行程的 config.AI_BACKEND——那永遠是預設的 "local"，log 會騙人。
-            with ai_timing.log_ai("vlm", target=vlm_service.vlm_timing_target(vlm)) as 計時:
+            with ai_timing.log_ai("vlm", target=vlm_service.vlm_timing_target(vlm)) as timing:
                 understanding = vlm.understand(
                     image_bytes, content_type, folders, entities, corrections
                 )
                 if not understanding.understood or not understanding.text.strip():
-                    計時.note = f"understood=false text_chars={len(understanding.text)}"
+                    timing.note = f"understood=false text_chars={len(understanding.text)}"
                     raise _NotUnderstood()
-                計時.note = (
+                timing.note = (
                     f"understood=true text_chars={len(understanding.text)} "
                     f"item_count={len(understanding.items)}"
                 )
@@ -1003,26 +1079,26 @@ def _process_pdf(
       而拆頁是純 CPU、幾百毫秒的事。
     """
     try:
-        頁面們 = pdf_service.render_pages(pdf_bytes)
+        page_images = pdf_service.render_pages(pdf_bytes)
     except pdf_service.PdfUnreadableError:
         logger.warning("job %s：PDF 拆不開，pages 回空清單", job_id, exc_info=True)
         return build_pdf_result(job_id, [])
 
     pages: list[dict] = []
-    for 頁碼, 頁位元組 in enumerate(頁面們, start=1):
+    for page_number, page_bytes in enumerate(page_images, start=1):
         understanding, attempts = _understand_with_retries(
             vlm,
-            頁位元組,
+            page_bytes,
             PDF_PAGE_CONTENT_TYPE,
             job_id=job_id,
-            label=f"第 {頁碼} 頁",
+            label=f"第 {page_number} 頁",
             folders=folders,
             entities=entities,
             corrections=corrections,
         )
         pages.append(
             {
-                "page": 頁碼,
+                "page": page_number,
                 "understood": understanding is not None,
                 "attempts": attempts,
                 "understanding": (
@@ -1034,7 +1110,7 @@ def _process_pdf(
         "job %s：PDF %d 頁看完，%d 頁看得懂",
         job_id,
         len(pages),
-        sum(1 for 頁 in pages if 頁["understood"]),
+        sum(1 for page in pages if page["understood"]),
     )
     return build_pdf_result(job_id, pages)
 
@@ -1118,7 +1194,7 @@ def process_job_message(
     )
 ```
 
-### - [ ] 步驟 6：跑新測試，看它轉綠
+### - [x] 步驟 6：跑新測試，看它轉綠
 
 ```bash
 pytest tests/unit/test_cloud_worker_unit.py tests/integration/test_cloud_roundtrip.py -v
@@ -1126,20 +1202,33 @@ pytest tests/unit/test_cloud_worker_unit.py tests/integration/test_cloud_roundtr
 
 預期最後一行：`12 passed`。
 
-### - [ ] 步驟 7：全量回歸
+### - [x] 步驟 7：全量回歸
 
 ```bash
 pytest -q
 ```
 
-預期：**開工基線 ＋ 12**（＝646），全綠、0 skipped。
-`app/services/` 一個字都沒改，所以基線內既有的每一顆都不該動：
+預期：**開工基線 ＋ 12**（644 ＋ 12 ＝ **656**），全綠、0 skipped。
+`app/services/` 一個字都沒改，所以基線內既有的每一顆都不該動。
+本輪**不 commit**（裁決 R0），所以「改了哪些檔」用工作樹快照相減來看：
 
 ```bash
-git diff --stat app/services app/api app/core
+git status --short -- app tests
 ```
 
-預期：**無輸出**（本 phase 只新增 `app/workers/` 兩個檔與 `tests/` 兩個新檔；`tests/fakes.py` 也不動）。
+預期只有四個 `??`（未追蹤新檔）：`app/workers/__init__.py`、`app/workers/cloud_worker.py`、
+`tests/unit/test_cloud_worker_unit.py`、`tests/integration/test_cloud_roundtrip.py`——
+**`app/services/`、`app/api/`、`app/core/` 與 `tests/fakes.py` 一列都不該出現**。
+
+要更嚴格（含未追蹤檔的整棵樹相減），用 controller 準備好的快照工具：
+
+```bash
+BASE=$(cat .superpowers/sdd/phase0902-2/BASE_TREE)
+NOW=$(bash .superpowers/sdd/phase0902-2/snapshot-tree)
+git diff --stat "$BASE" "$NOW" -- app tests
+```
+
+預期只有那四個新檔（`snapshot-tree` 只在物件庫多一顆 tree，不碰 index、不建 commit）。
 
 再驗「零外部依賴」——三個死埠一起指，顆數要一模一樣：
 
@@ -1152,7 +1241,7 @@ OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
 預期：顆數與上一行相同（埠 9 是保留的 discard 埠，本機一定沒人聽，
 會立刻 connection refused 而不是卡住等逾時）。
 
-### - [ ] 步驟 8：格式與 lint
+### - [x] 步驟 8：格式與 lint
 
 ```bash
 ruff format --check app tests scripts && ruff check app tests scripts
@@ -1166,18 +1255,22 @@ ruff format app tests scripts && ruff check --fix app tests scripts
 
 改完再跑一次步驟 6，確認還是 12 綠。
 
-### - [ ] 步驟 9：commit
+### - [x] 步驟 9：不 commit——記快照
+
+**本輪產品負責人指示不 commit**（裁決 R0、總覽 §7 鐵律 12）。
+所以收工動作不是 `git commit`，而是把「現在的工作樹」記成一顆 tree SHA 交給 controller：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-git add app/workers/__init__.py app/workers/cloud_worker.py \
-        tests/unit/test_cloud_worker_unit.py \
-        tests/integration/test_cloud_roundtrip.py
-git commit -m "feat: Phase 87 雲端看圖工人核心——process_job_message() 六條規則（冪等、input 不在只刪訊息、context 缺檔當空清單、看圖三次、PDF 逐頁）＋順序鐵律 result→results→delete，假信箱端到端單圖與 PDF 各一，+12 tests"
+bash .superpowers/sdd/phase0902-2/snapshot-tree     # 印出一串 40 碼，抄進回報檔
 ```
 
-> 📌 **commit 節奏由產品負責人決定**（總覽 §7 鐵律 12）。未指示前不要自己 commit，
-> 也不要把 `unfinish/` 的計畫檔搬進 `finish/`。
+⛔ **不要 `git add`／`git commit`／`git stash`／`git mv`**。
+（`snapshot-tree` 是複製一份 index 再 `write-tree`，**不碰**真正的 index，
+所以跑它之後 `git status` 看起來與跑之前一模一樣。）
+
+> 📌 未指示前不要自己 commit，也不要把 `unfinish/` 的計畫檔搬進 `finish/`
+> ——`git mv` 會直接 stage，那就等於偷偷動了 index。
 
 ---
 
@@ -1279,45 +1372,46 @@ process_job_message(mailbox, message, vlm)
 
 ## 6. 驗收清單
 
-- [ ] **套件位置正確**（放錯地方會安靜地不進映像）：
+- [x] **套件位置正確**（放錯地方會安靜地不進映像）：
       ```bash
       ls app/workers/__init__.py app/workers/cloud_worker.py
       grep -n "scripts/" .dockerignore
       ```
       預期兩個檔都在；`.dockerignore` 那行證明 `scripts/` 確實被排除（所以工人不能放那裡）
-- [ ] **工人沒有 import 資料庫／Celery／Redis**：
+- [x] **工人沒有 import 資料庫／Celery／Redis**：
       ```bash
       pytest tests/unit/test_cloud_worker_unit.py -k import -v
       ```
       預期 `1 passed`（用 `ast` 掃真正的 import 名單，不會誤中註解）
-- [ ] **工人不算 embedding、不碰資料庫那一層**（只看真正的 import 敘述——docstring 與註解裡
+- [x] **工人不算 embedding、不碰資料庫那一層**（只看真正的 import 敘述——docstring 與註解裡
       提到 `photo_repository` 這個名字不算，工人的 docstring 就寫著「不碰 photo_repository」）：
       ```bash
       grep -nE "^[[:space:]]*(from|import) .*(indexing_service|ingest_job|photo_repository|repositories|app\.db)" \
         app/workers/cloud_worker.py || echo "OK：工人不碰向量也不碰資料庫"
       ```
       預期印出 `OK：工人不碰向量也不碰資料庫`
-- [ ] **順序鐵律接對了**（主線最後三行的先後）：
+- [x] **順序鐵律接對了**（主線最後三行的先後）：
       ```bash
       grep -n "mailbox.put_object(result_key\|mailbox.send_result(job_id)\|mailbox.delete_job_message(message.receipt_handle)" app/workers/cloud_worker.py
       ```
       預期**最後三筆**依序是 `put_object(result_key` → `send_result(job_id)` → `delete_job_message(`；
       它們前面另外會出現規則①的 `send_result` 與三個提早出口的 `delete_job_message`，屬正常
-- [ ] **重試上限只有一份**：
+- [x] **重試上限只有一份**：
       ```bash
       grep -c "range(1, config.VLM_MAX_ATTEMPTS + 1)" app/workers/cloud_worker.py
       ```
       預期印出 `1`（單圖與 PDF 共用同一個迴圈）
-- [ ] `pytest tests/unit/test_cloud_worker_unit.py -v` → `10 passed`
-- [ ] `pytest tests/integration/test_cloud_roundtrip.py -v` → `2 passed`
-- [ ] **全量 `pytest -q` 全綠、0 skipped**，顆數 ＝ 開工基線 ＋ **12**（＝646）
-- [ ] **三死埠零依賴實證**（顆數與上一條相同）：
+- [x] `pytest tests/unit/test_cloud_worker_unit.py -v` → `10 passed`
+- [x] `pytest tests/integration/test_cloud_roundtrip.py -v` → `2 passed`
+- [x] **全量 `pytest -q` 全綠、0 skipped**，顆數 ＝ 開工基線 ＋ **12**（644 ＋ 12 ＝ **656**；
+      總覽 §9 的 646 是舊絕對值，對「+12」就好）
+- [x] **三死埠零依賴實證**（顆數與上一條相同）：
       ```bash
       AWS_ENDPOINT_URL=http://127.0.0.1:9 \
       CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
       OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
       ```
-- [ ] **端點仍是 22**（本 phase 不碰任何 router）：
+- [x] **端點仍是 22**（本 phase 不碰任何 router）：
       ```bash
       python -c "
       from fastapi.testclient import TestClient
@@ -1327,22 +1421,25 @@ process_job_message(mailbox, message, vlm)
       "
       ```
       預期印出 `22`
-- [ ] **專案的 `data/` 沒有被弄髒**：
+- [x] **專案的 `data/` 沒有被弄髒**：
       ```bash
       find data/staging -type f 2>/dev/null | head; echo "---"
       ```
       預期 `---` 之前沒有輸出（`isolated_data_dir` 讓 pytest 全寫在暫存目錄）
-- [ ] **規格區一字未動**：
+- [x] **規格區一字未動**：
       ```bash
       git status --short docs/spec/
       ```
       預期：零輸出
-- [ ] **`app/services/` 與 `app/api/` 零改動**：
+- [x] **`app/services/` 與 `app/api/` 零改動**（本輪不 commit，所以用工作樹快照相減）：
       ```bash
-      git diff --stat app/services app/api app/core
+      BASE=$(cat .superpowers/sdd/phase0902-2/BASE_TREE)
+      NOW=$(bash .superpowers/sdd/phase0902-2/snapshot-tree)
+      git diff --stat "$BASE" "$NOW" -- app/services app/api app/core tests/fakes.py
       ```
-      預期：無輸出
-- [ ] `ruff format --check app tests scripts && ruff check app tests scripts` 兩句都乾淨
+      預期：無輸出。快速版（只看有沒有被動過）：`git status --short -- app tests`
+      應該只列出四個 `??` 新檔
+- [x] `ruff format --check app tests scripts && ruff check app tests scripts` 兩句都乾淨
 
 ---
 
@@ -1379,11 +1476,12 @@ process_job_message(mailbox, message, vlm)
 6. **流水帳的格式寫成冒號（`"send_result:job-1"`），測試在 `list.index` 那一行炸 `ValueError`。**
    `FakeMailbox.calls` 的格式是 Phase 77 定的：**方法名、一個空格、參數**
    （`"send_result job-1"`、`"put_object documents/job-1/result.json"`），Phase 79 的 submit 順序測試
-   已經照這個格式在用。**症狀**：`ValueError: 'send_result:job-1' is not in list`，而把 `順序` 印出來
+   已經照這個格式在用。**症狀**：`ValueError: 'send_result:job-1' is not in list`，而把 `calls` 印出來
    明明看得到那一筆。**正解**：照步驟 1 印出來的樣子抄；不要為了配合自己的斷言去改 `tests/fakes.py`。
 
 7. **在工人裡 `from app.services.ingest_job import PDF_PAGE_CONTENT_TYPE`「避免重複」。**
-   那個模組會拉進 `photo_repository` ＝ `psycopg` ＝ 違反 D11，而且掃碼測試會立刻變紅。
+   那個模組會拉進 `photo_repository` ＝ 整個資料庫層 ＝ 違反 D11，
+   §4.3a 的 `test_工人不import資料庫與Celery與Redis` 會立刻變紅（黑名單有 `app.services.ingest_job`）。
    兩行字的重複換一個「工人與資料庫零關係」的硬保證，是本 phase 刻意做的取捨。
 
 8. **測試裡自己 `new` 一個 `MailboxMessage` 塞進去。**
@@ -1391,10 +1489,11 @@ process_job_message(mailbox, message, vlm)
    **正解**：一律 `send_job(...)` → `receive_job(0)`，與正式路徑（Phase 88 的主迴圈）
    拿訊息的方式一模一樣。
 
-9. **端到端測試忘了 monkeypatch `wait_result`，然後看著它「卡住」。**
+9. **端到端測試把信箱寫成普通的 `FakeMailbox`（忘了 `WorkerMailbox`），然後看著它「卡住」。**
    其實不會卡很久——`timeout_seconds=5`，五秒後 fallback 回本機，測試會**綠**，
    但綠的原因是 fallback 成功，雲端那條路一次都沒走到（假綠）。
-   **怎麼發現**：`工人的看圖.calls == 1` 這條斷言會變成 0。所以那條斷言不可以省。
+   **怎麼發現**：`worker_vlm.calls == 1` 與 `mailbox.worker_runs == 1` 這兩條斷言會變成 0。
+   所以那兩條不可以省。
 
 10. **以為工人 log 的 `backend=cloud` 是 `config.AI_BACKEND` 決定的。**
     不是。工人是獨立行程，它的 `config.AI_BACKEND` 永遠是預設的 `"local"`
@@ -1403,9 +1502,11 @@ process_job_message(mailbox, message, vlm)
     有把 `target=vlm_service.vlm_timing_target(vlm)` 傳進 `log_ai`。
     **把那個 `target=` 拿掉，Phase 88 的人工驗收就會一直看到 `backend=local`。**
 
-11. **`docker compose ps` 沒看 `db` 就直接跑 pytest。**
+11. **`db` 容器沒起來就直接跑 pytest。**
     `db` 沒起來時，端到端那兩顆會紅在連線錯誤，看起來像「程式寫錯了」。
-    先確認 `db` 是 `Up (healthy)`。
+    ⚠ **容器狀態由 controller 事先確認**（裁決 R3：實作 subagent 不下任何 `docker` 指令）。
+    真的紅在 `connection refused` / `could not connect to server` 就**停下回報 BLOCKED**，
+    不要自己 `docker compose up`。
 
 ---
 
@@ -1425,9 +1526,11 @@ process_job_message(mailbox, message, vlm)
 
 **與總覽的差異：** 新增測試 12 顆（單元 10 ＋ 端到端 2），名稱與總覽 §2.7 逐字相同；
 `tests/fakes.py` **零改動**（順序斷言用的呼叫流水帳 `FakeMailbox.calls` 是 Phase 77 依總覽 §2.4.5
-做好的，本 phase 只用）。唯一比總覽 §2.6 多的是一條防呆：**s3_key 認不得（欄位是空的、或副檔名
-不是三種之一）→ 只刪訊息、不看圖、不寫東西**（規則②）。總覽的六步假設 s3_key 一定是本機用
-`input_key()` 算出來的，沒說認不得時怎麼辦；留著那則訊息只會每 900 秒回來一次，所以刪掉並留 log。
+做好的，本 phase 只用）。規則②（**s3_key 認不得 → 只刪訊息、不看圖、不寫東西**）就是
+總覽 §2.6 的 `2b`／§10.2 追認項 K，**不是本 phase 自己多加的**：總覽的六步本來假設 s3_key 一定是
+本機用 `input_key()` 算出來的，K 補上「認不得時怎麼辦」——留著那則訊息只會每 900 秒回來一次，
+所以刪掉並留 log。（本檔把它排在「input 不在」**之前**檢查：鍵名都認不得的話，
+連要不要去 S3 拿都不必問；兩種順序的最終行為相同，都是只刪訊息。）
 
 **本 phase 做的一個小決定（寫在這裡，免得之後有人改來改去）：**
 `MailboxMessage` 與 `CloudMailbox` 兩個型別註記，工人一律
@@ -1442,7 +1545,7 @@ process_job_message(mailbox, message, vlm)
 `aws_mailbox.py`）。真正需要 SDK 的地方只有 Phase 88 的 `main()`，它把
 `from app.services.aws_mailbox import AwsMailbox` 寫在函式**裡面**，同一個道理。
 
-顆數：開工基線 ＋ **12** ＝ **646**（總覽 §9 的累計數字）。端點仍 **22**。
+顆數：開工基線 ＋ **12** ＝ **656**（2026-09-02 實查基線 644 ＋ 12；總覽 §9 寫 **646**，那是以 543 起算的舊絕對值——要對的是「+12」）。端點仍 **22**。
 
 **下一個 phase：Phase 88** —— 幫這支工人加上主迴圈（`run_forever` ＋ SIGTERM ＋ 啟動 log）、
 `python -m app.workers.cloud_worker` 進入點，然後在這台 Mac 上對著**真的** S3／SQS／
@@ -1464,3 +1567,48 @@ Ollama Cloud 跑一次端到端（丁段的驗收），並把操作步驟寫進 
 - 專案內文件：`docs/design/design6.md`（D9／D11／D12／D13／D17、§2、§2.2、§8、§9）、
   `docs/plan/unfinish/phase-00-增量六總覽.md`（§2.4.1 簽章、§2.4.3 result.json、
   §2.4.5 假件、§2.6 工人規則、§2.7 本 phase 的測試清單、§10 追認項 a／g／k）
+
+---
+
+## 9. 實作紀錄（2026-09-02，實作 subagent 補記）
+
+**與本文件零差異**：四個新檔的內容與 §4 的程式碼區塊逐字相同（`app/workers/__init__.py`、
+`app/workers/cloud_worker.py`、`tests/unit/test_cloud_worker_unit.py`、
+`tests/integration/test_cloud_roundtrip.py`），沒有增刪任何函式、常數、log 字樣或測試斷言。
+`tests/fakes.py`／`tests/conftest.py`／`app/services/`／`app/api/`／`app/core/` 一列未動
+（快照相減只列出那四個新檔，共 +890 行）。
+
+**RED（步驟 4）**：`pytest tests/unit/test_cloud_worker_unit.py tests/integration/test_cloud_roundtrip.py -q`
+→ 兩個測試模組都在收集階段就
+`ImportError: cannot import name 'cloud_worker' from 'app.workers'`（與本文件預期的字樣逐字相同），
+`2 errors in 0.30s`。
+
+**GREEN（步驟 6〜8）**：同一行指令 `12 passed`；分別跑是 `10 passed`／`2 passed`、
+`-k import` 那顆 `1 passed`。全量 `pytest -q` **656 passed、0 skipped**
+（開工基線實查 **644** ＋ 12，與 §2 一致；warning 只有基線那一個 StarletteDeprecationWarning）。
+三死埠（`AWS_ENDPOINT_URL`／`CELERY_BROKER_URL`／`OLLAMA_BASE_URL` 全指 `127.0.0.1:9`）
+同樣 **656 passed**。`ruff format --check`（113 files already formatted）與 `ruff check`
+（All checks passed!）都乾淨，一個字都不必重排。
+
+**驗收清單逐條實跑結果**：兩個新檔都在、`.dockerignore` L21 有 `scripts/`；
+`grep` 證明工人沒有 import 向量／資料庫那一層；順序鐵律的最後三筆依序是
+L344 `put_object(result_key` → L345 `send_result(job_id)` → L346 `delete_job_message(`；
+`range(1, config.VLM_MAX_ATTEMPTS + 1)` 恰 1 處；端點仍 **22**；
+`data/staging` 零殘留；`git status --short docs/spec/` 零輸出。
+
+**額外的自我審查（本文件沒要求，但做了）**：
+① `import app.workers.cloud_worker` 之後 `sys.modules` 裡**沒有** `boto3`、也沒有
+`app.services.cloud_ingest`——證明 `TYPE_CHECKING` 那一段執行時真的沒載入；
+② 把一份含 `import redis`／`from app.repositories import …`／`from app.services.ingest_job import …`／
+`from app.services.ingest_job_store import JobStore` 的合成原始碼餵進掃碼測試的同一段 `ast` 邏輯，
+黑名單與白名單兩層都確實抓得到（證明那顆測試不是空轉）；
+③ `grep` 確認工人兩個檔（含註解）零 `psycopg`／`get_connection`／`cursor(`／`.execute(`、零 `boto3`；
+④ tokenize 掃四個新檔的非 ASCII 識別字：`app/workers/*.py` 與單元測試都是 `[]`，
+端到端測試只有 `目前的任務清單`（`tests/conftest.py` 既有的公開 API，本 phase 不准改名，見校準紀錄 R1）。
+
+**工作樹快照**（裁決 R0，未 commit）：BASE `e8160cdd56258e4227ba937e07bcfc1d18510da7`
+（`.superpowers/sdd/phase0902-2/BASE_TREE`）與收工快照相減，`-- app tests` 恆為那四個新檔、
+共 +890 行、零刪除；`app/services app/api app/core tests/fakes.py` 相減為**空**。
+（快照 SHA 每寫一次文件就會變一次，所以這裡不釘死數字——controller 驗收時自己跑
+`bash .superpowers/sdd/phase0902-2/snapshot-tree` 取當下的值即可。本節寫成時實測的值是
+`1b62e6f531986bd6e79b3157e376595d4b495a02`。）
