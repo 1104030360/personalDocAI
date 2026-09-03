@@ -182,6 +182,39 @@ mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
 #   不要用「是不是 192.168 開頭」判斷——2026-08-24 實測本機區網就是 172.29.93.122，
 #   而用 localhost 開頁時猜出來的 Docker 網段是 172.24.0.3，**兩個都是 172.x**，看前綴分不出來。
 
+# ── AWS（增量六 Phase 82 起）────────────────────────────────────────
+# 區域固定東京 ap-northeast-1。帳號是 **Free plan**（點數制，升 Paid 前不扣卡）。
+# ⛔ 不要按 Console 上的 "Upgrade to Paid plan"；⛔ 不要開 Organizations／Control Tower
+#    （會自動升 Paid 而且點數作廢）。
+#
+# 這台 Mac 上有**兩個** AWS 身分，用途完全分開，不要弄混：
+#   personaldocai-admin  ← 人用的（AdministratorAccess）。key 在 ~/.aws（aws configure）
+#                           所有 `aws ...` 指令都用它，不必加 --profile
+#   personaldocai-mac    ← 程式用的（最小權限：documents/ 前綴 ＋ 兩條佇列 ＋
+#                           ec2:DescribeInstances；建 bucket／建佇列／清佇列都不行）。key 在 .env，
+#                           給 worker 容器裡的 boto3；Phase 88／90 在 Mac 上跑工人也是用它（總覽 §10.2 N）
+#
+# 我是誰／連得上嗎（不需要任何權限，最適合當第一個檢查）
+aws sts get-caller-identity          # Arn 結尾要是 user/personaldocai-admin
+aws configure get region             # 預期：ap-northeast-1
+
+# 預算警報（每月 $5，實際與預測各 80% 寄信；開戶第一天就建好了）
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+aws budgets describe-budgets --account-id "$ACCOUNT_ID" \
+  --query 'Budgets[].{Name:BudgetName,Amount:BudgetLimit.Amount,Unit:BudgetLimit.Unit}' --output table
+
+# ⚠ 想在 shell 裡用 .env 的變數（$S3_BUCKET 之類）時，**不要**整份載進來就打 aws 指令：
+#   .env 裡的 AWS_ACCESS_KEY_ID／AWS_SECRET_ACCESS_KEY 是**程式用的最小權限 key**，
+#   而環境變數的優先序比 ~/.aws 高 → CLI 會改用它 → 建資源時 AccessDenied。
+#   正確寫法（載完馬上把那兩個丟掉，讓 CLI 回去用 admin 的 profile）：
+set -a; . ./.env; set +a
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+echo "$AWS_REGION / $S3_BUCKET"      # 確認讀到了；⚠ 不要把輸出貼進任何文件
+
+# ⛔ 機密永遠只寫變數名，不寫值：access key、OLLAMA_API_KEY、實例 ID 一個字都不准
+#    出現在 docs/、README.md、LAUNCH.md、CLAUDE.md、deploy/ 或任何 commit 裡。
+#    .env 不入版控（.gitignore 已擋）。deploy/aws/*.json 裡的帳號 ID 一律寫 <ACCOUNT_ID>。
+
 # 跑測試（Phase 03 起；在專案根目錄執行，會自動連 PersonalDocAI_test 並每測清空）
 # ⚠ 測試仍在 **host** 跑（不進 container），連的是 Docker 裡的 PersonalDocAI_test；
 #   `docker compose ps` 的 `db` 要是 `Up (healthy)` 才跑得起來，否則會是一整片連線錯誤。
