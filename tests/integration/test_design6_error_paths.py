@@ -10,12 +10,13 @@ test_design3_error_paths.py、test_design4_error_paths.py、test_design5_error_p
 | 何時 | 誰加 | 內容 |
 |---|---|---|
 | **Phase 90**（本次開檔） | 戊 | `Dockerfile` 多階段與 compose 零改動／零 AWS 設定的掃碼（4 顆） |
+| Phase 91／92 | 戊 | EC2 unit 與 user-data `UNIT` heredoc 逐字相同；等 :11434 只在 `local`（2 顆） |
 | Phase 93 | 己 | GitHub OIDC trust JSON 的掃碼（4 顆：`sub` 鎖 main、無萬用字元、aud、無寫死帳號 ID） |
 | Phase 94 | 己 | CD workflow 的掃碼（6 顆：綁 test、id-token、arm64、target、sha tag、無金鑰） |
 | Phase 95 | 收尾 | §8 錯誤表逐列補缺口 ＋ §0 六禁與 §1.2 被否決清單的掃碼（10 顆） |
 
 ⚠ 本檔**完全不連任何外部服務**：它讀的是磁碟上的設定檔（`Dockerfile`、`compose.yaml`、
-   `compose.dev.yaml`），零 AWS、零 Docker daemon、零 Redis、零 Ollama。
+   `compose.dev.yaml`、`deploy/ec2/`），零 AWS、零 Docker daemon、零 Redis、零 Ollama。
    所以三個死埠一起指的時候顆數不會變。
 """
 
@@ -247,3 +248,49 @@ def test_compose_yaml沒有新增服務也沒有AWS設定():
                 f"{filename} 不該出現 `{keyword}`——雲端路的設定只走 .env（design6 §3），"
                 "寫進 compose 等於把 bucket 名與佇列 URL 推上 public repo"
             )
+
+
+# ---- Phase 91／92：EC2 unit 與 user-data 必須同一份（reviewer：不能只靠人工 diff）----
+
+
+def _unit_file_text() -> str:
+    return (PROJECT_ROOT / "deploy/ec2/personaldocai-worker.service").read_text(encoding="utf-8")
+
+
+def _user_data_embedded_unit() -> str:
+    """抽出 user-data.sh 裡 `<<'UNIT'` … `UNIT` 那一段（不含標記行）。"""
+    source = (PROJECT_ROOT / "deploy/ec2/user-data.sh").read_text(encoding="utf-8")
+    match = re.search(r"<<'UNIT'\n(.*)\nUNIT\n", source, re.S)
+    assert match, "user-data.sh 必須有 <<'UNIT' … UNIT 這段內嵌 unit"
+    return match.group(1)
+
+
+def test_unit檔與user_data內嵌段逐字相同():
+    """機器上跑的是 user-data 寫進去的那份；git 裡的 .service 是人看的正本。
+
+    只改一邊、CI 仍綠，下次開機就漂——reviewer 點名這個缺口。
+    """
+    unit = _unit_file_text()
+    embedded = _user_data_embedded_unit()
+    assert unit == embedded + "\n" or unit == embedded, (
+        "deploy/ec2/personaldocai-worker.service 必須與 user-data.sh 的 UNIT "
+        "heredoc 逐字相同（含註解）。改 unit 一定兩檔同改。"
+    )
+
+
+def test_unit只在local才等本機Ollama():
+    """cloud 模式不該被「user-data 最後才裝 Ollama、那步失敗」拖死。
+
+    EnvironmentFile 已載入，空字串／cloud 都不是 local → 跳過 curl :11434。
+    """
+    unit = _unit_file_text()
+    wait_lines = [
+        line
+        for line in unit.splitlines()
+        if "127.0.0.1:11434" in line and line.startswith("ExecStartPre=")
+    ]
+    assert len(wait_lines) == 1, f"應該恰好一條 ExecStartPre 在等 11434；目前：{wait_lines}"
+    assert "WORKER_VLM_BACKEND" in wait_lines[0], (
+        "等 11434 的那一行必須先看 WORKER_VLM_BACKEND，只有 local 才 curl；cloud／空值直接放行"
+    )
+    assert "local" in wait_lines[0]

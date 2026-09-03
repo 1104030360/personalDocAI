@@ -32,7 +32,7 @@ VLM_MODEL=gemma4:e2b
 # AL2023 的預設套件庫裡就有 docker（不像 AL2 要先開 amazon-linux-extras）。
 # ★ 這一份 user-data 兩種機器共用，AMI 依 phase-92 的段落選：
 #   92-A（CPU 機 t3.xlarge、WORKER_VLM_BACKEND=cloud）→ **一般 AL2023 x86_64**。
-#     沒有 GPU 驅動沒關係：工人打 ollama.com，這台的 Ollama 只是閒著應門讓 unit 的等待過。
+#     沒有 GPU 驅動沒關係：工人打 ollama.com。unit 只在 WORKER_VLM_BACKEND=local 才等 :11434。
 #     ⚠ 不要拿 GPU AMI 開 CPU 機——它的根碟快照 75 GB，白付。
 #   92-B（GPU 機 g4dn.xlarge、WORKER_VLM_BACKEND=local）→ **Deep Learning Base OSS NVIDIA
 #     Driver GPU AMI (Amazon Linux 2023)**：NVIDIA 驅動與 Docker 都已內建，這一行在那顆 AMI 上
@@ -67,10 +67,10 @@ Requires=docker.service
 # After 是「等它到了我再開始」——**兩行都要**，只寫 After 的話那個 target 可能根本不會被啟動。
 After=network-online.target
 Wants=network-online.target
-# 看圖的模型跑在**這台機器自己**的 Ollama 上（WORKER_VLM_BACKEND=local，2026-09-03 改判）。
+# After／Wants 仍留著：local 時弱依賴 ollama.service。cloud 時沒裝也不擋（Wants 不是 Requires）。
 # ollama.service 是 Ollama 官方安裝腳本（curl -fsSL https://ollama.com/install.sh | sh）
 # 裝好的那個服務名，預設只聽 127.0.0.1:11434。同樣是 After ＋ Wants 兩行都要。
-# ⚠ 但「服務啟動了」不等於「模型載得動」，所以下面還有一條 ExecStartPre 真的去問它一聲。
+# 真的去 curl :11434 的那條 ExecStartPre 只在 WORKER_VLM_BACKEND=local 才跑。
 After=ollama.service
 Wants=ollama.service
 
@@ -80,11 +80,12 @@ EnvironmentFile=/opt/personaldocai/worker.env
 # /usr/bin/aws 是 AL2023 **內建**的 AWS CLI v2，user-data 不另外裝（也不要用 pip 裝 v1）。
 # 寫絕對路徑是因為 systemd 的 PATH 很窄，跟你登入時的 shell 不一樣。
 ExecStartPre=/bin/bash -c '/usr/bin/aws ecr get-login-password --region ${AWS_REGION} | /usr/bin/docker login --username AWS --password-stdin ${ECR_REGISTRY}'
-# 等 Ollama 真的活著（最多 120 秒）。開機時 systemd 只保證「服務被啟動了」，
-# 但它要載入模型、抓 GPU，慢個十幾秒很正常；沒等就開工的話，第一批照片會全部
-# 連線被拒→看三次→標成「看不懂」，而且是一種完全不會報錯的壞法。
+# 只有 WORKER_VLM_BACKEND=local 才等本機 Ollama（最多 120 秒）。cloud／空值直接放行——
+# user-data 把 Ollama 裝在最後，那步失敗時 cloud 工人仍要起得來。
+# local 時：systemd 只保證「服務被啟動了」，但它要載入模型、抓 GPU，慢個十幾秒很正常；
+# 沒等就開工的話，第一批照片會全部連線被拒→看三次→標成「看不懂」。
 # 失敗就讓下面的 Restart=always 十秒後再試一次（比在這裡硬等更誠實）。
-ExecStartPre=/bin/bash -c 'for i in {1..60}; do curl -sf http://127.0.0.1:11434/api/tags >/dev/null && exit 0; sleep 2; done; echo "ollama 120 秒內沒起來" >&2; exit 1'
+ExecStartPre=/bin/bash -c 'if [ "${WORKER_VLM_BACKEND}" != "local" ]; then exit 0; fi; for i in {1..60}; do curl -sf http://127.0.0.1:11434/api/tags >/dev/null && exit 0; sleep 2; done; echo "ollama 120 秒內沒起來" >&2; exit 1'
 ExecStartPre=/usr/bin/docker pull ${ECR_IMAGE}:latest
 ExecStartPre=-/usr/bin/docker rm -f cloud-worker
 # --network host ＝容器直接用 host 的網路命名空間，這樣才打得到只聽 127.0.0.1 的 ollama.service。
@@ -119,7 +120,7 @@ systemctl daemon-reload
 systemctl enable personaldocai-worker
 
 # ---- 4. 裝 Ollama（2026-09-03 改判：92-B 的 GPU 機在這台自己看圖，design6 D12 作廢；
-#         92-A 的 CPU 機也裝，但只是閒著應門——unit 的 ExecStartPre 會等 11434）----
+#         92-A 的 CPU 機也裝省事，但 unit 只在 WORKER_VLM_BACKEND=local 才等 11434）----
 # ★ 這一段**刻意排在最後**：它是整個腳本裡最慢、最容易失敗的一段（要抓 7 GB）。
 #   排在寫 unit 之前的話，一次暫時性的網路失誤就會讓 set -e 中止腳本，
 #   機器上**連 personaldocai-worker.service 都不存在**——而 user-data 只在第一次開機
@@ -132,7 +133,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 systemctl enable --now ollama
 
 # 等它真的回應再往下走（最多 120 秒）。剛裝好的服務要幾秒才聽得到埠，
-# 沒等就 ollama pull 會直接失敗。與 unit 檔那條 ExecStartPre 是同一個迴圈。
+# 沒等就 ollama pull 會直接失敗。與 unit 檔 local 模式那條 ExecStartPre 是同一個迴圈。
 ollama_ready=""
 for i in {1..60}; do
   curl -sf http://127.0.0.1:11434/api/tags >/dev/null && { ollama_ready=1; break; }
