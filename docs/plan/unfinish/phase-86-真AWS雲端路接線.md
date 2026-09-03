@@ -1,17 +1,38 @@
 # Phase 86：真 AWS 雲端路接線（`assume` 模式 ＋ 逾時煙霧）
 
-> ⚠ **2026-09-01：** 真煙霧不要再靠檔名 `receipt-*.png` 過閘門。
-> 圖的**內容**必須是收據／菜單這類非敏感，或測試覆寫 `FakePrivacyGate`。
-> 檔名含 `receipt` 不再保證走雲端。
+> 📌 **2026-09-02 校準紀錄**（ledger：`.superpowers/sdd/phase0902-1/progress.md` 的裁決 R0〜R7；
+> 本檔已依 2026-09-02 工作樹 HEAD `a159131` 逐處校準過，照著做就會對）：
+>
+> | 裁決 | 落在本檔哪裡 |
+> |---|---|
+> | **R0** 不 commit、用工作樹快照相減審 | §4.10 從「commit」改成「**記快照**」（`.superpowers/sdd/phase0902-1/snapshot-tree`）；§6 最後一條改成核對 `git status --short` |
+> | **R1** 識別字一律英文 | §4.1 的測試碼與 §4.3 的實作碼：`原本的get_cloud_route`→`real_get_cloud_route`、`設定成assume模式`→`configure_assume_mode`、`路`→`route`、`建構參數`→`captured`、`側錄CloudRoute`→`RecordingCloudRoute`、`模式`→`mode`、`信箱`→`mailbox`。**`test_…` 的中文名維持不變**（總覽 §2.7 逐字沿用）；log／錯誤訊息／註解／docstring 也維持中文 |
+> | **R2** 顆數以 2026-09-02 實查為準 | 實查 `pytest --collect-only -q` ＝ **624**（不是舊文寫的 632）。Phase 83 +16 → **640 ＝ 本 phase 開工基線**；本 phase +2 → **收工 642**。§2.2／§2.3／§4.4／§6／§8 全部已改 |
+> | **R3** AWS 操作由 controller 親自執行 | **§4.5〜§4.8 整段**（煙霧、purge、改 `.env`、restart）＋ §2.2 的 `aws_check.py` 那兩行 ＋ §6 帶 `aws`／`.env` 的條目，全部標了「⚠ 本步驟由 controller 親自執行」。實作 subagent **零 `aws` 指令、零真連線、不改 `.env`、不上傳任何東西** |
+> | **R4** `scripts/aws_check.py` 不寫自動化測試 | 本檔只**引用**它（§2.2／§6），顆數 +0 不受影響 |
+> | **R5** 煙霧程序 | ① 先 `open -a Ollama`（embeddings 一律本機，非開不可）② 頁首 AI 開關撥到 **cloud** 加速（閘門 0.7 秒、看圖 0.8 秒，取代本機的 1〜5 分鐘）③ 圖以**內容**判定敏感與否（§4.5 步驟 1、§4.6 各給一段 Pillow 產圖碼，已實測畫得出來）④ 做完把開關撥回 **local**、`.env` 改回 `off`／`300` 並 restart worker |
+> | **R6** 不需要手機／真機 | 本 phase 零前端、零鏡頭 |
+> | **R7** 只改本檔 | 顆數已由 controller 在總覽 §2.7 補上「實 642」＝與本檔一致。**仍待處理的跨檔過期點**：總覽 §2.7 Phase 86 那段煙霧描述與 §5.2 Demo 2 仍寫「檔名 `receipt-test.png`／`身分證.png`」「檔名要打中 Phase 74 的非敏感關鍵字 receipt」——閘門 2026-09-01 起**不看檔名**。屬跨檔問題、**不在本檔修**，由 controller 統一處理 |
+
+> ⚠ **2026-09-01 改判（本檔最重要的一條）：隱私閘門不看檔名。**
+> `app/services/privacy_gate.py` 的 `VlmGate.classify()` 第一行就是 `del filename`
+> （契約：verdict 不得依賴檔名），判斷一律是「把圖縮到長邊 512 → 送 VLM 短問」。
+> 所以煙霧要**用圖的內容**決定它走哪條路：
+> 非敏感 ＝ 收據／菜單這類（§4.5 步驟 1 產一張 `RECEIPT／Target／Total` 的圖），
+> 敏感 ＝ 證件／薪資單這類（§4.6 產一張 `NATIONAL ID CARD` 的圖）。
+> **檔名叫什麼都不影響結果**；`Phase 74 的 NON_SENSITIVE_KEYWORDS／SENSITIVE_KEYWORDS`
+> 這兩個名字在現行程式碼裡**已經不存在**，看到任何文件還這樣寫就是過期的。
 
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
-> 本 phase 特別**不要**做的四件事：
+> 本 phase 特別**不要**做的六件事：
 > ① **不要**順手把 `ec2` 那一支也做掉（那是 **Phase 89** 的 `Ec2Probe`，而且現在根本還沒有 EC2）；
 > ② **不要**寫工人（`cloud_worker.py` 是 **Phase 87／88**）——本 phase 的煙霧**故意讓它沒人接**；
 > ③ **不要**改 `gated_ingest.py`／`cloud_ingest.py`（那些在 Phase 78〜81 已經寫完並驗過了，本 phase 只是「把插頭插上」）；
 > ④ **不要**把 `.env` 的 `CLOUD_ROUTE` 留在 `assume`——煙霧做完**一定要改回 `off`**（理由見 §4.8）；
 > ⑤ **不要**動 `get_cloud_route()` 最後那行 `raise ValueError`（打錯字要當場炸是 Phase 77 釘死的**永久行為**，
->   不是暫時分支；本 phase 只換 `assume` 那一支）。
+>   不是暫時分支；本 phase 只換 `assume` 那一支）；
+> ⑥ **不要**把頁首的「AI 模型」開關留在**雲端**——煙霧為了加速把它撥去雲端（§4.5 步驟 0），
+>   §4.8 一定要撥回 `local`，否則之後每一次看圖都在燒 Ollama Cloud 的用量（§7 陷阱 14）。
 
 > 🎯 **一句話目標：** 把 `app/dependencies.py` 的 `get_cloud_route()` 補上 `assume` 這一支
 > （建一個真的 `AwsMailbox` ＋ `AlwaysRunning` 探測 ＋ 從 config 讀逾時秒數），
@@ -113,8 +134,11 @@
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 
 pytest -q
-# 預期尾巴：632 passed，0 skipped（＝總覽 §9 軌跡表 Phase 85 那一列的累計）
-# 本 phase +2 → 收工 634（總覽 §9 Phase 86 那一列也是 634）
+# 預期尾巴：640 passed，0 skipped
+#   ＝ 2026-09-02 實查基線 624（`pytest --collect-only -q`）＋ Phase 83 的 16 顆
+#   ⚠ 總覽 §9 軌跡表寫的是 632／634，那是 2026-08-31 寫總覽當下的估算值，**已過期**；
+#     一律以「本 phase 新增幾顆」為準（總覽 §9 開頭那句自己就這樣說）。
+# 本 phase +2 → 收工 642
 
 # 前面的零件都在
 grep -n "^class CloudRoute:" app/services/cloud_ingest.py
@@ -124,22 +148,32 @@ grep -n "def get_cloud_route" app/dependencies.py
 grep -n "def run_gated_ingest_job" app/services/gated_ingest.py
 # 預期：五行都命中
 
-# AWS 那邊也都在
-set -a; . ./.env; set +a
-unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+# AWS 那邊也都在   ⚠ 這一行由 controller 親自執行（裁決 R3；實作 subagent 不跑它）
+#   不必 `source .env`：aws_check.py 自己會經 app.core.config 的 load_dotenv 讀 .env，
+#   拿的是 personaldocai-mac 那把最小權限 key（S3／SQS 的讀寫本來就該用它）。
 python scripts/aws_check.py s3 sqs        # 預期兩個 ✅
 
 # 四個容器活著
 docker compose ps --no-trunc              # db／redis 要 Up (healthy)；app／worker 要 Up
+#   ⚠ 2026-09-02 現況：app／worker 是用 **dev overlay** 起的（compose.dev.yaml，app 有 --reload）。
+#     所以本檔所有 restart 一律帶兩個 -f：
+#       docker compose -f compose.yaml -f compose.dev.yaml restart worker
 
-# Ollama 活著（fallback 的本機看圖要用它）
+# Ollama 活著（★ 非開不可：embeddings 一律本機 bge-m3，雲端路與 fallback 都要用它）
+#   ⚠ 這兩行也是 controller 的事（跟煙霧綁在一起）；§4.1〜§4.4 的 pytest 不需要 Ollama
+#     （第二道安全網 wire_fake_ai 早就把 AI 全換成假件了）。
+open -a Ollama                            # 2026-09-02 現況：Ollama 沒開，要先開（裁決 R5）
 curl -s http://localhost:11434/api/tags | head -c 60
+# 預期：印得出 JSON 開頭（`{"models":[...`）。完全沒有輸出 ＝ 還沒起來，等幾秒再試一次。
 ```
 
 ### 2.3 本 phase 對顆數的影響
 
 **+2 顆**（總覽 §2.7），全部在新檔 `tests/unit/test_dependencies_cloud_unit.py`。
-開工基線 632 → 收工 **634**。
+開工基線 **640** → 收工 **642**（640 ＝ 2026-09-02 實查的 624 ＋ Phase 83 的 16）。
+
+> 📌 **2026-09-02 review fix wave 之後是 +3**（同一個檔再加一顆
+> `test_assume模式把config的四個值對應到AwsMailbox`），全量 **644**。詳見 §8 的 fix wave 那一行。
 
 ### 2.4 開工前先看一眼現在的 `get_cloud_route()`
 
@@ -147,19 +181,19 @@ curl -s http://localhost:11434/api/tags | head -c 60
 grep -n -A 20 "def get_cloud_route" app/dependencies.py
 ```
 
-Phase 77 留下來的版本（phase-77 §4 步驟 5；docstring 略）**四段順序固定**：
-`off` → `assume`（暫時）→ `ec2`（暫時）→ 打錯字 `ValueError`（永久）：
+Phase 77 留下來的版本（`app/dependencies.py` L281〜307，**2026-09-02 實查逐字照抄**，docstring 略）
+**四段順序固定**：`off` → `assume`（暫時）→ `ec2`（暫時）→ 打錯字 `ValueError`（永久）：
 
 ```python
 def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
-    模式 = config.CLOUD_ROUTE
-    if 模式 == "off":
+    mode = config.CLOUD_ROUTE
+    if mode == "off":
         return cloud_ingest.CloudRouteOff()
-    if 模式 == "assume":
+    if mode == "assume":
         raise NotImplementedError("CLOUD_ROUTE=assume 要等 Phase 86 接上真 AWS 才能用")
-    if 模式 == "ec2":
+    if mode == "ec2":
         raise NotImplementedError("CLOUD_ROUTE=ec2 要等 Phase 89 的 Ec2Probe 才能用")
-    raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{模式!r}")
+    raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{mode!r}")
 ```
 
 **本 phase 只換掉 `assume` 那一支**；`off`、`ec2` 與最後那行 `ValueError` **一個字都不動**
@@ -174,16 +208,29 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 > ⚠️ **絕對不要同時跑兩份 pytest。** 兩份會互相 `TRUNCATE` 同一個測試庫，
 > 症狀是大量看似隨機的 404 與 `TypeError: 'NoneType' object is not subscriptable`。
 
-> ⚠️ **本機真模型很慢，而且不要並行。** 看圖 64〜88 秒（9 欄 prompt 可到 2〜5 分鐘）。
-> §4.5 的煙霧會等到本機看完圖，所以**一次只上傳一張**，也不要同時去問問題
-> （Phase 48 曾經把 db 容器壓垮過）。想快一點：把頁首的「AI 模型」開關撥到**雲端**
-> ——那扇門管的是本機路的看圖後端，與隱私閘門是**兩件事**（design6 D6）。
+> ⚠️ **本機真模型很慢，而且不要並行。** 看圖 64〜88 秒（9 欄 prompt 可到 2〜5 分鐘），
+> 閘門短問本機也要約 100 秒（phase0901 實測）。§4.5 的煙霧會等到看完圖，
+> 所以**一次只上傳一張**，也不要同時去問問題（Phase 48 曾經把 db 容器壓垮過）。
+>
+> **本 phase 的煙霧一律先把頁首的「AI 模型」開關撥到「雲端」**（裁決 R5；作法見 §4.5 步驟 0）：
+> 閘門短問 0.7 秒、看圖 0.8 秒，整條煙霧從十幾分鐘縮到兩三分鐘。
+> 那扇門管的是**四個注入點 ＋ 隱私閘門**：`config.AI_BACKEND` 在 `POST /photos` 那一刻被
+> 抄進 job（`app/api/routers/photos.py` 的 `ai_backend=config.AI_BACKEND`），worker 再用
+> `job["ai_backend"]` 建閘門與 VLM（`app/celery_app.py` 的 `build_privacy_gate_for_backend`／
+> `build_vlm_for_backend`）——**worker 行程自己的 `config.AI_BACKEND` 永遠是 `local`**，
+> 所以撥開關要在 **app 那一頭**撥，而且要在**上傳之前**撥（總覽 §10.2 追認項 S）。
+> ⚠ `embeddings` **不歸這扇門管、永遠本機**（向量必須跟庫裡既有的 bge-m3 同源），
+> 所以 Ollama 一定要開著——這就是 §2.2 那行 `open -a Ollama` 的理由。
 
 ---
 
 ## 3. 範圍
 
 ### 做
+
+> ⚠ **第 4〜7 項（＝§4.5〜§4.8）由 controller 親自執行**（裁決 R3）：
+> 它們會建立／刪除真的 AWS 物件、改 `.env`、重啟容器。
+> 實作 subagent 只做第 **1、2、3、8** 項，**一條 `aws` 指令都不打、不改 `.env`、不上傳任何東西**。
 
 1. `app/dependencies.py` 的 `get_cloud_route()` 補上 **`assume`** 分支：
    建 `AwsMailbox`（bucket／兩條佇列 URL／region 全部從 `config` 即時讀）＋
@@ -192,14 +239,17 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 3. **拆掉 Phase 77 的鬧鐘（`assume` 那半）**：`tests/unit/test_cloud_ingest_unit.py` 的
    `test_get_cloud_route預設off時回CloudRouteOff` 裡「`assume` 要 `NotImplementedError`」那半刪掉
    （只剩 `ec2` 那半留給 Phase 89；`cloudy` → `ValueError` 那段**保留**）。改既有測試，顆數不變。
-4. **真 AWS 逾時煙霧**（人工，本 phase 的重頭戲）：
-   `CLOUD_ROUTE=assume` ＋ `CLOUD_RESULT_TIMEOUT_SECONDS=30`，上傳 `receipt-test.png`
+4. **真 AWS 逾時煙霧**（人工，本 phase 的重頭戲）：頁首 AI 開關撥到**雲端** ＋
+   `CLOUD_ROUTE=assume` ＋ `CLOUD_RESULT_TIMEOUT_SECONDS=30`，上傳一張**內容**是收據的圖
    → S3 上真的出現 `input` ＋ `context`、jobs 佇列 1 則、results 佇列 0 則
    → 30 秒後 fallback 本機入庫、S3 清空、log 有 `fallback=local reason=result_timeout`。
-5. **敏感檔煙霧**：上傳 `身分證.png` → **零 S3 物件**、log 有 `route=local verdict=SENSITIVE`。
+5. **敏感檔煙霧**：上傳一張**內容**是證件的圖 → **零 S3 物件**、log 有 `route=local verdict=SENSITIVE`。
 6. `aws sqs purge-queue` 把煙霧留在 jobs 佇列的那一則清掉。
-7. `.env` 改回 `CLOUD_ROUTE=off`、`CLOUD_RESULT_TIMEOUT_SECONDS=300`，restart worker。
+7. 頁首開關撥回**本機**；`.env` 改回 `CLOUD_ROUTE=off`、`CLOUD_RESULT_TIMEOUT_SECONDS=300`，restart worker。
 8. `LAUNCH.md` §9（Monitoring and logs）新增一個 **"S3 / SQS layer"** 小節（**英文**）。
+   （2026-09-02 實查：`LAUNCH.md` 498 行、§9 就叫 `## 9. Monitoring and logs`，
+   底下依序有 `### Docker layer`／`### Celery / worker layer`／`### Redis layer`／
+   `### app layer (the ask flow and the camera)`——插入點成立，**不必新增章節號**。）
 
 ### 明確不做（防手滑）
 
@@ -215,6 +265,8 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 | 在測試裡真的打 AWS | pytest 絕不連真 AWS（總覽 §7 鐵律 2）。2 顆測試都只檢查「建出來的物件對不對」，一次 API 都不打 |
 | 改端點／前端／資料庫 | 端點恆 22、前端零改動、`photo` 表零改動 |
 | 改 `compose.yaml` | 本增量零改動。`CLOUD_ROUTE` 等變數走 `.env`（已 bind-mount） |
+| 讓頁首的「AI 模型」開關停在**雲端** | 那是煙霧為了加速臨時撥的（§4.5 步驟 0）。留著的話之後每一次看圖、每一次閘門短問都走 Ollama Cloud——**這與 `CLOUD_ROUTE` 是兩件事**，`off` 擋的只是「檔案送不送去 AWS」。§4.8 一定要撥回 `local` |
+| 靠**檔名**決定煙霧走哪條路（例如 `cp receipt.png 身分證.png`） | 閘門 2026-09-01 起只看圖的內容（`del filename`）。改名什麼都不會改變，只會讓你以為驗過了 |
 
 ---
 
@@ -237,7 +289,7 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 │ 拿到的是假的。但我們這兩顆測試要驗的正是**真的那一支**。                    │
 │                                                                            │
 │ 解法：在測試檔的**最上面**用                                               │
-│     from app.dependencies import get_cloud_route as 原本的get_cloud_route   │
+│     from app.dependencies import get_cloud_route as real_get_cloud_route   │
 │ ——這叫「早綁定」：import 發生在 pytest **收集階段**（fixture 還沒跑），      │
 │ 所以這個名字抓住的是**原始的函式物件**，之後 monkeypatch 換掉模組屬性       │
 │ 也影響不到它。                                                             │
@@ -248,7 +300,7 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- [ ] 新建 `/Users/linjunting/personalDocAI/tests/unit/test_dependencies_cloud_unit.py`，**整份逐字貼上**：
+- [x] 新建 `/Users/linjunting/personalDocAI/tests/unit/test_dependencies_cloud_unit.py`，**整份逐字貼上**：
 
 ```python
 """get_cloud_route() 的單元測試：只檢查「建出來的物件對不對」，**一次 AWS API 都不打**。
@@ -257,7 +309,7 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 的 is_running() 是純 Python 的 return True——所以這兩顆測試跑起來又快又安全。
 第五道安全網另外還把 AWS_ENDPOINT_URL 指到死埠 http://127.0.0.1:9 當第二層保險。
 
-★ 為什麼是 `from app.dependencies import get_cloud_route as 原本的get_cloud_route`：
+★ 為什麼是 `from app.dependencies import get_cloud_route as real_get_cloud_route`：
   conftest 的 autouse fixture wire_fake_cloud 會用 monkeypatch 把
   dependencies.get_cloud_route 這個**模組屬性**換成回 CloudRouteOff 的假件。
   而這一行 import 發生在 pytest 的**收集階段**（fixture 還沒跑），
@@ -270,12 +322,12 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 from __future__ import annotations
 
 from app.core import config
-from app.dependencies import get_cloud_route as 原本的get_cloud_route
+from app.dependencies import get_cloud_route as real_get_cloud_route
 from app.services import cloud_ingest
 from app.services.aws_mailbox import AwsMailbox
 
 
-def 設定成assume模式(monkeypatch) -> None:
+def configure_assume_mode(monkeypatch) -> None:
     """把 config 擺成「.env 已經填好、CLOUD_ROUTE=assume」的樣子。
 
     值都是假的（bucket 與佇列 URL 不存在也沒關係）——本檔不會真的去呼叫它們。
@@ -299,13 +351,13 @@ def test_assume模式建出CloudRoute而且探測恆為True(monkeypatch):
       ① 不再是 NotImplementedError（Phase 77 留下的暫時分支已被換掉）
       ② 不是 CloudRouteOff（那樣的話 available() 會是 False，照片永遠出不了門）
     """
-    設定成assume模式(monkeypatch)
+    configure_assume_mode(monkeypatch)
 
-    路 = 原本的get_cloud_route()
+    route = real_get_cloud_route()
 
-    assert isinstance(路, cloud_ingest.CloudRoute)
-    assert not isinstance(路, cloud_ingest.CloudRouteOff)
-    assert 路.available() is True
+    assert isinstance(route, cloud_ingest.CloudRoute)
+    assert not isinstance(route, cloud_ingest.CloudRouteOff)
+    assert route.available() is True
 
 
 def test_assume模式的逾時秒數讀config(monkeypatch):
@@ -321,24 +373,24 @@ def test_assume模式的逾時秒數讀config(monkeypatch):
     為什麼這件事重要：這個數字寫死的話，Phase 92 之後想把逾時從 300 調成別的值
     就得改程式、重建映像；而它本來只該是 .env 的一行。
     """
-    設定成assume模式(monkeypatch)
+    configure_assume_mode(monkeypatch)
     monkeypatch.setattr(config, "CLOUD_RESULT_TIMEOUT_SECONDS", 123)
 
-    建構參數: dict = {}
+    captured: dict = {}
 
-    class 側錄CloudRoute:
+    class RecordingCloudRoute:
         def __init__(self, mailbox, probe, *, timeout_seconds):
-            建構參數["mailbox"] = mailbox
-            建構參數["probe"] = probe
-            建構參數["timeout_seconds"] = timeout_seconds
+            captured["mailbox"] = mailbox
+            captured["probe"] = probe
+            captured["timeout_seconds"] = timeout_seconds
 
-    monkeypatch.setattr(cloud_ingest, "CloudRoute", 側錄CloudRoute)
+    monkeypatch.setattr(cloud_ingest, "CloudRoute", RecordingCloudRoute)
 
-    原本的get_cloud_route()
+    real_get_cloud_route()
 
-    assert 建構參數["timeout_seconds"] == 123
-    assert isinstance(建構參數["mailbox"], AwsMailbox)
-    assert isinstance(建構參數["probe"], cloud_ingest.AlwaysRunning)
+    assert captured["timeout_seconds"] == 123
+    assert isinstance(captured["mailbox"], AwsMailbox)
+    assert isinstance(captured["probe"], cloud_ingest.AlwaysRunning)
 ```
 
 > 📌 **第二顆測試有一個前提**：`get_cloud_route()` 必須用**模組屬性**的寫法
@@ -376,7 +428,7 @@ E   NotImplementedError: CLOUD_ROUTE=assume 要等 Phase 86 接上真 AWS 才能
 
 ### 4.3 實作（綠）
 
-- [ ] 打開 `/Users/linjunting/personalDocAI/app/dependencies.py`，
+- [x] 打開 `/Users/linjunting/personalDocAI/app/dependencies.py`，
       把 `get_cloud_route()` **整支換成下面這一份**：
 
 ```python
@@ -404,36 +456,37 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
 
     pytest 由 tests/conftest.py 的第五道安全網 wire_fake_cloud 兩管齊下換掉它。
     """
-    模式 = config.CLOUD_ROUTE
-    if 模式 == "off":
+    mode = config.CLOUD_ROUTE
+    if mode == "off":
         return cloud_ingest.CloudRouteOff()
-    if 模式 == "assume":
+    if mode == "assume":
         # 只有真的要走雲端時才載入 boto3（唯一入口是 aws_mailbox）
         from app.services.aws_mailbox import AwsMailbox
 
-        信箱 = AwsMailbox(
+        mailbox = AwsMailbox(
             bucket=config.S3_BUCKET,
             jobs_queue_url=config.SQS_JOBS_QUEUE_URL,
             results_queue_url=config.SQS_RESULTS_QUEUE_URL,
             region=config.AWS_REGION,
         )
         return cloud_ingest.CloudRoute(
-            信箱,
+            mailbox,
             cloud_ingest.AlwaysRunning(),
             timeout_seconds=config.CLOUD_RESULT_TIMEOUT_SECONDS,
         )
-    if 模式 == "ec2":
+    if mode == "ec2":
         raise NotImplementedError("CLOUD_ROUTE=ec2 要等 Phase 89 的 Ec2Probe 才能用")
-    raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{模式!r}")
+    raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{mode!r}")
 ```
 
-> 📌 **本 phase 只換掉 `assume` 那一支。** 上面這一份已與 Phase 77 的實際程式碼**逐字對齊**：
+> 📌 **本 phase 只換掉 `assume` 那一支。** 上面這一份已與 `app/dependencies.py` 的
+> **2026-09-02 實際程式碼逐字對齊**（L281〜307，變數名是英文的 `mode`）：
 > `off` 那兩行、`ec2` 那兩行、最後那行 `raise ValueError` 都與 phase-77 §4 步驟 5 相同，
 > 你真正改的只有 `assume` 底下那一段（從一行 `raise NotImplementedError(...)` 變成建 `AwsMailbox`
 > ＋ `CloudRoute`）。`ec2` 那一支**原封不動**留給 Phase 89；`ValueError` 那行**永遠不拿掉**
 > （Phase 89 之後這個函式的長相見 phase-89 §4 步驟 5——`assume` 那段**程式碼**到那時也不會再動，docstring 會重寫）。
 
-- [ ] 確認 `app/dependencies.py` 檔案最上面的 import 區有 `cloud_ingest`
+- [x] 確認 `app/dependencies.py` 檔案最上面的 import 區有 `cloud_ingest`
       （Phase 77 應該已經加了；沒有的話補進既有那一串）：
 
 ```python
@@ -450,9 +503,10 @@ from app.services import (
 
   （這一串是 ruff 的 `I` 規則排序過的樣子；`ruff format` 會幫你維持。）
 
-- [ ] **拆掉 Phase 77 的鬧鐘（`assume` 那半）。** 打開
+- [x] **拆掉 Phase 77 的鬧鐘（`assume` 那半）。** 打開
       `/Users/linjunting/personalDocAI/tests/unit/test_cloud_ingest_unit.py`，找到
-      `test_get_cloud_route預設off時回CloudRouteOff`，把中間這一段（Phase 77 寫的原文）：
+      `test_get_cloud_route預設off時回CloudRouteOff`（2026-09-02 實查在該檔 L267〜291），
+      把中間這一段（**實檔原文逐字照抄**，L277〜286）：
 
 ```python
     # assume／ec2 現在還沒接（總覽 §2.7：本增量**唯二**允許的暫時分支之一）。
@@ -460,8 +514,8 @@ from app.services import (
     #     Phase 86 接上 assume 時 → **拆掉 assume 那半**（改成驗它建出 CloudRoute）
     #     Phase 89 接上 ec2 時   → **拆掉 ec2 那半**（改成驗它的探測是 Ec2Probe）
     #   兩個 phase 各自的測試檔（test_dependencies_cloud_unit.py）會接手那一半的驗證。
-    for 模式 in ("assume", "ec2"):
-        monkeypatch.setattr(config, "CLOUD_ROUTE", 模式)
+    for mode in ("assume", "ec2"):
+        monkeypatch.setattr(config, "CLOUD_ROUTE", mode)
         with pytest.raises(NotImplementedError):
             get_cloud_route()
 ```
@@ -484,7 +538,7 @@ from app.services import (
       已經由 §4.1 那 2 顆正面驗證了，這半鬧鐘的任務完成、功成身退。
       **顆數不變**（改既有測試不計顆）。
 
-- [ ] 確認鬧鐘只剩 `ec2` 那半，而且那個檔全綠：
+- [x] 確認鬧鐘只剩 `ec2` 那半，而且那個檔全綠：
 
 ```bash
 grep -n '"assume", "ec2"' tests/unit/test_cloud_ingest_unit.py || echo "OK：assume 那半已拆"
@@ -500,7 +554,7 @@ pytest tests/unit/test_cloud_ingest_unit.py -q
 
 ### 4.4 跑綠、跑全量
 
-- [ ] 新測試：
+- [x] 新測試：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -509,15 +563,15 @@ pytest tests/unit/test_dependencies_cloud_unit.py -v
 
 **預期輸出：** `2 passed`
 
-- [ ] 全量：
+- [x] 全量：
 
 ```bash
 pytest -q
 ```
 
-**預期輸出：** `634 passed`，**0 skipped**（632 ＋ 2）。
+**預期輸出：** `642 passed`，**0 skipped**（640 ＋ 2）。
 
-- [ ] 零外部依賴實證（三個死埠一起指，顆數要一模一樣）：
+- [x] 零外部依賴實證（三個死埠一起指，顆數要一模一樣）：
 
 ```bash
 AWS_ENDPOINT_URL=http://127.0.0.1:9 \
@@ -525,12 +579,12 @@ CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
 OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
 ```
 
-**預期輸出：** `634 passed`
+**預期輸出：** `642 passed`
 
 > 這一條在本 phase 特別重要：我們剛剛才讓 `get_cloud_route()` 有能力建出**真的**
 > AWS client。死埠實證通過，就代表第五道安全網真的把它擋住了、pytest 沒有偷偷連上 AWS。
 
-- [ ] 格式與 lint：
+- [x] 格式與 lint：
 
 ```bash
 ruff format --check app tests scripts && ruff check app tests scripts
@@ -542,52 +596,106 @@ ruff format --check app tests scripts && ruff check app tests scripts
 
 ### 4.5 ★ 真 AWS 逾時煙霧（本 phase 的重頭戲）
 
+> ⚠️ **§4.5〜§4.8 整段由 controller 親自執行**（裁決 R3）。
+> 它會建立與刪除真的 AWS 物件、改 `.env`、重啟容器。
+> **實作 subagent 到 §4.4 為止就收工**：不打任何 `aws` 指令、不改 `.env`、不上傳任何東西。
+
 > **這一段會真的把一張照片送上 AWS。** 做之前先確認：
-> ① 四個容器都活著 ② Ollama 活著 ③ `python scripts/aws_check.py s3 sqs` 兩個 ✅。
+> ① 四個容器都活著（`docker compose ps --no-trunc`）
+> ② **Ollama 活著**（`open -a Ollama`；embeddings 一律本機，沒有它入庫那一段一定失敗）
+> ③ `python scripts/aws_check.py s3 sqs` 兩個 ✅。
 
-#### 步驟 1：準備一張「非敏感」的圖
+#### 步驟 0：把頁首的 AI 開關撥到「雲端」（省十幾分鐘）
 
-- [ ] 檔名**一定要含非敏感關鍵字**（Phase 74 的 `NON_SENSITIVE_KEYWORDS`，例如 `receipt`）：
+- [x] 執行（`PUT /settings/ai-backend`，body 只有一個鍵 `backend`）：
+
+```bash
+cd /Users/linjunting/personalDocAI
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"cloud"}'
+```
+
+**預期輸出**（恰兩鍵）：
+
+```json
+{"backend":"cloud","cloud_configured":true}
+```
+
+**為什麼要撥：** 閘門短問與入庫看圖都跟這扇門走。本機要 100 秒＋64〜88 秒，
+雲端各約 0.7／0.8 秒（phase0901 實測）——整段煙霧從十幾分鐘縮到兩三分鐘。
+
+**細節（很容易踩）：**
+
+- 這個狀態存在 **app 行程的記憶體**裡（`config.AI_BACKEND`），**重啟 app 就會回到 `local`**。
+  重啟 **worker**（步驟 2 要做）不影響它。萬一中途重啟了 app，就把這一步再跑一次。
+- worker 行程自己的 `config.AI_BACKEND` 永遠是 `local`；它用的是 `POST /photos` 那一刻
+  抄進 job 的快照 `job["ai_backend"]`（總覽 §10.2 追認項 S）。所以**撥開關必須在上傳之前**，
+  上傳之後才撥對這一筆完全沒有影響。
+- 回應 `"cloud_configured":false` ＝ `.env` 沒有 `OLLAMA_API_KEY`，會回 **422**、開關不動。
+- **embeddings 不歸這扇門管、永遠本機**——這就是 Ollama 非開不可的原因。
+- §4.8 收尾要撥回 `local`。
+
+#### 步驟 1：準備一張「內容」非敏感的圖
+
+- [x] ⚠ **決定走哪條路的是圖的內容，不是檔名**（2026-09-01 改判；`VlmGate.classify()` 的
+      第一行就是 `del filename`）。所以這裡要產一張**看起來就是收據**的圖：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 python - <<'PY'
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
-# 把你手邊任何一張真收據照片（JPEG 也行）轉存成 PNG。
-# ⚠ 不要用 cp 把 .jpg 改名成 .png：curl 會照副檔名送 Content-Type: image/png，
-#   裡面卻是 JPEG 位元組——S3 的鍵名、staging 的副檔名、落地原圖的副檔名會全部對不上內容。
-Image.open("<你的一張真收據照片>.jpg").convert("RGB").save("/tmp/receipt-test.png")
+
+def font(size):
+    """macOS 有 Arial；沒有就退回 Pillow 內建的可縮放字型（10.1 起支援 size）。"""
+    try:
+        return ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", size)
+    except OSError:
+        return ImageFont.load_default(size=size)
+
+
+# 512 是刻意的：閘門會把圖縮到長邊 <= 512（privacy_gate.GATE_IMAGE_MAX_SIDE），
+# 一開始就畫這麼大，字才不會在縮圖時糊掉、模型才讀得出來。
+image = Image.new("RGB", (512, 384), (250, 248, 240))
+draw = ImageDraw.Draw(image)
+draw.text((24, 24), "RECEIPT", fill=(20, 20, 20), font=font(44))
+draw.text((24, 96), "Target  Store #1842", fill=(40, 40, 40), font=font(30))
+for index, line in enumerate(["Cola          45", "Chips         30", "Bread         60"]):
+    draw.text((24, 150 + index * 40), line, fill=(40, 40, 40), font=font(28))
+draw.text((24, 300), "Total        135", fill=(20, 20, 20), font=font(34))
+image.save("/tmp/receipt-test.png")
 print("已產生 /tmp/receipt-test.png")
 PY
-file /tmp/receipt-test.png        # 預期：/tmp/receipt-test.png: PNG image data, ...
+file /tmp/receipt-test.png        # 預期：/tmp/receipt-test.png: PNG image data, 512 x 384, ...
+open /tmp/receipt-test.png        # 人眼看一下：RECEIPT／Target／Total 三行都要清楚
 ```
 
-> 📌 **為什麼建議用「真的看得懂的照片」**：fallback 之後走的是本機的完整入庫流程，
-> 要 VLM 真的看懂才會有照片進待決定牆。拿一張純色圖的話，真模型很可能三次都
-> 「看不懂」→ job 變 `failed` → 待決定牆不會 +1。
-> 那樣**仍然證明了 fallback 有效**（S3 清空、log 有 reason），只是最後一格對不上。
+> 📌 **用英文字，不要用中文字**：`ImageDraw.text()` 的內建字型畫不出中日韓文字
+> （會變成空白或方框），而 macOS 的 Arial 也沒有中文字。這張圖只是要讓模型看出
+> 「這是一張收據」，英文就夠了。
 >
-> 真的手邊沒有照片時，可以先產一張（但要有心理準備模型可能看不懂）：
+> 📌 **手邊有真收據照片的話更好**（fallback 之後要走完整的本機入庫流程，
+> 真照片比合成圖更容易被 VLM 看懂、照片才會真的進待決定牆）：
 >
 > ```bash
 > python - <<'PY'
-> from PIL import Image, ImageDraw
-> 圖 = Image.new("RGB", (600, 400), (250, 248, 240))
-> 筆 = ImageDraw.Draw(圖)
-> 筆.text((40, 40), "RECEIPT  2026-08-31  Cola 45  Chips 30  Total 75", fill=(30, 30, 30))
-> 圖.save("/tmp/receipt-test.png")
+> from PIL import Image
+>
+> # ⚠ 不要用 cp 把 .jpg 改名成 .png：curl 會照副檔名送 Content-Type: image/png，
+> #   裡面卻是 JPEG 位元組——S3 的鍵名、staging 的副檔名、落地原圖的副檔名
+> #   會全部對不上內容（§7 陷阱 12）。一定要真的轉檔。
+> Image.open("<你的一張真收據照片>.jpg").convert("RGB").save("/tmp/receipt-test.png")
 > print("已產生 /tmp/receipt-test.png")
 > PY
 > ```
 >
-> ⚠ 檔名是 `receipt-test.png`，副檔名要與內容一致（PNG 存成 `.png`）——
-> `POST /photos` 看的是 `Content-Type`（curl 依副檔名決定），不是檔案內容；
-> 不是 JPEG／PNG／PDF 的 Content-Type 才會 415。
+> ⚠ 副檔名要與內容一致（PNG 存成 `.png`）——`POST /photos` 看的是 `Content-Type`
+> （curl 依副檔名決定），不是檔案內容；不是 JPEG／PNG／PDF 的 Content-Type 才會 415。
+> 至於**檔名叫 `receipt-test.png` 只是為了人好認**，對閘門的判定沒有任何影響。
 
 #### 步驟 2：把 `.env` 切成 `assume` ＋ 30 秒逾時
 
-- [ ] 編輯 `/Users/linjunting/personalDocAI/.env`（**兩行**，等號兩邊不可以有空白）：
+- [x] 編輯 `/Users/linjunting/personalDocAI/.env`（**兩行**，等號兩邊不可以有空白）：
 
 ```ini
 CLOUD_ROUTE=assume
@@ -598,14 +706,16 @@ CLOUD_RESULT_TIMEOUT_SECONDS=30
   本次煙霧不想等五分鐘。已經有的話改值就好，**不要留兩行同名的**：`load_dotenv` 取最後一個，
   很容易看錯。）
 
-- [ ] **restart worker**（`get_cloud_route()` 是 worker 行程在呼叫的；行程只在啟動時讀 `.env`）：
+- [x] **restart worker**（`get_cloud_route()` 是 worker 行程在呼叫的；行程只在啟動時讀 `.env`）：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-docker compose -f compose.yaml restart worker
-# 開發模式（用 compose.dev.yaml 疊加起的）就多帶一個 -f：
-#   docker compose -f compose.yaml -f compose.dev.yaml restart worker
+# 2026-09-02 現況是**開發模式**（compose.dev.yaml 疊加起來的），所以帶兩個 -f：
+docker compose -f compose.yaml -f compose.dev.yaml restart worker
+# 若當下是常駐模式就少一個 -f：
+#   docker compose -f compose.yaml restart worker
 # 兩種寫法都只是「重啟現有容器」；.env 是 bind-mount 進去的，重啟就重讀。
+# ⚠ 只重啟 worker、**不要重啟 app**：app 一重啟，步驟 0 撥的雲端開關會回到 local。
 docker compose exec worker python -c \
   "from app.core import config; print('CLOUD_ROUTE =', config.CLOUD_ROUTE, '| 逾時 =', config.CLOUD_RESULT_TIMEOUT_SECONDS)"
 ```
@@ -620,25 +730,34 @@ CLOUD_ROUTE = assume | 逾時 = 30
 
 #### 步驟 3：先確認 S3 與兩條佇列都是空的（乾淨的起點）
 
-- [ ] 執行（`unset` 那一行不能省：不是因為 `list-objects-v2` 跑不過——`.env` 那把
+- [x] 執行（`unset` 那一行不能省：不是因為 `list-objects-v2` 跑不過——`.env` 那把
       `personaldocai-mac` 的 key **有** bucket ARN 的 `s3:ListBucket`（總覽 §10.2 P，82 §4.6.1
       的 `ListMailboxBucket`），這條用哪一把都跑得過——而是後面 `purge-queue` 這類管理指令
-      只有 admin 才有權限，本檔一律讓 CLI 用 `aws configure` 設的 `personaldocai-admin`。
+      只有 admin 才有權限。
+      ⚠ **本檔的 `aws` 指令一律不帶 `--profile`**：`~/.aws` 裡**只有 `[default]`**，
+      而它的身分就是 admin（`aws sts get-caller-identity --query Arn --output text`
+      結尾是 `user/personaldocai-admin`）。**沒有**一個叫 `personaldocai-admin` 的 profile，
+      寫 `--profile personaldocai-admin` 會直接 `ProfileNotFound`。
+      所以「用哪個身分」完全取決於**環境變數裡有沒有那兩把 key**：
+      `source .env` 之後就是 mac 那把（權限小），`unset` 之後才是 default 的 admin。
       ⚠ `unset` 只影響**你這個終端機**；容器裡的 worker 仍然照 `.env` 用 `personaldocai-mac`
-      那把最小權限 key 去 Put／Send／Receive——那正是要的，**不要**進容器去 unset 任何東西）：
+      那把最小權限 key 去 Put／Send／Receive——那正是要的，**不要**進容器去 unset 任何東西。
+      （這裡之所以還是要 `source .env`，是因為要拿 `$S3_BUCKET`／兩個佇列 URL／`$AWS_REGION`
+      這四個**值**；載進來之後立刻把兩把 key 拿掉就好。）：
 
 ```bash
 set -a; . ./.env; set +a
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+aws sts get-caller-identity --query Arn --output text   # 結尾要是 user/personaldocai-admin
 aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ \
   --region "$AWS_REGION" --query 'KeyCount'
 ```
 
-**預期輸出：** `0`
+**預期輸出：** 第一行是 admin 的 Arn；第二行是 `0`
 
 #### 步驟 4：上傳（**要看到 202**）
 
-- [ ] 執行：
+- [x] 執行：
 
 ```bash
 curl -k -s -w '\n%{http_code}\n' -F "file=@/tmp/receipt-test.png" \
@@ -652,7 +771,7 @@ curl -k -s -w '\n%{http_code}\n' -F "file=@/tmp/receipt-test.png" \
 202
 ```
 
-- [ ] 把 `job_id` 記下來（後面幾步要用）：
+- [x] 把 `job_id` 記下來（後面幾步要用）：
 
 ```bash
 JOB_ID=<剛剛那一串>
@@ -670,7 +789,7 @@ JOB_ID=<剛剛那一串>
 
 #### 步驟 5：**30 秒內**去看 S3 與佇列（動作要快）
 
-- [ ] 執行（建議先把這幾行貼好，上傳完馬上按 Enter）：
+- [x] 執行（建議先把這幾行貼好，上傳完馬上按 Enter）：
 
 ```bash
 aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix "documents/$JOB_ID/" \
@@ -683,7 +802,7 @@ aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix "documents/$JOB_ID/" \
 documents/8f3c.../context.json	documents/8f3c.../input.png
 ```
 
-- [ ] 看 jobs 佇列有一則、results 佇列 0 則：
+- [x] 看 jobs 佇列有一則、results 佇列 0 則：
 
 ```bash
 for URL in "$SQS_JOBS_QUEUE_URL" "$SQS_RESULTS_QUEUE_URL"; do
@@ -709,7 +828,7 @@ done
 > 📌 **這一格就是 design6 §0「丙」的具體證據**：
 > jobs 佇列有一則「來拿東西」的紙條，results 佇列還是空的（因為沒人做事）。
 
-- [ ] （可選，但很值得看一眼）把那則訊息的 body 印出來，親眼確認**裡面沒有位元組**：
+- [x] （可選，但很值得看一眼）把那則訊息的 body 印出來，親眼確認**裡面沒有位元組**：
 
 ```bash
 aws sqs receive-message --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION" \
@@ -728,7 +847,7 @@ aws sqs receive-message --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"
 
 #### 步驟 6：等超過 30 秒，看 fallback 的那一行 log
 
-- [ ] 執行：
+- [x] 執行：
 
 ```bash
 sleep 40
@@ -756,13 +875,15 @@ warning，沒被這條 grep 撈到是正常的。）
 | 看到什麼 | 意思 | 怎麼修 |
 |---|---|---|
 | 只有 `fallback=local reason=remote_unavailable`，**沒有** `route=cloud` 那行 | `CLOUD_ROUTE` 還是 `off`（restart 沒生效，或 `.env` 沒存檔）：`CloudRouteOff.available()` 恆 False，閘門雖判 NON_SENSITIVE 也直接 fallback。`assume` 模式的探測是 `AlwaysRunning`，**不可能**出現這個 reason | 回步驟 2，用那條 `docker compose exec worker python -c …` 確認印出 `assume` |
-| `route=local verdict=UNCERTAIN` | 檔名沒有命中非敏感關鍵字 | 確認檔名含 `receipt`；對照 Phase 74 的 `NON_SENSITIVE_KEYWORDS` |
+| `route=local verdict=UNCERTAIN` | 閘門**看不清楚**這張圖（`sensitive=false` 但 `confident=false`，或讀檔／縮圖／模型呼叫失敗）。**與檔名無關**——`VlmGate.classify()` 第一行就 `del filename` | 先看 worker log 有沒有 `隱私閘門判斷失敗，當作 UNCERTAIN` 那類 warning（每條失敗路徑都會留一行）；沒有的話就是模型真的沒把握 → 換一張字更大更清楚的圖（步驟 1 那段已經畫成 512 寬、字級 28 以上），或改用一張真收據照片 |
+| `route=local verdict=SENSITIVE`（可是你傳的是收據） | 閘門真的覺得圖裡有個人資訊（例如你用的真收據上有地址或電話） | 換一張沒有個資的收據；或直接接受——**這一格證明的是閘門會擋，不是壞掉**，但那樣就驗不到雲端那條路，逾時煙霧要另外用一張過得了閘門的圖重做 |
 | `route=cloud …` 之後接 `fallback=local reason=submit_failed` | S3 或 SQS 送出失敗（多半是 `.env` 的三個資源名稱空的或打錯，或 IAM 權限不足） | `python scripts/aws_check.py s3 sqs` 先跑一次；`docker compose logs worker --tail=100` 看 `送去雲端失敗` 那行底下的 traceback |
 | 完全沒有 log | worker 沒拿到任務 | `docker compose logs worker --tail=50` 看有沒有連線錯誤 |
 
 #### 步驟 7：等本機看完圖，確認照片真的入庫、S3 被清乾淨
 
-- [ ] 等 worker 做完（本機 gemma4 要 64〜88 秒；頁首開關撥到雲端的話約 2 秒）：
+- [x] 等 worker 做完（步驟 0 已把開關撥到雲端，看圖約 1 秒；忘了撥就是本機 gemma4 的 64〜88 秒。
+      **embedding 那一段一律本機**，所以總時間至少還要加上 bge-m3 的幾秒）：
 
 ```bash
 curl -sk https://127.0.0.1:8000/ingest-jobs | python3 -m json.tool
@@ -778,16 +899,16 @@ curl -sk https://127.0.0.1:8000/ingest-jobs | python3 -m json.tool
 }
 ```
 
-- [ ] 資料庫確實多了一列：
+- [x] 資料庫確實多了一列：
 
 ```bash
-psql -d PersonalDocAI -c "select id, category, left(text, 40) as 文字 from photo order by id desc limit 1"
+psql -d PersonalDocAI -c "select id, category, left(text, 40) as text_head from photo order by id desc limit 1"
 ```
 
 **預期輸出：** 最新那一列就是剛剛上傳的照片（`category` 通常是「未分類」——
 上傳一律先進收件箱，這是增量一以來的規則）。
 
-- [ ] **S3 已經被清乾淨**（fallback 之前 `cloud.cleanup()` 會盡力刪掉三個物件）：
+- [x] **S3 已經被清乾淨**（fallback 之前 `cloud.cleanup()` 會盡力刪掉三個物件）：
 
 ```bash
 aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ \
@@ -796,7 +917,7 @@ aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ \
 
 **預期輸出：** `0`
 
-- [ ] 待決定牆上看得到它（人工）：
+- [x] 待決定牆上看得到它（人工）：
 
 ```bash
 open "https://localhost:8000/ui/pending.html"
@@ -812,22 +933,55 @@ open "https://localhost:8000/ui/pending.html"
 
 ### 4.6 敏感檔煙霧（零 S3）
 
-- [ ] 準備一張檔名含**敏感關鍵字**的圖（Phase 74 的 `SENSITIVE_KEYWORDS`）：
+> ⚠ **本節同樣由 controller 親自執行**（裁決 R3）。
+
+- [x] 準備一張**內容**是證件的圖（⛔ **不可以** `cp /tmp/receipt-test.png /tmp/身分證.png`
+      ——閘門不看檔名，改名只會得到跟上一節一樣的 `NON_SENSITIVE`，等於什麼都沒驗到）：
 
 ```bash
-cp /tmp/receipt-test.png /tmp/身分證.png
+cd /Users/linjunting/personalDocAI && source .venv/bin/activate
+python - <<'PY'
+from PIL import Image, ImageDraw, ImageFont
+
+
+def font(size):
+    try:
+        return ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", size)
+    except OSError:
+        return ImageFont.load_default(size=size)
+
+
+# 全部是**編造的假資料**，不要用任何一個人的真證件。
+# 內容要打中 PRIVACY_PROMPT 列的例子（身分證件、健保卡、駕照、護照…）。
+image = Image.new("RGB", (512, 324), (238, 244, 250))
+draw = ImageDraw.Draw(image)
+draw.rectangle((8, 8, 503, 315), outline=(60, 90, 140), width=3)
+draw.text((28, 28), "NATIONAL ID CARD", fill=(20, 30, 60), font=font(36))
+draw.text((28, 96), "Name: WANG XIAO MING", fill=(30, 30, 30), font=font(26))
+draw.text((28, 140), "ID No: A123456789", fill=(30, 30, 30), font=font(26))
+draw.text((28, 184), "Date of birth: 1990-01-01", fill=(30, 30, 30), font=font(26))
+draw.text((28, 228), "Address: 100 Test Road, Taipei", fill=(30, 30, 30), font=font(24))
+image.save("/tmp/id-card-test.png")
+print("已產生 /tmp/id-card-test.png")
+PY
+file /tmp/id-card-test.png        # 預期：PNG image data, 512 x 324, ...
+open /tmp/id-card-test.png        # 人眼看一下：五行字都要清楚
 ```
 
-- [ ] 上傳：
+- [x] 上傳：
 
 ```bash
-curl -k -s -w '\n%{http_code}\n' -F "file=@/tmp/身分證.png" \
+curl -k -s -w '\n%{http_code}\n' -F "file=@/tmp/id-card-test.png" \
   https://127.0.0.1:8000/photos
 ```
 
-**預期輸出：** `202`（body 的 `filename` 是 `身分證.png`）
+**預期輸出：** `202`（body 的 `filename` 是 `id-card-test.png`）
 
-- [ ] **立刻**看 S3（這一次應該**什麼都不會出現**）：
+> 📌 **檔名故意取成 `id-card-test.png` 而不是 `身分證.png`**：
+> 這一節要證明的是「**內容**敏感就擋得下來」。檔名本來就不影響判定
+> （`del filename`），取個中性一點的名字反而能順便說明這件事。
+
+- [x] **立刻**看 S3（這一次應該**什麼都不會出現**）：
 
 ```bash
 aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ \
@@ -836,7 +990,7 @@ aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ \
 
 **預期輸出：** `0`（★ **敏感檔零 S3 呼叫** ——design6 §8 錯誤表第 1 列、§6 第 1 列）
 
-- [ ] 看 log：
+- [x] 看 log：
 
 ```bash
 docker compose logs --tail=100 worker | grep -E "route=|fallback="
@@ -849,23 +1003,29 @@ docker compose logs --tail=100 worker | grep -E "route=|fallback="
 worker-1  | [2026-08-31 22:48:10,077: INFO/ForkPoolWorker-2] job 5d2e... route=local verdict=SENSITIVE
 ```
 
-- [ ] 等它做完，照片一樣會進待決定牆（本機路完全照舊）。
+- [x] 等它做完，照片一樣會進待決定牆（本機路完全照舊）。
 
 **做錯了怎麼退回：** 看到 `verdict=UNCERTAIN` 而不是 `SENSITIVE` →
-檔名沒命中關鍵字。**注意：`UNCERTAIN` 也是走本機、也是零 S3**，
+模型沒把握（`sensitive=false, confident=false`），或讀檔／縮圖／呼叫模型的某一步失敗
+（那三條路各會留一行 `隱私閘門判斷失敗，當作 UNCERTAIN` 的 warning，先去 log 裡找）。
+**注意：`UNCERTAIN` 也是走本機、也是零 S3**（D3：不確定當敏感辦），
 所以「零 S3」這個結論仍然成立，只是沒驗到「敏感」那一條。
-想驗準一點就對照 Phase 74 的 `SENSITIVE_KEYWORDS` 挑一個確定會中的字。
+想驗準一點就把圖畫得更像證件（照 `app/services/privacy_gate.py` 的 `PRIVACY_PROMPT`
+列出來的例子挑一種：身分證件、健保卡、駕照、護照、病歷、處方箋、薪資單、
+銀行對帳單、信用卡卡面、報稅資料、含個人地址或電話的信件）。
 
 ---
 
 ### 4.7 收尾①：把 jobs 佇列裡的殘訊息清掉
+
+> ⚠ **本節由 controller 親自執行**（裁決 R3；`purge-queue` 是不可逆的管理操作）。
 
 > 步驟 5 那則「來拿東西」的紙條**還在佇列裡**（沒有任何工人消費它）。
 > 不清掉的話，Phase 88 工人第一次啟動時會拿到它，然後發現 S3 上的 input 已經不在了
 > ——雖然工人有處理這種情況（總覽 §2.6 第 2 步：只刪訊息、什麼都不寫），
 > 但那會在 log 裡留下一則莫名其妙的紀錄，除錯時很干擾。
 
-- [ ] 執行：
+- [x] 執行：
 
 ```bash
 aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"
@@ -873,7 +1033,7 @@ aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"
 
 **預期輸出：** 完全沒有輸出。
 
-- [ ] 等一分鐘再確認：
+- [x] 等一分鐘再確認：
 
 ```bash
 sleep 60
@@ -899,16 +1059,18 @@ done
 
 ---
 
-### 4.8 收尾②：把 `.env` 改回 `off`
+### 4.8 收尾②：把 `.env` 改回 `off`、開關撥回「本機」
 
-- [ ] 編輯 `/Users/linjunting/personalDocAI/.env`，把兩行改回：
+> ⚠ **本節由 controller 親自執行**（裁決 R3／R5）。這是最容易忘的一節。
+
+- [x] 編輯 `/Users/linjunting/personalDocAI/.env`，把兩行改回：
 
 ```ini
 CLOUD_ROUTE=off
 CLOUD_RESULT_TIMEOUT_SECONDS=300
 ```
 
-- [ ] restart 並確認：
+- [x] restart 並確認：
 
 ```bash
 cd /Users/linjunting/personalDocAI
@@ -923,6 +1085,20 @@ docker compose exec worker python -c \
 CLOUD_ROUTE = off | 逾時 = 300
 ```
 
+- [x] **把頁首的 AI 開關撥回「本機」**（步驟 0 撥去雲端的那一顆；`local` 是預設值，
+      不撥回來的話之後每一次上傳都會走 Ollama Cloud、算的是別人的錢）：
+
+```bash
+curl -sk -X PUT https://127.0.0.1:8000/settings/ai-backend \
+  -H 'Content-Type: application/json' -d '{"backend":"local"}'
+curl -sk https://127.0.0.1:8000/settings/ai-backend
+```
+
+**預期輸出：** 兩行都是 `{"backend":"local","cloud_configured":true}`
+
+> 📌 這個狀態本來就存在記憶體、重啟 app 就會回 `local`——但**不要靠重啟去還原**：
+> 現在是開發模式（`--reload`），app 什麼時候重啟不由你決定，中間那段時間就是雲端在跑。
+
 > **為什麼一定要改回來**（總覽 §10.1 追認項 l）：
 > `assume` **不做任何探測**。留著它的話，之後每一張非敏感照片都會先送上 S3、
 > 然後傻傻等到逾時才 fallback——**每張白白多花 5 分鐘**，而且 S3 上會一直有殘骸進出。
@@ -936,8 +1112,18 @@ CLOUD_ROUTE = off | 逾時 = 300
 > `LAUNCH.md` 與 `README.md` 自 2026-08-27 起是**英文**（總覽 §3.8）。
 > 這一節要放在 §9 Monitoring and logs 裡，**接在 "Redis layer" 之後、"app layer" 之前**
 > ——順序是「由外而內」：Docker → Celery/worker → Redis → **S3/SQS** → app。
+>
+> ✅ **2026-09-02 實查**：`LAUNCH.md` 共 498 行，`## 9. Monitoring and logs` 在 L296，
+> 底下依序是 `### Docker layer (are the services alive)`（L309）、
+> `### Celery / worker layer (what is happening to the photos)`（L319）、
+> `### Redis layer (the queue and progress data themselves)`（L338）、
+> `### app layer (the ask flow and the camera)`（L360）。
+> **§9 已經存在，不必新增章節**；下面那個「插在 `### app layer` 之前」的錨點也對得上
+> （行號會隨編輯漂移，動手前用 `grep -n "### app layer" LAUNCH.md` 再確認一次）。
+>
+> ⚠ **這一節是實作 subagent 做得了的**（純文件、零 AWS），不必等 controller。
 
-- [ ] 打開 `/Users/linjunting/personalDocAI/LAUNCH.md`，
+- [x] 打開 `/Users/linjunting/personalDocAI/LAUNCH.md`，
       在 `### app layer (the ask flow and the camera)` 這一行的**前面**插入：
 
 ````markdown
@@ -972,8 +1158,9 @@ How to read it:
 
 - `documents/` empty and both queues at 0 = idle. That is the normal resting state.
 - `route=local verdict=SENSITIVE` or `verdict=UNCERTAIN` — the privacy gate kept the file
-  on this machine. Nothing was sent to AWS. That is the intended default for anything
-  the filename does not clearly mark as harmless.
+  on this machine. Nothing was sent to AWS. The gate looks at the **image itself** (it is
+  shown to a vision model, one short question), never at the filename, and anything it is
+  not confident about stays here. That is the intended default.
 - `route=cloud verdict=NON_SENSITIVE` — it went to S3 and onto the jobs queue.
 - `fallback=local reason=...` — it tried the cloud route and came back. Four reasons:
   `remote_unavailable` (the instance is not running, or `CLOUD_ROUTE=off`),
@@ -1000,22 +1187,32 @@ number lags a send or a delete by up to a minute. Wait before concluding anythin
 
 ---
 
-### 4.10 commit
+### 4.10 不 commit——記快照
 
-> ⚠ **總覽 §7 鐵律 12：commit 節奏由產品負責人決定。** 他沒指示前先不要 commit。
+> ⚠ **總覽 §7 鐵律 12：commit 節奏由產品負責人決定。**
+> 2026-09-02 的指示是**不 commit**（裁決 R0）——**不要 `git add`、不要 `git commit`、
+> 不要 `git stash`、不要 `git mv`**。審查改用「工作樹快照的 tree SHA 相減」。
 
-- [ ] **僅在產品負責人指示 commit 時**執行：
+- [x] 收工時記下這一份工作樹的快照（**不建 commit、不動 index**，只在物件庫多一顆 tree）：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-git add app/dependencies.py tests/unit/test_dependencies_cloud_unit.py \
-        tests/unit/test_cloud_ingest_unit.py LAUNCH.md
-git commit -m "feat: Phase 86 真 AWS 雲端路接線——get_cloud_route() 補 assume 分支（AwsMailbox＋AlwaysRunning＋timeout 讀 config，boto3 import 寫在函式內；ec2 仍留給 Phase 89、打錯字仍 ValueError），+2 tests（早綁定取原版函式、側錄 CloudRoute 驗建構參數）、拆掉 Phase 77 鬧鐘的 assume 半邊（ec2 半邊與 cloudy→ValueError 保留）；真 AWS 逾時煙霧通過（非敏感→S3 有 input＋context、jobs 1 則 results 0 則→30 秒後 fallback=local reason=result_timeout→本機入庫、S3 清空；敏感→零 S3、route=local verdict=SENSITIVE）；LAUNCH.md §9 新增 S3/SQS layer 小節；.env 已改回 CLOUD_ROUTE=off；端點仍 22"
-git log -1 --stat
+.superpowers/sdd/phase0902-1/snapshot-tree      # 印出一顆 40 字元的 tree SHA，記進 ledger
+git status --short -- app tests LAUNCH.md       # 看變更恰為下面那四個檔
 ```
 
-**預期：** 只列出 `app/dependencies.py`、`tests/unit/test_dependencies_cloud_unit.py`、
-`tests/unit/test_cloud_ingest_unit.py`、`LAUNCH.md` 四個檔（`.env` 不入版控）。
+**預期：** `git status --short` 恰好列出四個檔——
+
+```text
+ M app/dependencies.py
+ M tests/unit/test_cloud_ingest_unit.py
+?? tests/unit/test_dependencies_cloud_unit.py
+ M LAUNCH.md
+```
+
+（`.env` 不入版控所以不會出現；`data/` 被 `.gitignore` 擋掉也不會出現。
+review 時用 `git diff -U10 <開工的 tree> <收工的 tree>`，
+或 `.superpowers/sdd/phase0902-1/review-package-tree <A> <B> <輸出檔>`。）
 
 ---
 
@@ -1035,7 +1232,7 @@ git log -1 --stat
         ▼                     ▼                     ▼
   CloudRouteOff()      CloudRoute(               CloudRoute(
     available()          AwsMailbox(...),          AwsMailbox(...),
-    恆 False             AlwaysRunning(),          Ec2Probe(信箱, 實例 id,
+    恆 False             AlwaysRunning(),          Ec2Probe(mailbox, instance_id,
     其餘方法 raise       timeout_seconds=            ttl_seconds=60),
                            config.CLOUD_          timeout_seconds=…)
                            RESULT_TIMEOUT_
@@ -1057,7 +1254,9 @@ git log -1 --stat
            └─ 回 202 {"job_id","filename","content_type"}         ← 使用者只看到這個
 
   t≈0s     worker 撿到 job → run_gated_ingest_job()
-           ├─ gate.classify(filename="receipt-test.png") → NON_SENSITIVE
+           ├─ gate.classify(...)：讀圖 → 縮到長邊 512 → VLM 短問 → NON_SENSITIVE
+           │     ⚠ 判定看的是**圖的內容**，`del filename`——檔名叫什麼都一樣
+           │     （開關撥雲端約 0.7 秒；本機約 100 秒）
            ├─ cloud.available() → AlwaysRunning → True
            └─ log: route=cloud verdict=NON_SENSITIVE
 
@@ -1075,14 +1274,15 @@ git log -1 --stat
            └─ log: fallback=local reason=result_timeout      ← ★ 契約字樣
 
   t≈31s    run_ingest_job()  ← 完全就是增量五那條路
-           ├─ 本機看圖（gemma4 64〜88 秒；頁首開關撥雲端約 2 秒）
+           ├─ 看圖（開關撥雲端約 0.8 秒；本機 gemma4 要 64〜88 秒）
            ├─ 本機 embed（bge-m3，永遠本機）
            ├─ INSERT photo → 存原圖 → 產縮圖 → UPDATE 路徑
            ├─ 刪 data/staging/{job_id}.png
            └─ store.delete(job_id)     ＝「成功」的唯一寫法
 
-  t≈120s   ✅ 待決定牆 +1、進度面板那一列自己消失、S3 是空的、job 不見了
-           ⚠ jobs 佇列裡那一則**還在**（沒人消費）→ §4.7 用 purge 清掉
+  t≈40s    ✅ 待決定牆 +1、進度面板那一列自己消失、S3 是空的、job 不見了
+  （本機   ⚠ jobs 佇列裡那一則**還在**（沒人消費）→ §4.7 用 purge 清掉
+   ≈120s）
 
   ★ 使用者從頭到尾看到的：202 → 進度面板 → 待決定牆。與增量五逐字相同。
     整條雲端路壞掉（根本沒有工人），他完全不知道——這就是 D10 要的效果。
@@ -1094,12 +1294,17 @@ git log -1 --stat
 
 > 📌 本節所有 `aws` 指令都假設你還在 §4.5 步驟 3 那個終端機（已經 `set -a; . ./.env; set +a`
 > 載入 `$S3_BUCKET`／兩個佇列 URL／`$AWS_REGION`，**而且** `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY`
-> 讓 CLI 用 `personaldocai-admin`）。換了視窗就把那三行再跑一次；`aws sts get-caller-identity --query Arn --output text`
+> 讓 CLI 用 default profile 的 admin 身分——**不帶 `--profile`**，`~/.aws` 只有 `[default]`）。
+> 換了視窗就把那三行再跑一次；`aws sts get-caller-identity --query Arn --output text`
 > 的結尾要是 `user/personaldocai-admin`。這只管你的 shell，worker 容器一律不動。
+>
+> ⚠ **凡是帶 `aws`、改 `.env`、`restart`、上傳的條目，都由 controller 親自核對**（裁決 R3）；
+> 實作 subagent 負責的是「不帶 aws」的那幾條（測試、grep、ruff、`git status`）。
 
-- [ ] **開工基線已實查**：`pytest -q` ＝ 632 passed ＋ 0 skipped
+- [x] **開工基線已實查**：`pytest -q` ＝ 640 passed ＋ 0 skipped
+      （640 ＝ 2026-09-02 實查的 624 ＋ Phase 83 的 16；總覽 §9 寫的 632 已過期）
 
-- [ ] **新測試 2 顆全綠**
+- [x] **新測試 2 顆全綠**
 
   ```bash
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -1107,7 +1312,7 @@ git log -1 --stat
   ```
   預期最後一行：`2 passed`
 
-- [ ] **這兩顆真的在測原版函式**（把 `assume` 那一支暫時改回
+- [x] **這兩顆真的在測原版函式**（把 `assume` 那一支暫時改回
       `raise NotImplementedError("x")`，跑一次應該是 **2 failed**；確認會紅之後改回來）
 
   ```bash
@@ -1116,7 +1321,7 @@ git log -1 --stat
   這一招驗的是「早綁定有沒有生效」——兩顆若在改壞之後仍然綠，
   代表你拿到的是安全網的假件，測試等於沒有在測（見 §7 陷阱 3）。
 
-- [ ] **Phase 77 的鬧鐘只剩 `ec2` 那半，而且那顆測試仍然綠（含「打錯字要炸」）**
+- [x] **Phase 77 的鬧鐘只剩 `ec2` 那半，而且那顆測試仍然綠（含「打錯字要炸」）**
 
   ```bash
   grep -n '"assume", "ec2"' tests/unit/test_cloud_ingest_unit.py || echo "OK：assume 那半已拆"
@@ -1127,7 +1332,7 @@ git log -1 --stat
   （它同時驗了 `off` → `CloudRouteOff` 與 `cloudy` → `ValueError`——後者證明本 phase
   沒把「打錯字要當場炸」改壞）。
 
-- [ ] **`get_cloud_route()` 的 `assume` 分支已實作，`ec2` 仍是 `NotImplementedError`**
+- [x] **`get_cloud_route()` 的 `assume` 分支已實作，`ec2` 仍是 `NotImplementedError`**
 
   ```bash
   grep -n -A 60 "def get_cloud_route" app/dependencies.py | grep -E "assume|ec2|NotImplementedError|AwsMailbox|AlwaysRunning|raise ValueError"
@@ -1136,7 +1341,7 @@ git log -1 --stat
   `ec2` 那一支仍然是 `raise NotImplementedError("CLOUD_ROUTE=ec2 要等 Phase 89 …")`；
   最後一行仍是 `raise ValueError(...)`（`-A 60` 是因為 docstring 很長，30 行會被截掉）。
 
-- [ ] **boto3 相關的 import 寫在函式裡面，不在檔案最上面**
+- [x] **boto3 相關的 import 寫在函式裡面，不在檔案最上面**
 
   ```bash
   grep -nE "^(from|import) .*(boto3|aws_mailbox)" app/dependencies.py || echo "OK：檔案最上面沒有"
@@ -1144,32 +1349,33 @@ git log -1 --stat
   ```
   預期：第一條印 `OK：檔案最上面沒有`；第二條命中一行（**有縮排**＝在函式裡）。
 
-- [ ] **`boto3` 仍然只在 `aws_mailbox.py`**（本 phase 沒有破壞 Phase 83 的規則）
+- [x] **`boto3` 仍然只在 `aws_mailbox.py`**（本 phase 沒有破壞 Phase 83 的規則）
 
   ```bash
   pytest "tests/unit/test_aws_mailbox_unit.py::test_boto3只在aws_mailbox裡出現" -q
   ```
   預期：`1 passed`
 
-- [ ] **全量測試 ＝ 開工基線 ＋ 2**
+- [x] **全量測試 ＝ 開工基線 ＋ 2**
 
   ```bash
   pytest -q
   ```
-  預期：`634 passed`，**0 skipped**
+  預期：`642 passed`（fix wave 後實查 **644**），**0 skipped**
+  📌 2026-09-02 review fix wave 之後：**644**（本檔 +1、Phase 83 +1）。
 
-- [ ] **零外部依賴實證（三個死埠一起指，顆數不變）**
+- [x] **零外部依賴實證（三個死埠一起指，顆數不變）**
 
   ```bash
   AWS_ENDPOINT_URL=http://127.0.0.1:9 \
   CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
   OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
   ```
-  預期：`634 passed`（與上一條一模一樣）。
+  預期：`642 passed`（fix wave 後實查 **644**）（與上一條一模一樣）。
   ★ 這一條在本 phase 特別重要：`get_cloud_route()` 現在**有能力**建出真的 AWS client，
   顆數不變就代表第五道安全網真的擋住了。
 
-- [ ] **端點仍是 22 支、openapi 零 DELETE**
+- [x] **端點仍是 22 支、openapi 零 DELETE**
 
   ```bash
   pytest tests/integration/test_nav_header.py::test_端點數仍為22 \
@@ -1177,16 +1383,16 @@ git log -1 --stat
   ```
   預期：`2 passed`
 
-- [ ] **★ 真 AWS 逾時煙霧四格全對**（人工；證據就是 §4.5 的輸出）
+- [x] **★ 真 AWS 逾時煙霧四格全對**（人工，**controller 親自執行**；證據就是 §4.5 的輸出）
 
   | 格 | 要看到什麼 |
   |---|---|
   | 上傳 | `POST /photos` 回 **202**，body 恰三鍵（**不是** 5xx——design6 §0 禁止第 6 條） |
   | 送出當下 | S3 有 `documents/{job_id}/context.json` 與 `input.png` 兩個物件；jobs 佇列 `ApproximateNumberOfMessages` ≈ **1**；results 佇列 **0** |
-  | 30 秒後 | worker log 有 `route=cloud verdict=NON_SENSITIVE` **與** `fallback=local reason=result_timeout` 兩行 |
+  | 30 秒後 | worker log 有 `route=cloud verdict=NON_SENSITIVE` **與** `fallback=local reason=result_timeout` 兩行（`verdict` 是**看圖內容**判的，不是檔名） |
   | 做完 | `GET /ingest-jobs` 的 `jobs` 陣列裡沒有那一筆（＝成功）；`photo` 表 **+1**；`documents/` 的 `KeyCount` 回到 **0**；待決定牆 +1 |
 
-- [ ] **★ 敏感檔煙霧：零 S3**（人工）
+- [x] **★ 敏感檔煙霧：零 S3**（人工，**controller 親自執行**；圖的**內容**是證件，不是靠檔名）
 
   ```bash
   aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ \
@@ -1196,7 +1402,7 @@ git log -1 --stat
   預期：`KeyCount` 是 `0`；log **只有** `route=local verdict=SENSITIVE`，
   **沒有** `fallback=`（它根本沒去試雲端）。
 
-- [ ] **兩條佇列都清乾淨了**（等一分鐘再看）
+- [x] **兩條佇列都清乾淨了**（等一分鐘再看）
 
   ```bash
   sleep 60
@@ -1208,7 +1414,7 @@ git log -1 --stat
   ```
   預期：四個數字全部 `"0"`
 
-- [ ] **★ `.env` 已改回 `off`**（最容易忘的一條）
+- [x] **★ `.env` 已改回 `off`、頁首開關已撥回 `local`**（最容易忘的一條；**controller 親自執行**）
 
   ```bash
   grep -n '^CLOUD_ROUTE=' /Users/linjunting/personalDocAI/.env
@@ -1219,7 +1425,12 @@ git log -1 --stat
   預期：`.env` 是 `CLOUD_ROUTE=off` 與 `CLOUD_RESULT_TIMEOUT_SECONDS=300`；
   容器印出 `off 300`。
 
-- [ ] **`LAUNCH.md` 有新小節，而且是英文**
+  ```bash
+  curl -sk https://127.0.0.1:8000/settings/ai-backend
+  ```
+  預期：`{"backend":"local","cloud_configured":true}`
+
+- [x] **`LAUNCH.md` 有新小節，而且是英文**
 
   ```bash
   grep -n "S3 / SQS layer" /Users/linjunting/personalDocAI/LAUNCH.md
@@ -1227,7 +1438,7 @@ git log -1 --stat
   ```
   預期：兩行都命中，而且 **`S3 / SQS layer` 的行號比 `### app layer` 小**（放在它前面）。
 
-- [ ] **專案的 `data/` 沒被弄髒**（煙霧上傳的兩張照片是**正常入庫**，
+- [x] **專案的 `data/` 沒被弄髒**（煙霧上傳的兩張照片是**正常入庫**，
       不算弄髒；要檢查的是 staging 有沒有孤兒）
 
   ```bash
@@ -1237,14 +1448,14 @@ git log -1 --stat
   git status --short data/                 # 預期：零輸出（.gitignore 擋掉了）
   ```
 
-- [ ] **格式與 lint 過**
+- [x] **格式與 lint 過**
 
   ```bash
   ruff format --check app tests scripts && ruff check app tests scripts
   ```
   預期：`All checks passed!`
 
-- [ ] **機密沒有進 repo**
+- [x] **機密沒有進 repo**
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -1255,17 +1466,23 @@ git log -1 --stat
   ```
   預期：兩行都印 `OK：…`
 
-- [ ] **`docs/spec/` 一字未動**
+- [x] **`docs/spec/` 一字未動**
 
   ```bash
   git status --short docs/spec/
   ```
   預期：零輸出
 
-- [ ] **git 收尾符合現行節奏**：產品負責人已指示 commit → §4.10 已執行；
-      未指示（現行預設）→ 跳過 commit，改核對
-      `git status --short -- app tests LAUNCH.md` 的變更恰為那四個檔
-      （`app/dependencies.py`、兩個 `tests/unit/` 的檔、`LAUNCH.md`）。
+- [x] **git 收尾＝不 commit、記快照**（2026-09-02 的指示；裁決 R0）
+
+  ```bash
+  cd /Users/linjunting/personalDocAI
+  git status --short -- app tests LAUNCH.md    # 變更恰為那四個檔
+  .superpowers/sdd/phase0902-1/snapshot-tree   # 收工的 tree SHA，記進 ledger
+  ```
+  預期：`git status --short` 恰四行（`app/dependencies.py`、兩個 `tests/unit/` 的檔、
+  `LAUNCH.md`）；**沒有** `git add`／`git commit`／`git stash` 的痕跡
+  （`git log -1 --format=%H` 仍然是開工時的那顆）。
 
 ---
 
@@ -1294,7 +1511,7 @@ git log -1 --stat
    **原因：** 測試裡寫成 `dependencies.get_cloud_route()`（模組屬性存取），
    於是拿到的是第五道安全網 `wire_fake_cloud` 換上去的假件——它永遠回 `CloudRouteOff()`。
    **正解：** 一定要用檔案最上面的
-   `from app.dependencies import get_cloud_route as 原本的get_cloud_route`（早綁定）。
+   `from app.dependencies import get_cloud_route as real_get_cloud_route`（早綁定）。
    §6 驗收清單有一條「故意改壞看它紅」就是在驗這件事。
    ⚠ 注意這與產品碼的規則**相反**：產品碼要用模組屬性存取（才 monkeypatch 得到），
    這裡是刻意要「換不到」。測試的 docstring 一定要寫清楚，免得日後被「順手改成一致」。
@@ -1321,19 +1538,27 @@ git log -1 --stat
    **正解：** `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY` 之後再跑，
    並用 `aws sts get-caller-identity --query Arn --output text` 確認是
    `:user/personaldocai-admin`。
+   ⚠ **不要試著用 `--profile personaldocai-admin` 解決**：`~/.aws` 裡只有 `[default]`，
+   沒有那個名字的 profile，只會多拿到一個 `ProfileNotFound`。
+   身分是靠「環境變數裡有沒有那兩把 key」決定的，不是靠 profile 名字。
 
 7. **症狀：** log 印的是 `route=local verdict=UNCERTAIN`，不是 `NON_SENSITIVE`。
-   **原因：** 檔名沒有命中 Phase 74 的 `NON_SENSITIVE_KEYWORDS`
-   （例如你把檔案叫 `test.png`、或叫 `IMG_1234.png`）。
-   **正解：** 檔名要含明確的非敏感關鍵字（例如 `receipt-test.png`）。
+   **原因：** 閘門看不清楚這張圖，**跟檔名一點關係都沒有**——`VlmGate.classify()`
+   第一行就是 `del filename`（2026-09-01 改判；`NON_SENSITIVE_KEYWORDS` 這個名字
+   在現行程式碼裡**已經不存在**，看到還這樣寫的文件就是過期的）。
+   `UNCERTAIN` 只有兩種來源：① 模型回 `sensitive=false` 但 `confident=false`；
+   ② 讀檔／PDF 渲染／縮圖／呼叫模型其中一步炸了（每一條都會留一行
+   `隱私閘門判斷失敗，當作 UNCERTAIN` 的 warning）。
+   **正解：** 先去 worker log 找那一行 warning 分辨是①還是②。
+   是①就把圖畫得更清楚（§4.5 步驟 1 已經是 512 寬、字級 28 以上），或改用一張真收據照片。
    ⚠ **`UNCERTAIN` 走本機是「正確」行為**（D3：不確定當敏感辦），只是你沒驗到雲端那條路。
-   對照 `app/services/privacy_gate.py` 的關鍵字表挑一個確定會中的字。
 
 8. **症狀：** fallback 之後 job 變成 `failed`，待決定牆沒有 +1。
    **原因：** 多半**不是** fallback 壞掉，而是 **VLM 真的看不懂那張圖**
    （例如你用程式產的純色／純文字圖）——連續三次看不懂＝整筆失敗，
    這是增量五 D10 就有的行為。
-   **正解：** 用一張真的照片（真收據、真菜單都行）。
+   **正解：** 用一張真的照片（真收據、真菜單都行）；或把頁首開關撥到雲端
+   （§4.5 步驟 0，雲端模型讀合成圖上的英文字比本機 gemma4 穩）。
    要分辨是哪一種：log 裡有沒有 `fallback=local reason=result_timeout`——
    有，就代表 fallback 這一段是好的，failed 是後面看圖那一段的事。
 
@@ -1347,8 +1572,8 @@ git log -1 --stat
     **原因：** **202 不是 201**（增量五起就是這樣）。它只代表「檔案收下了、排進佇列了」。
     **正解：** 這一刻資料庫的 `photo` 表列數**不變**、待決定牆上也不會有東西。
     要看進度：`curl -sk https://127.0.0.1:8000/ingest-jobs`。
-    本機 gemma4 看圖要 64〜88 秒，加上這一次還先白等了 30 秒的雲端逾時——
-    **兩分鐘左右才會出現是正常的**。
+    這一次還先白等了 30 秒的雲端逾時，之後才開始看圖——開關撥雲端約再 5 秒、
+    忘了撥（本機 gemma4）則要再 64〜88 秒，**所以 40 秒到兩分鐘才出現都是正常的**。
 
 11. **症狀：** 實作完 `assume` 之後跑全量，
     `tests/unit/test_cloud_ingest_unit.py::test_get_cloud_route預設off時回CloudRouteOff` 紅了，
@@ -1366,6 +1591,23 @@ git log -1 --stat
     **正解：** 步驟 1 那段 Pillow 轉檔（`Image.open(...).convert("RGB").save("....png")`），
     轉完用 `file` 看一眼是 `PNG image data`。
 
+13. **症狀：** 明明照 §4.5 步驟 0 把開關撥到雲端了，worker 的 log 卻印
+    `AI 開始 kind=privacy backend=local`，整段煙霧還是慢得像走路。
+    **原因：** 撥開關的時機不對，或中途重啟了 app。這個狀態是
+    **`POST /photos` 那一刻**被抄進 job 的（`ai_backend=config.AI_BACKEND`），
+    worker 之後只認 `job["ai_backend"]` 那份快照——**上傳之後才撥，對這一筆完全沒用**；
+    而 `config.AI_BACKEND` 存在 app 行程的記憶體裡，**app 一重啟就回到 `local`**
+    （開發模式有 `--reload`，改到任何 `app/` 的 `.py` 都會重啟）。
+    **正解：** 上傳前先 `curl -sk https://127.0.0.1:8000/settings/ai-backend` 看一眼是不是
+    `cloud`，不是就再撥一次，然後**馬上**上傳。
+
+14. **症狀：** 煙霧全部做完幾天後，才發現 Ollama Cloud 的用量一直在跑。
+    **原因：** §4.8 只改了 `.env` 的 `CLOUD_ROUTE`，忘了把**頁首開關**撥回 `local`。
+    那扇門管的是四個注入點加隱私閘門，跟 `CLOUD_ROUTE` 是**兩件事**——
+    `CLOUD_ROUTE=off` 只是「不把檔案送去 AWS」，看圖仍然可以是 Ollama Cloud。
+    **正解：** §4.8 最後那一條 `PUT {"backend":"local"}` 一定要做，
+    並用 `GET /settings/ai-backend` 確認。
+
 ---
 
 ## 8. 完成後的專案狀態
@@ -1381,14 +1623,14 @@ git log -1 --stat
   鬧鐘只剩 `ec2` 那半（Phase 89 拆），`off → CloudRouteOff` 與 `cloudy → ValueError` 兩段原封不動。
 - `LAUNCH.md` §9 多一個英文小節 **"S3 / SQS layer (the cloud route)"**：
   怎麼看 S3 有沒有東西、兩條佇列各有幾則、每一張照片走了哪條路。
-- **一次真 AWS 煙霧的證據**：非敏感照片真的上過 S3 與 jobs 佇列、
+- **一次真 AWS 煙霧的證據**：**內容**非敏感的照片真的上過 S3 與 jobs 佇列、
   30 秒後真的 fallback 回本機、S3 真的被清乾淨、照片真的進了待決定牆；
-  敏感照片**零 S3 呼叫**。
+  **內容**敏感的照片**零 S3 呼叫**（兩者都是閘門看圖判的，與檔名無關）。
 
 **對外行為變了沒：完全沒有。**
 
-煙霧做完 `.env` 已經改回 `CLOUD_ROUTE=off`，所以 `get_cloud_route()` 又回到
-`CloudRouteOff()`——**日常使用時一張照片都不會出門**。
+煙霧做完 `.env` 已經改回 `CLOUD_ROUTE=off`（頁首 AI 開關也撥回 `local`），
+所以 `get_cloud_route()` 又回到 `CloudRouteOff()`——**日常使用時一張照片都不會出門**。
 上傳、待決定、詢問、進度面板一個像素都沒變。
 端點仍是 **22** 支、openapi 零 DELETE、`photo` 表零改動、前端零改動、
 `compose.yaml` 零改動、`docs/spec/` 一字未動。
@@ -1401,7 +1643,7 @@ git log -1 --stat
 | **雲端整條路壞掉時，使用者完全無感** | 202 照舊、進度面板照舊、照片照樣進待決定牆 |
 | fallback 的 log 字樣是真的（不只是測試裡的 `caplog`） | worker log 有 `fallback=local reason=result_timeout` |
 | 失敗時不留半套 | `documents/` 的 `KeyCount` 回到 0 |
-| 敏感檔真的一個位元組都不出門 | 上傳 `身分證.png` 之後 S3 仍然是空的、log 只有 `route=local verdict=SENSITIVE` |
+| 敏感檔真的一個位元組都不出門 | 上傳一張**畫成證件**的圖之後 S3 仍然是空的、log 只有 `route=local verdict=SENSITIVE`（檔名是中性的 `id-card-test.png`，證明擋下來的是**內容**） |
 
 **還沒有的東西**（刻意的）：**沒有工人**（jobs 佇列的訊息沒有人消費，Phase 87／88 才有）、
 沒有 `ec2` 探測（Phase 89）、沒有 EC2（Phase 91／92，而且要先過 ★G2）。
@@ -1413,10 +1655,31 @@ git log -1 --stat
 刪掉 jobs 訊息。全部用 `FakeMailbox` 測（**不連網**），
 還有兩顆**端到端**測試：本機送出 → 假工人處理同一顆 `FakeMailbox` → 本機收回入庫（單圖與 PDF 各一）。
 
-**顆數：** 開工基線 **632** ＋ **2** ＝ **634**（0 skipped）——與總覽 §9 Phase 86 那一列相同。
+**顆數：** 開工基線 **640** ＋ **2** ＝ **642**（0 skipped）。
+
+**2026-09-02 review fix wave**：+1 顆 `test_assume模式把config的四個值對應到AwsMailbox`
+（側錄 `app.services.aws_mailbox.AwsMailbox` 這個**模組屬性**——延遲 import 在呼叫當下才解析，
+所以換得掉；四個 config 值刻意彼此不同，斷言四個 keyword 逐一對得上、**兩條佇列 URL 沒有對調**。
+變異證據＝把 `dependencies.py` 的兩條 URL 暫時對調就會紅）、
+`LAUNCH.md` §S3 / SQS layer 兩處措辭（`off` 模式下 worker log 仍會有 `route=local` 與
+`fallback=local reason=remote_unavailable`＝正常；`set -a` 那行的註解補上 `$AWS_REGION`）、
+`test_aws_mailbox_unit.py` 的掃碼測試加守「`app/dependencies.py` 檔頭不得 import `aws_mailbox`」
+（提到檔頭會讓 pytest 收集階段間接載入 boto3，而原本的樣式只認直接 `import boto3` 的檔）。
+本檔的顆數因此是 **+3**、全量 **644**。
+（總覽 §9 Phase 86 那一列寫的是 634——那是 2026-08-31 的估算值，**已過期**；
+要對的是「本 phase 新增 2 顆」，不是絕對數字。）
 （Phase 77 那顆鬧鐘測試只改內容、不增不減。）
 
 ---
+
+
+## 8.1 執行紀錄（2026-09-02，煙霧由 controller 親自執行；值不寫進文件）
+
+- 前置：`open -a Ollama`（0.33.2，embeddings 本機）；頁首開關 `PUT /settings/ai-backend` 撥 **cloud**（閘門與看圖跟開關走，快 20 倍）；`.env` `CLOUD_ROUTE=assume`／`CLOUD_RESULT_TIMEOUT_SECONDS=30`、`docker compose -f compose.yaml -f compose.dev.yaml restart worker` → worker 內 `get_cloud_route()` 回 `CloudRoute`、`available()=True`；起點 S3 documents/ 空、兩佇列 0／0、正式庫 64 張。
+- 逾時腿：上傳 Pillow 合成收據（內容非敏感）→ **202**；t≈6s S3 出現 `context.json`＋`input.png`、jobs 紙條 body 恰 `{"job_id","s3_key"}`（無位元組）、results 0；log `route=cloud verdict=NON_SENSITIVE` → 33 秒後 `fallback=local reason=result_timeout` → job 被刪（成功）、照片 65、S3 documents/ 空、jobs 剩 1 則沒人接的紙條。
+- 敏感腿：上傳 Pillow 合成假身分證 → **202** → log `route=local verdict=SENSITIVE` → 該 job S3 前綴零物件、results 0 → ~5 秒後入庫（照片 66）。
+- 收尾：`aws sqs purge-queue` jobs → 60 秒後兩佇列 0／0；`.env` 改回 `off`／`300`＋restart worker（讀到 `CloudRouteOff`）；開關撥回 local；S3 空。
+- 全量／三死埠／端點等數字見 §6（最終驗證於 review fix wave 後由 controller 跑；R11 fix wave 讓 83 的測試檔 +1、本檔測試 +1 → 全量 **644**；controller 最終驗證 644／0 skipped、三死埠 644）。
 
 ## 附：本文件引用的官方文件
 

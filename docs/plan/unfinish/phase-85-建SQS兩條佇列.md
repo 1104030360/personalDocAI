@@ -1,5 +1,20 @@
 # Phase 85：建 SQS 兩條佇列
 
+> 📌 **2026-09-02 校準紀錄**（本檔成稿於 2026-08-31，之後工作樹改過：Phase 81／82 進 commit、
+> 73〜82 歸檔、識別字全面英文化、AWS 帳號由產品負責人開好。裁決全文見
+> `.superpowers/sdd/phase0902-1/progress.md` 的 R0〜R7，事實與命名契約見同目錄 `brief-common.md`）：
+>
+> | 裁決 | 本檔怎麼改 |
+> |---|---|
+> | **R0 不 commit** | §4.9 的 commit 步驟改成「**記工作樹快照**」；commit 節奏由產品負責人決定（總覽 §7 鐵律 12） |
+> | **R1 識別字一律英文** | `scripts/aws_check.py` 本 phase 新增的識別字全部英文：`check_sqs()`（照 brief §5 的跨檔契約）、helper `receive_own_message()`、常數 `RECEIVE_RETRIES`、參數 `receive`／`queue_name`、區域變數 `mailbox`／`message`。**`test_中文` 測試函式名、log 字樣、錯誤訊息、註解與 docstring 維持中文** |
+> | **R2 顆數（2026-09-02 實查）** | 實查基線 **624**（不是本檔原寫的 632）；Phase 83 收工 **640**、84 ＋0 ＝ 640，所以本 phase **開工基線 640、收工 640**。全檔（§2／§3／§4／§6／§8）的 632 一律改 640 |
+> | **R3 AWS 操作歸 controller** | §4.1〜§4.5、§4.7、§4.8 與 §6 裡所有會打 `aws`／真連 AWS 的步驟，逐段標「⚠ 本步驟由 controller 親自執行；實作 subagent 不打 aws」。實作 subagent 在本 phase **只做 §4.6 一件事**（純改 `scripts/aws_check.py`，零 `aws` 指令、零真連線） |
+> | **R4 `aws_check.py` 無自動化測試** | 它會真的打 AWS，所以**不寫 pytest**（安全網第五道：pytest 絕不連真 AWS）。驗收＝controller 真跑一次印 OK，本 phase 仍然 **+0 顆** |
+> | **只換一支函式**（calib-brief 各人專屬 C） | §4.6 不再「整份覆蓋 `aws_check.py`」——Phase 84 建的那一份是基準，本 phase 只做四件小事：補一行 import、補一個常數、補一支 helper、**把 `check_sqs()` 整支換掉**。`check_s3()`／`main()` 等其餘部分一個字都不動 |
+> | **CLI 不帶 `--profile`** | 本檔實查 **0 處** `--profile`（本來就沒有），維持原狀即可。理由：`~/.aws` 只有 `[default]`，而它就是 `personaldocai-admin`（brief §3 實查）。⚠ `docs/plan/aws/2026-09-02-SQS佇列新手步驟.md` 裡的 `--profile personaldocai-admin` 是**對不上的**，以本檔為準 |
+> | **`create-policy-version` 修正** | §4.7 的框與 §7 陷阱 2 原本直接 `--policy-document file://deploy/aws/mac-policy.json`——那一份帶 `<ACCOUNT_ID>` 佔位，直接上傳會 `MalformedPolicyDocument`。改成比照 Phase 82 §4.6.2 先 `sed` 產生暫時檔。另註記：2026-09-02 controller 實查，AWS 上掛在 `personaldocai-mac` 的 policy **已經是**含工人端動作的新版（七條 Sid、帳號 ID 是真值），所以那一段是「萬一」的退路，不是預期路徑 |
+
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
 > 本 phase 特別**不要**做的四件事：
 > ① 不要建 FIFO 佇列（design6 D9 明文「FIFO 不做」——貴、慢，而本專案根本不在乎順序）；
@@ -92,8 +107,14 @@ SQS 單則上限**預設 1 MiB**（2025 年中才從 256 KB 放寬），一份�
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 
 pytest -q
-# 預期尾巴：632 passed，0 skipped（總覽 §9：Phase 83 收工 632）。本 phase 是 +0，收工時不能變。
+# 預期尾巴：640 passed，0 skipped。
+# （2026-09-02 實查：本輪開工當下的工作樹是 624；Phase 83 ＋16 ＝ 640，Phase 84 ＋0，
+#   所以本 phase 的開工基線是 640。總覽 §2.7／§9 寫的 632 是這次實查之前的舊數字。）
+```
 
+> ⚠ 下面這一段會真的連 AWS：**由 controller 親自執行；實作 subagent 不打 aws。**
+
+```bash
 # Phase 84 的成果還在
 set -a; . ./.env; set +a
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
@@ -106,23 +127,45 @@ aws sts get-caller-identity --query Arn --output text  # 預期結尾：:user/pe
 
 ### 2.3 本 phase 對顆數的影響
 
-**+0 顆**（總覽 §2.7）。理由與 Phase 84 相同：
-「AWS 上有沒有兩條設定對的佇列」pytest 測不到，而且 **pytest 絕不准連真 AWS**。
-驗收改用 **AWS CLI 的輸出** ＋ **`python scripts/aws_check.py s3 sqs` 印 OK**。
+**+0 顆**（總覽 §2.7；累計顆數以 2026-09-02 實查為準 ＝ **640**，總覽寫的 632 是舊數字）。
+理由與 Phase 84 相同：「AWS 上有沒有兩條設定對的佇列」pytest 測不到，
+而且 **pytest 絕不准連真 AWS**（第五道安全網 `wire_fake_cloud`）。
+驗收改用 **AWS CLI 的輸出** ＋ **`python scripts/aws_check.py s3 sqs` 印 OK**（裁決 R4）。
+
+> ⚠ `scripts/aws_check.py` 本身**不寫自動化測試**——它的每一行都在真的打 AWS，
+> 寫成 pytest 就等於把第五道安全網拆掉。它由 controller 手動跑一次當驗收。
 
 ### 2.4 每次開工都要先做的 shell 準備
 
+> ⚠ **本節與 §4 的所有 `aws` 指令由 controller 親自執行；實作 subagent 不打 aws。**
+
+**最單純的做法：不要 source `.env`，直接打 `aws`。**
+這台 Mac 的 `~/.aws` 只有一組 `[default]`，而它就是 `personaldocai-admin`
+（2026-09-02 實查），所以**所有指令都不必、也不要帶 `--profile`**：
+
 ```bash
 cd /Users/linjunting/personalDocAI
+aws sts get-caller-identity --query Arn --output text   # 結尾要是 :user/personaldocai-admin
+```
 
+**只有在需要 `.env` 裡的變數時**（例如 `$S3_BUCKET`）才 source，而且**載完立刻**
+把那兩把 key 丟掉：
+
+```bash
 set -a; . ./.env; set +a                          # ① 載入 $S3_BUCKET 等變數
-unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY     # ② ★ 讓 aws 指令回去用 admin profile
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY     # ② ★ 讓 aws 指令回去用 default（＝admin）
 aws sts get-caller-identity --query Arn --output text   # ③ 結尾要是 :user/personaldocai-admin
 ```
 
 > ⚠ 少了第 ② 步，下面每一條 `aws sqs create-queue` 都會 `AccessDenied`——
-> `.env` 裡那把是**程式用的最小權限 key**（它只能 Send／Receive，不能建佇列），
-> 而環境變數的優先序**高於** `~/.aws` 的 profile。詳見 Phase 82 §7 陷阱 1。
+> `.env` 裡那把是**程式用的最小權限 key**（`personaldocai-mac`，它只能 Send／Receive／
+> 改可見度，不能建佇列），而環境變數的優先序**高於** `~/.aws` 的 profile。
+> 詳見 Phase 82 §7 陷阱 1 與 `CLAUDE.md` 指令區的「── AWS」小段。
+
+> ⚠ `docs/plan/aws/2026-09-02-SQS佇列新手步驟.md`（產品負責人在 Phase 82 寫的新手文）
+> 每一條指令都帶 `--profile personaldocai-admin`——**那個 profile 名字在這台機器上不存在**，
+> 照抄會回 `The config profile (personaldocai-admin) could not be found`。
+> 兩邊衝突時**以本檔為準**（不帶 profile）。
 
 > ⚠️ **絕對不要同時跑兩份 pytest。**（理由同前面各 phase。）
 
@@ -156,7 +199,7 @@ aws sts get-caller-identity --query Arn --output text   # ③ 結尾要是 :user
 | 建第三條佇列（例如「通知佇列」） | 兩條就是全部（design6 §2.3 的表） |
 | 改任何 `app/` 底下的程式碼 | 本 phase 零產品碼變更（`scripts/` 不進映像，不算產品碼） |
 | 改 `compose.yaml` | 本增量零改動。兩個 URL 走 `.env`（已 bind-mount） |
-| 新增 pytest | 顆數維持 632 |
+| 新增 pytest | 顆數維持 **640**（裁決 R4：`aws_check.py` 打真 AWS，不寫自動化測試） |
 
 ---
 
@@ -165,9 +208,16 @@ aws sts get-caller-identity --query Arn --output text   # ③ 結尾要是 :user
 > 🧰 **人工＋CLI 型**：每一步都是「指令 → 逐個旗標解釋 → 預期輸出 → 做錯了怎麼退回 → 費用影響」。
 > 全部指令在專案根目錄執行，而且**先做完 §2.4 的 shell 準備**。
 
+> ⚠ **誰做哪一步**（裁決 R3）：
+> **§4.6 是實作 subagent 的工作**（純改 `scripts/aws_check.py`，零 `aws` 指令、零真連線）；
+> **§4.1〜§4.5、§4.7、§4.8 由 controller 親自執行**（建資源、改 `.env`、restart 容器、
+> 真跑腳本、purge 佇列——全都有外部副作用）。§4.9 的格式與回歸兩位都可以跑。
+
 ### 4.1 建 `personaldocai-jobs`（本機 → 工人）
 
-- [ ] 執行：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 aws。
+
+- [x] 執行：
 
 ```bash
 aws sqs create-queue \
@@ -199,7 +249,7 @@ aws sqs create-queue \
 | 錯誤訊息 | 意思 | 怎麼修 |
 |---|---|---|
 | `AccessDenied ... sqs:CreateQueue` | shell 裡有 `.env` 的最小權限 key | 回 §2.4 跑 `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY` |
-| `QueueAlreadyExists` | 這個名字已經存在，**而且屬性跟你這次給的不一樣** | 用 §4.4 的 `set-queue-attributes` 改屬性，或先 `delete-queue` 再建（見下面的警告） |
+| `QueueNameExists`（CLI 也可能顯示舊名 `QueueAlreadyExists`） | 這個名字已經存在，**而且屬性跟你這次給的不一樣**（屬性完全相同時 `create-queue` 是冪等的，會直接回同一個 `QueueUrl`） | 用 §4.4 的 `set-queue-attributes` 改屬性，或先 `delete-queue` 再建（見下面的警告） |
 | 指令成功但沒印任何東西 | 不會發生——`create-queue` 一定會回 `QueueUrl` | — |
 | 名字打錯了 | — | `aws sqs delete-queue --queue-url <打錯的那條的 URL> --region ap-northeast-1`，再建一次 |
 
@@ -214,7 +264,9 @@ aws sqs create-queue \
 
 ### 4.2 建 `personaldocai-results`（工人 → 本機）
 
-- [ ] 執行（**只有 `VisibilityTimeout` 不一樣**）：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 aws。
+
+- [x] 執行（**只有 `VisibilityTimeout` 不一樣**）：
 
 ```bash
 aws sqs create-queue \
@@ -262,7 +314,11 @@ aws sqs create-queue \
 
 ### 4.3 取回兩條的 URL
 
-- [ ] 執行：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 aws。
+> `$JOBS_URL`／`$RESULTS_URL` 這兩個 shell 變數 §4.4／§4.8／§6 都會用到，
+> **同一個終端機視窗裡做完**比較省事（換視窗就要重跑這一步）。
+
+- [x] 執行：
 
 ```bash
 JOBS_URL=$(aws sqs get-queue-url --queue-name personaldocai-jobs \
@@ -296,7 +352,9 @@ results → ...personaldocai-results
 
 ### 4.4 用 `get-queue-attributes` 驗屬性
 
-- [ ] **jobs**：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 aws。
+
+- [x] **jobs**：
 
 ```bash
 aws sqs get-queue-attributes --queue-url "$JOBS_URL" \
@@ -338,7 +396,7 @@ aws sqs get-queue-attributes --queue-url "$JOBS_URL" \
 > SQS 是分散式的，送出或刪掉訊息之後，這個數字可能要等幾十秒才反映。
 > 剛做完動作就看它、發現數字不對，**先等一分鐘再看一次**再說。
 
-- [ ] **results**（`VisibilityTimeout` 應該是 `"30"`）：
+- [x] **results**（`VisibilityTimeout` 應該是 `"30"`）：
 
 ```bash
 aws sqs get-queue-attributes --queue-url "$RESULTS_URL" \
@@ -377,22 +435,32 @@ aws sqs set-queue-attributes --queue-url "$JOBS_URL" \
 
 ### 4.5 `.env` 填兩個 URL，並讓容器重讀
 
-- [ ] 打開 `/Users/linjunting/personalDocAI/.env`，把 Phase 82 留空的兩行填上
-      （值就是 §4.3 印出來的完整 URL；**等號兩邊不可以有空白**）：
+> ⚠ 本步驟由 controller 親自執行（改 `.env` ＋ restart 容器都有外部副作用）；
+> 實作 subagent 不碰 `.env`。
+
+- [x] 打開 `/Users/linjunting/personalDocAI/.env`，**新增**這兩行
+      （2026-09-02 實查：`.env` 裡目前**沒有**這兩個變數名，Phase 82 沒有預留空行；
+      Phase 84 之後若已有留空的那兩行就直接填值。
+      值就是 §4.3 印出來的完整 URL；**等號兩邊不可以有空白**）：
 
 ```ini
 SQS_JOBS_QUEUE_URL=https://sqs.ap-northeast-1.amazonaws.com/你的帳號ID/personaldocai-jobs
 SQS_RESULTS_QUEUE_URL=https://sqs.ap-northeast-1.amazonaws.com/你的帳號ID/personaldocai-results
 ```
 
-- [ ] 讓容器重新讀：
+- [x] 讓容器重新讀：
 
 ```bash
 cd /Users/linjunting/personalDocAI
 docker compose -f compose.yaml -f compose.dev.yaml restart app worker
-docker compose exec worker python -c \
+docker compose -f compose.yaml -f compose.dev.yaml exec worker python -c \
   "from app.core import config; print('兩條 URL 都有值 =', bool(config.SQS_JOBS_QUEUE_URL) and bool(config.SQS_RESULTS_QUEUE_URL))"
 ```
+
+> 📌 兩個 `-f` 不能省：2026-09-02 的工作樹跑的是**開發疊加**（`compose.dev.yaml`，app 帶
+> `--reload`、bind-mount `./app`）。少寫 `-f compose.dev.yaml` 會被當成「切回常駐模式」。
+> ⚠ `worker` **沒有** `--reload`（Celery 沒這種東西），所以改 `.env` 一定要 restart 它，
+> 不然 HTTP 那邊已經是新設定、背景分析卻還是舊的，而且完全不報錯。
 
 **預期輸出：**
 
@@ -409,155 +477,90 @@ docker compose exec worker python -c \
 
 ### 4.6 把 `scripts/aws_check.py` 的 `sqs` 子命令換成真的
 
-- [ ] 打開 `/Users/linjunting/personalDocAI/scripts/aws_check.py`，**整份換成下面這一版**
-      （Phase 84 那一版的 `金鑰來源()`／`建信箱()`／`檢查S3()` 一個字都沒改，
-      只是多了 `收到自己那則()`、新的 `檢查SQS()`，以及檔頭多一段講 sqs 用哪把 key）：
+> ✍ **這一步是實作 subagent 的工作**：純改一個檔，**零 `aws` 指令、零真連線**。
+> 改完只跑 §4.9 的 `ruff` 與 `pytest`；真的執行這支腳本（會打 AWS）是 §4.7，由 controller 做。
 
-```python
-"""對真 AWS 做一次最小的來回，確認「這台 Mac 的憑證與權限真的能用」。
+**基準 ＝ Phase 84 建好的那一份 `scripts/aws_check.py`。不要整檔覆蓋、不要重貼整份。**
+本 phase 只做四件小事，其餘（`check_s3()`／`main()`／`CHECK_JOB_ID`／`sys.path` 那一段／
+建信箱與金鑰來源那兩支 helper）**一個字都不動**：
 
-用法（在專案根目錄執行；⚠ 它會真的打 AWS，不要在 pytest 裡呼叫它）：
+| # | 改什麼 | 位置 |
+|---|---|---|
+| ① | 檔頭 docstring：用法那一行拿掉「Phase 85 才有」的註記，並在最後補一段「sqs 子命令用哪一把 key」 | docstring |
+| ② | 多 import 一個 `MailboxMessage`（只當型別註記用） | import 區 |
+| ③ | 新增常數 `RECEIVE_RETRIES` | `CHECK_JOB_ID` 下面 |
+| ④ | 新增 helper `receive_own_message()`，並**把 `check_sqs()` 整支換掉**（Phase 84 那一支只是「Phase 85 才有」的佔位，直接 `raise SystemExit`） | `check_s3()` 與 `main()` 之間 |
 
+> ⚠ **名字對齊**（brief §5 的跨檔命名契約）：本 phase 新增的識別字一律英文——
+> `check_sqs`／`receive_own_message`／`RECEIVE_RETRIES`／參數 `receive`、`queue_name`／
+> 區域變數 `mailbox`、`message`；常數 `CHECK_JOB_ID`（值 `"aws-check"`）沿用 Phase 84 的。
+> 下面 ④ 呼叫的 `build_mailbox()` 是 **Phase 84 建的那支「照 `.env` 建 `AwsMailbox`」helper**
+> （Phase 84 計畫檔的初稿用中文名，校準後是英文名）——**動手前先打開 `scripts/aws_check.py`
+> 看它實際叫什麼，照實檔的名字改這一個呼叫**，不要另外再寫一支一模一樣的。
+> `test_中文` 測試名、log 字樣、錯誤訊息、註解與 docstring 維持中文。
+
+- [x] **①** docstring：把「用法」那三行換成下面這樣
+      （唯一的差別是中間那行拿掉 Phase 84 留的尾註 `# Phase 85 建好兩條佇列之後才有`）：
+
+```text
     python scripts/aws_check.py s3
     python scripts/aws_check.py sqs
     python scripts/aws_check.py s3 sqs     # 兩個都跑
+```
 
-★ 它刻意用**產品自己的** app/services/aws_mailbox.AwsMailbox，而不是自己寫一段 boto3。
-  這樣驗到的就是正式路徑真的會走的那些呼叫（鍵名、參數、憑證來源全部一樣）：
-  這支跑得過 ＝ worker 容器裡的程式也跑得過。
+  並在 `分層：…` 那一行**之前**插入這一段：
 
-★ 它用哪一把 key？資源名稱與憑證都從 .env 讀——app/core/config.py 一被 import 就會
-  load_dotenv()，而 load_dotenv() **只補上不存在的環境變數、不覆蓋已存在的**。所以有三種情況：
-    ・shell 裡沒有 AWS_ACCESS_KEY_ID（你先 unset 過）→ 用 .env 那把
-      （IAM user personaldocai-mac，最小權限）→ 這是預設，也是 s3 子命令要驗的那一把
-    ・shell 裡已經有一把（例如你自己 export 過別的 key）→ 用那一把，.env 那把被略過
-    ・shell 裡沒有、.env 也沒填 → boto3 會**安靜地**退到 ~/.aws 的 default profile（admin）
-      ——你以為在驗最小權限，其實在用管理員
-  所以第一行一律印出「金鑰來源」，讓你確認驗到的是哪一把。
-  ⚠ 注意：unset **不會**讓這支腳本改用 admin——unset 只影響 aws CLI；
-    Python 這邊 load_dotenv() 會馬上把 .env 的 mac key 補回來。
-
+```text
 ★ sqs 子命令用 .env 那把 mac key 跑就可以（總覽 §10.2 N：personaldocai-mac 的 policy
   兩條佇列的「送／收／刪」都有，因為 Phase 88／90 在 Mac 上跑工人用的就是這把 key）。
   它仍然**沒有** PurgeQueue——清佇列是人做的事，用 aws CLI 以 admin 身分做（Phase 85 §4.8）。
+```
 
-分層：本檔不寫 SQL、不碰資料庫、不碰 HTTP。它只是把 AwsMailbox 的方法照順序呼叫一次。
-"""
+- [x] **②** 在 import 區的 `from app.services.aws_mailbox import AwsMailbox` **下面**加一行
+      （isort 的順序剛好就是這樣，不會被 `ruff check` 挑）：
 
-import os
-import sys
-from pathlib import Path
-
-from dotenv import dotenv_values
-
-專案根目錄 = Path(__file__).resolve().parent.parent
-
-# 用 `python scripts/aws_check.py` 執行時，Python 只會在 scripts/ 資料夾裡找模組，
-# 會找不到 app 套件——把專案根目錄加進搜尋路徑就解決了（與 check_embedding_dim.py 同一招）。
-sys.path.insert(0, str(專案根目錄))
-
-from app.core import config  # noqa: E402  （必須在改完搜尋路徑之後 import）
-from app.services.aws_mailbox import AwsMailbox  # noqa: E402
+```python
 from app.services.cloud_ingest import MailboxMessage  # noqa: E402
+```
 
-# 檢查用的假 job_id。用固定值（不是隨機）有兩個好處：
-#   ・出事時你知道要去 bucket 的哪個位置找殘骸（documents/aws-check/）
-#   ・它一樣落在 documents/ 前綴底下，所以萬一沒刪掉，Lifecycle 兩天後會清掉
-檢查用的JOB_ID = "aws-check"
+- [x] **③** 在 `CHECK_JOB_ID = "aws-check"` 底下加一個常數：
 
+```python
 # 收訊息時最多重試幾次（每次長輪詢 20 秒）。
 # 為什麼需要重試：SQS Standard 是分散式的，剛送出的訊息偶爾要多問一次才拿得到。
 # 長輪詢本身已經會問過所有伺服器，所以三次幾乎一定夠。
-收信重試次數 = 3
+RECEIVE_RETRIES = 3
+```
 
+- [x] **④** 在 `check_s3()` 與 `main()` 之間，加一支 helper、
+      並把 `check_sqs()` **整支**換成下面這一份：
 
-def 金鑰來源() -> str:
-    """回報 boto3 這次會用哪一把 key。只比對「是不是 .env 那把」，**不印任何值**。
+```python
+def receive_own_message(receive, queue_name: str) -> MailboxMessage:
+    """長輪詢最多幾次，直到收到 job_id 等於 CHECK_JOB_ID 的那一則。
 
-    一定要在 config 被 import（＝ load_dotenv() 已經跑完）之後呼叫：那時 os.environ 裡的
-    AWS_ACCESS_KEY_ID 要嘛是 shell 帶進來的、要嘛是 .env 補上的、要嘛兩邊都沒有。
-    """
-    env檔 = 專案根目錄 / ".env"
-    env檔那把 = (dotenv_values(env檔) if env檔.is_file() else {}).get("AWS_ACCESS_KEY_ID") or ""
-    現在這把 = os.environ.get("AWS_ACCESS_KEY_ID", "")
-    if not 現在這把:
-        return "沒有任何 key（boto3 會退到 ~/.aws 的 default profile ＝ admin）⚠ 這不是最小權限"
-    if 現在這把 == env檔那把:
-        return ".env 那把（personaldocai-mac，最小權限）"
-    return "不是 .env 那把（多半是你帶進來的 admin key）"
-
-
-def 建信箱() -> AwsMailbox:
-    """照 .env 的設定建一個真的信箱。region 一律明傳，不靠環境變數猜。"""
-    if not config.S3_BUCKET:
-        raise SystemExit("⛔ .env 的 S3_BUCKET 是空的——先做完 Phase 84 §4.7")
-    return AwsMailbox(
-        bucket=config.S3_BUCKET,
-        jobs_queue_url=config.SQS_JOBS_QUEUE_URL,
-        results_queue_url=config.SQS_RESULTS_QUEUE_URL,
-        region=config.AWS_REGION,
-    )
-
-
-def 檢查S3() -> None:
-    """put → get → 比對內容 → delete → 再 get 確認真的不在了。
-
-    最後那個「再 get 一次」不是多餘的：只做 delete 不檢查的話，
-    一個「delete 其實被 AccessDenied 但被 delete_objects 的 warning 吞掉」的權限問題
-    會完全看不出來（那正是 delete_objects 刻意不往外丟例外的代價）。
-
-    ④ 靠的是「GetObject 缺 key 回 404（NoSuchKey）→ get_object 翻譯成 None」。
-    S3 只在呼叫者有 bucket 層級的 s3:ListBucket 時才回 404；沒有的話一律回 403 AccessDenied
-    （S3 刻意不讓沒有 list 權限的人分辨「不存在」與「沒權限」）。
-    所以 personaldocai-mac-policy 一定要含 s3:ListBucket（總覽 §10.2 P）；
-    ④ 炸 AccessDenied ＝ policy 還是舊版。
-    """
-    信箱 = 建信箱()
-    鍵 = 信箱.input_key(檢查用的JOB_ID, "image/png")
-    內容 = b"personaldocai aws-check"
-
-    print(f"bucket = {config.S3_BUCKET}   region = {config.AWS_REGION}")
-
-    print(f"① PutObject      {鍵}")
-    信箱.put_object(鍵, 內容, "image/png")
-
-    print(f"② GetObject      {鍵}")
-    拿回來 = 信箱.get_object(鍵)
-    if 拿回來 != 內容:
-        raise SystemExit(f"⛔ 拿回來的位元組跟放進去的不一樣：{拿回來!r}")
-
-    print(f"③ DeleteObjects  {鍵}")
-    信箱.delete_objects([鍵])
-
-    print("④ 再 GetObject 一次，確認真的不在了")
-    if 信箱.get_object(鍵) is not None:
-        raise SystemExit("⛔ 刪掉之後還拿得回東西——delete 沒有真的生效（多半是權限）")
-
-    print("✅ S3 OK：put → get → 內容一致 → delete → 確認不在了")
-
-
-def 收到自己那則(接收, 佇列名稱: str) -> MailboxMessage:
-    """長輪詢最多幾次，直到收到 job_id 等於檢查用值的那一則。
+    receive ＝ 信箱的收信方法（mailbox.receive_job 或 mailbox.receive_result），
+    它吃「最多等幾秒」、回一則 MailboxMessage 或 None。
 
     收到**別人**的訊息時直接停手並提示：那代表佇列裡有殘留（多半是上一次煙霧沒清乾淨），
     先清乾淨再測，不然這支腳本會把別人的訊息刪掉。
     ⚠ 被我們拿過一次的那則會隱形一段時間（jobs 900 秒、results 30 秒）才重新出現；
       purge-queue 會連隱形中的一起清掉，所以「先 purge 再測」永遠是安全的修法。
     """
-    for _ in range(收信重試次數):
-        訊息 = 接收(20)
-        if 訊息 is None:
+    for _ in range(RECEIVE_RETRIES):
+        message = receive(20)
+        if message is None:
             continue
-        if 訊息.job_id != 檢查用的JOB_ID:
+        if message.job_id != CHECK_JOB_ID:
             raise SystemExit(
-                f"⛔ {佇列名稱} 佇列裡有別人的訊息（job_id={訊息.job_id}）。"
+                f"⛔ {queue_name} 佇列裡有別人的訊息（job_id={message.job_id}）。"
                 " 先用 aws sqs purge-queue 清乾淨再測。"
             )
-        return 訊息
-    raise SystemExit(f"⛔ {佇列名稱} 佇列送出去之後收不回來（等了 {收信重試次數 * 20} 秒）")
+        return message
+    raise SystemExit(f"⛔ {queue_name} 佇列送出去之後收不回來（等了 {RECEIVE_RETRIES * 20} 秒）")
 
 
-def 檢查SQS() -> None:
+def check_sqs() -> None:
     """兩條佇列各做一次來回：send → receive（確認是自己那則）→ delete。
 
     ⚠ 它會**真的**在佇列裡放訊息。做完之後兩條佇列都必須回到 0 則
@@ -567,44 +570,31 @@ def 檢查SQS() -> None:
     """
     if not config.SQS_JOBS_QUEUE_URL or not config.SQS_RESULTS_QUEUE_URL:
         raise SystemExit("⛔ .env 的兩個 SQS_*_QUEUE_URL 是空的——先做完 Phase 85 §4.5")
-    信箱 = 建信箱()
+    mailbox = build_mailbox()
 
     print("① jobs 佇列：SendMessage（本機 → 工人的那條）")
-    信箱.send_job(檢查用的JOB_ID, 信箱.input_key(檢查用的JOB_ID, "image/png"))
-    訊息 = 收到自己那則(信箱.receive_job, "jobs")
-    print(f"   ReceiveMessage 收到：job_id={訊息.job_id} s3_key={訊息.s3_key}")
-    信箱.delete_job_message(訊息.receipt_handle)
+    mailbox.send_job(CHECK_JOB_ID, mailbox.input_key(CHECK_JOB_ID, "image/png"))
+    message = receive_own_message(mailbox.receive_job, "jobs")
+    print(f"   ReceiveMessage 收到：job_id={message.job_id} s3_key={message.s3_key}")
+    mailbox.delete_job_message(message.receipt_handle)
     print("   DeleteMessage 完成")
 
     print("② results 佇列：SendMessage（工人 → 本機的那條）")
-    信箱.send_result(檢查用的JOB_ID)
-    訊息 = 收到自己那則(信箱.receive_result, "results")
-    print(f"   ReceiveMessage 收到：job_id={訊息.job_id}")
-    信箱.delete_result_message(訊息.receipt_handle)
+    mailbox.send_result(CHECK_JOB_ID)
+    message = receive_own_message(mailbox.receive_result, "results")
+    print(f"   ReceiveMessage 收到：job_id={message.job_id}")
+    mailbox.delete_result_message(message.receipt_handle)
     print("   DeleteMessage 完成")
 
     print("✅ SQS OK：兩條佇列都能 send → receive → delete")
-
-
-def main() -> None:
-    子命令 = sys.argv[1:]
-    if not 子命令:
-        raise SystemExit("用法：python scripts/aws_check.py s3 [sqs]")
-    print(f"金鑰來源 = {金鑰來源()}")
-    for 名稱 in 子命令:
-        if 名稱 == "s3":
-            檢查S3()
-        elif 名稱 == "sqs":
-            檢查SQS()
-        else:
-            raise SystemExit(f"不認得的子命令：{名稱}（只有 s3 與 sqs）")
-
-
-if __name__ == "__main__":
-    main()
 ```
 
-> 📌 上面多 import 了一個 `MailboxMessage`（只當型別註記用）。
+- [x] **⑤ 這些地方一個字都不要動**（改到就是做錯）：
+  `main()`（Phase 84 已經有 `sqs` 分支指向 `check_sqs()`，換掉函式本體就自動接上了）、
+  `check_s3()`、金鑰來源與建信箱那兩支 helper、`CHECK_JOB_ID` 的值、
+  `sys.path.insert(...)` 那一段與它上面的註解。
+
+> 📌 ② 多 import 了一個 `MailboxMessage`（只當型別註記用）。
 > 它定義在 `app/services/cloud_ingest.py`（Phase 77 建的），所以直接從那裡 import——
 > `aws_mailbox.py` 只是把它 import 進來用，不是那個名字的家（總覽 §2.4.1 的契約），
 > 全站一律從 `cloud_ingest` 拿，不要繞道。
@@ -613,7 +603,9 @@ if __name__ == "__main__":
 
 ### 4.7 跑它
 
-- [ ] 執行（⚠ 會真的打 AWS，用的是 `.env` 裡那把**最小權限**的 key——這正是要驗的那把）：
+> ⚠ 本步驟由 controller 親自執行（它會真的連 AWS）；實作 subagent 不跑這支腳本。
+
+- [x] 執行（⚠ 會真的打 AWS，用的是 `.env` 裡那把**最小權限**的 key——這正是要驗的那把）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -675,14 +667,23 @@ bucket = personaldocai-mailbox-XXXXXX   region = ap-northeast-1
 │ 環境變數——所以腳本第一行印「金鑰來源 = .env 那把」。這不是 bug，是刻意的分工：            │
 │ CLI 用 admin 建資源、清佇列；程式用 mac key 驗權限；兩者在同一個視窗裡並存。              │
 │                                                                                           │
+│ 📌 2026-09-02 實查：AWS 上掛在 personaldocai-mac 的 policy **已經是新版**（七條 Sid，   │
+│    含 WorkerReceiveJobs／WorkerSendResults，ARN 帶真帳號 ID）。所以下面這段是「萬一」    │
+│    的退路，不是預期路徑——真的撞到再做。                                                  │
+│                                                                                           │
 │ 如果 ① 的 ReceiveMessage 回 AccessDenied：掛在 personaldocai-mac 上的 policy 還是         │
-│ 舊版（只有 jobs 的 SendMessage）。回 Phase 82 §4.6.1 把 mac-policy.json 更新成含          │
-│ 工人端動作的版本，然後發布成新的預設版本（IAM policy 是有版本的）：                       │
+│ 舊版（只有 jobs 的 SendMessage）。回 Phase 82 §4.6.1 確認 mac-policy.json 是含工人端      │
+│ 動作的版本，然後發布成新的預設版本（IAM policy 是有版本的）。⚠ repo 裡那一份帶           │
+│ <ACCOUNT_ID> 佔位，**直接上傳會 MalformedPolicyDocument**——比照 Phase 82 §4.6.2          │
+│ 先 sed 出一份暫時檔（不進 repo）：                                                        │
+│   ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)                 │
+│   sed "s/<ACCOUNT_ID>/$ACCOUNT_ID/g" deploy/aws/mac-policy.json \                         │
+│     > /tmp/personaldocai-mac-policy.json                                                  │
+│   grep -c "<ACCOUNT_ID>" /tmp/personaldocai-mac-policy.json     # 預期：0                 │
 │   aws iam create-policy-version \                                                         │
-│     --policy-arn "arn:aws:iam::<ACCOUNT_ID>:policy/personaldocai-mac-policy" \            │
-│     --policy-document file://deploy/aws/mac-policy.json --set-as-default                  │
-│ （<ACCOUNT_ID> ＝ aws sts get-caller-identity --query Account --output text 的 12 位數；  │
-│   一個 policy 最多留 5 個版本，滿了先 delete-policy-version 刪舊的。）                    │
+│     --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/personaldocai-mac-policy" \           │
+│     --policy-document file:///tmp/personaldocai-mac-policy.json --set-as-default          │
+│ （一個 policy 最多留 5 個版本，滿了先 aws iam delete-policy-version 刪舊的。）            │
 │ 被拒之前 ① 已經送了一則進 jobs——本來腳本會自己刪掉，現在得用 admin purge（§4.8）。        │
 └───────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -698,13 +699,16 @@ SQS **每月前 100 萬次請求免費**，所以實質 **$0**。
 > **「jobs body 無檔案位元組，只含 `job_id`、`s3_key`；results 佇列已存在、尚無訊息」。**
 > 前半由 Phase 83 的兩顆單元測試釘住，後半就是這一步。
 
-- [ ] 先等一下下（`ApproximateNumberOfMessages` 是**近似值**，刪掉之後要一點時間才反映）：
+> ⚠ 本步驟由 controller 親自執行（含 `purge-queue`——那是不可逆的清空）；
+> 實作 subagent 不打 aws。
+
+- [x] 先等一下下（`ApproximateNumberOfMessages` 是**近似值**，刪掉之後要一點時間才反映）：
 
 ```bash
 sleep 60
 ```
 
-- [ ] 兩條佇列一起看：
+- [x] 兩條佇列一起看：
 
 ```bash
 for URL in "$JOBS_URL" "$RESULTS_URL"; do
@@ -771,7 +775,7 @@ aws sqs purge-queue --queue-url "$RESULTS_URL" --region ap-northeast-1
 
 ### 4.9 格式、回歸、收尾
 
-- [ ] 格式與 lint（`scripts/` 在 CI 的檢查範圍內）：
+- [x] 格式與 lint（`scripts/` 在 CI 的檢查範圍內）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -780,15 +784,15 @@ ruff format --check app tests scripts && ruff check app tests scripts
 
 **預期輸出：** `All checks passed!`
 
-- [ ] 全量測試（本 phase **+0 顆**）：
+- [x] 全量測試（本 phase **+0 顆**）：
 
 ```bash
 pytest -q
 ```
 
-**預期輸出：** `632 passed`，0 skipped。
+**預期輸出：** `640 passed`，0 skipped。
 
-- [ ] 零外部依賴實證（三個死埠一起指）：
+- [x] 零外部依賴實證（三個死埠一起指）：
 
 ```bash
 AWS_ENDPOINT_URL=http://127.0.0.1:9 \
@@ -796,18 +800,21 @@ CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
 OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
 ```
 
-**預期輸出：** `632 passed`（與上一條一模一樣）
+**預期輸出：** `640 passed`（與上一條一模一樣）
 
-- [ ] **commit**（⚠ 總覽 §7 鐵律 12：產品負責人沒指示前先不要 commit）：
+- [x] **不 commit——記工作樹快照**（裁決 R0 ＋ 總覽 §7 鐵律 12：
+      產品負責人沒指示前不 commit、不 `git mv` 計畫檔到 `finish/`）：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-git add scripts/aws_check.py
-git commit -m "feat: Phase 85 建 SQS 兩條佇列——personaldocai-jobs（Standard、VisibilityTimeout=900、長輪詢 20、保留 4 天）與 personaldocai-results（VisibilityTimeout=30、其餘相同），.env 填兩個 URL；scripts/aws_check.py 的 sqs 子命令換成真的（兩條各 send→receive→delete）；results 佇列確認 0 則（design6 §0「丙」的何時算過）；零產品碼變更、顆數仍 632、端點仍 22"
-git log -1 --stat
+git status --short
 ```
 
-**預期：** 只列出 `scripts/aws_check.py` 一個檔（`.env` 不入版控，佇列 URL 不會進 repo）。
+**預期：** 相對於開工前的快照，只多出 `M scripts/aws_check.py` 一列
+（`.env` 不入版控，佇列 URL 不會進 repo；`docs/plan/unfinish/` 的計畫檔不搬家）。
+
+> 📌 開工前先留一份快照才比得出來：`git status --short > /tmp/p85-before.txt`，
+> 收工再 `git status --short | diff /tmp/p85-before.txt -`。
 
 ---
 
@@ -888,9 +895,12 @@ git log -1 --stat
 
 ## 6. 驗收清單
 
-- [ ] **開工基線已實查**：`pytest -q` ＝ 632 passed ＋ 0 skipped
+- [x] **開工基線已實查**：`pytest -q` ＝ **640** passed ＋ 0 skipped
 
-- [ ] **兩條佇列都存在（而且只有這兩條）**
+> ⚠ 下面每一條打 `aws` 或跑 `scripts/aws_check.py` 的驗收，都由 **controller 親自執行**
+> （裁決 R3）；實作 subagent 只驗得到 §4.9 那三條（ruff／pytest／死埠）與 `git status`。
+
+- [x] **兩條佇列都存在（而且只有這兩條）**
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -904,7 +914,7 @@ git log -1 --stat
   personaldocai-results
   ```
 
-- [ ] **jobs 的四個屬性都對**
+- [x] **jobs 的四個屬性都對**
 
   ```bash
   JOBS_URL=$(aws sqs get-queue-url --queue-name personaldocai-jobs \
@@ -925,7 +935,7 @@ git log -1 --stat
   ```
   （`MaximumMessageSize` 印 `"262144"` 也可以——那是 2025 年放寬前的預設；**要對的是前三個**。）
 
-- [ ] **results 的可見度是 30**
+- [x] **results 的可見度是 30**
 
   ```bash
   RESULTS_URL=$(aws sqs get-queue-url --queue-name personaldocai-results \
@@ -936,7 +946,7 @@ git log -1 --stat
   ```
   預期：`{"VisibilityTimeout": "30", "ReceiveMessageWaitTimeSeconds": "20"}`
 
-- [ ] **兩條都不是 FIFO**（FIFO 的名字一定以 `.fifo` 結尾，而且會有 `FifoQueue` 屬性）
+- [x] **兩條都不是 FIFO**（FIFO 的名字一定以 `.fifo` 結尾，而且會有 `FifoQueue` 屬性）
 
   ```bash
   aws sqs get-queue-attributes --queue-url "$JOBS_URL" --region ap-northeast-1 \
@@ -944,7 +954,7 @@ git log -1 --stat
   ```
   預期：`None`（＝沒有這個屬性 ＝ Standard）
 
-- [ ] **`.env` 有兩個 URL，容器也讀得到**
+- [x] **`.env` 有兩個 URL，容器也讀得到**
 
   ```bash
   grep -c '^SQS_JOBS_QUEUE_URL=.' /Users/linjunting/personalDocAI/.env      # 預期：1
@@ -954,7 +964,7 @@ git log -1 --stat
   ```
   預期最後一行：`兩條 URL 都有值 = True`
 
-- [ ] **`python scripts/aws_check.py s3 sqs` 印兩個 OK**（★ 本 phase 的重頭戲）
+- [x] **`python scripts/aws_check.py s3 sqs` 印兩個 OK**（★ 本 phase 的重頭戲）
 
   ```bash
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -969,7 +979,7 @@ git log -1 --stat
   ✅ SQS OK：兩條佇列都能 send → receive → delete
   ```
 
-- [ ] **★ results 佇列是 0 則**（design6 §0「丙」的「何時算過」；`ApproximateNumberOfMessages`
+- [x] **★ results 佇列是 0 則**（design6 §0「丙」的「何時算過」；`ApproximateNumberOfMessages`
       有延遲，先等一分鐘）
 
   ```bash
@@ -988,7 +998,7 @@ git log -1 --stat
   不是 0 的話：`aws sqs purge-queue --queue-url "$RESULTS_URL" --region ap-northeast-1`
   （⚠ 60 秒內只能做一次；purge 完再等一分鐘）。
 
-- [ ] **jobs 佇列也是 0 則**（同樣的兩個欄位、同樣的做法）
+- [x] **jobs 佇列也是 0 則**（同樣的兩個欄位、同樣的做法）
 
   ```bash
   aws sqs get-queue-attributes --queue-url "$JOBS_URL" --region ap-northeast-1 \
@@ -997,30 +1007,30 @@ git log -1 --stat
   ```
   預期：兩個都是 `"0"`
 
-- [ ] **全量測試 ＝ 開工基線 ＋ 0**
+- [x] **全量測試 ＝ 開工基線 ＋ 0**
 
   ```bash
   pytest -q
   ```
-  預期：`632 passed`，**0 skipped**
+  預期：`640 passed`，**0 skipped**
 
-- [ ] **零外部依賴實證（三個死埠一起指，顆數不變）**
+- [x] **零外部依賴實證（三個死埠一起指，顆數不變）**
 
   ```bash
   AWS_ENDPOINT_URL=http://127.0.0.1:9 \
   CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
   OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
   ```
-  預期：`632 passed`
+  預期：`640 passed`
 
-- [ ] **端點仍是 22 支**
+- [x] **端點仍是 22 支**
 
   ```bash
   pytest tests/integration/test_nav_header.py::test_端點數仍為22 -q
   ```
   預期：`1 passed`
 
-- [ ] **專案的 `data/` 沒被弄髒**
+- [x] **專案的 `data/` 沒被弄髒**
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -1028,14 +1038,14 @@ git log -1 --stat
   git status --short data/     # 預期：零輸出
   ```
 
-- [ ] **格式與 lint 過**
+- [x] **格式與 lint 過**
 
   ```bash
   ruff format --check app tests scripts && ruff check app tests scripts
   ```
   預期：`All checks passed!`
 
-- [ ] **機密沒有進 repo**（佇列 URL 含帳號 ID）
+- [x] **機密沒有進 repo**（佇列 URL 含帳號 ID）
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -1046,16 +1056,22 @@ git log -1 --stat
   ```
   預期：兩行都印 `OK：…`
 
-- [ ] **`docs/spec/` 一字未動**
+- [x] **`docs/spec/` 一字未動**
 
   ```bash
   git status --short docs/spec/
   ```
   預期：零輸出
 
-- [ ] **git 收尾符合現行節奏**：產品負責人已指示 commit → §4.9 已執行；
-      未指示（現行預設）→ 跳過 commit，改核對
-      `git status --short -- scripts` 的變更恰為 `scripts/aws_check.py`。
+- [x] **git 收尾符合現行節奏（裁決 R0：不 commit）**：核對
+      `git status --short -- scripts` 的變更**恰為** `M scripts/aws_check.py` 一列，
+      而且 `docs/plan/unfinish/` 的計畫檔沒有被 `git mv` 到 `finish/`。
+
+  ```bash
+  cd /Users/linjunting/personalDocAI
+  git status --short -- scripts    # 預期恰一列： M scripts/aws_check.py
+  git status --short -- app tests deploy docs/spec   # 預期：零輸出
+  ```
 
 ---
 
@@ -1076,15 +1092,21 @@ git log -1 --stat
    jobs 的 `SendMessage` ＋ results 的 `Receive`／`Delete`／`ChangeMessageVisibility`，但總覽 §10.2 N
    已裁決 **mac 的 policy 兩邊都要有**（Phase 88／90 在 Mac 上跑工人用的就是 `.env` 這把 key，
    工人要收 jobs、送 results）。Phase 82 的 `mac-policy.json` 若還是舊版，這裡就會被拒。
-   **正解：** 回 Phase 82 §4.6.1 把 `deploy/aws/mac-policy.json` 換成含工人端動作的版本，
-   再發布成新的預設版本（IAM policy 是有版本的，`create-policy-version --set-as-default` 就是「換成新版」）：
+   **📌 2026-09-02 實查：AWS 上掛著的那一份已經是新版**（七條 Sid，含 `WorkerReceiveJobs`／
+   `WorkerSendResults`），所以這個陷阱**預期不會發生**；下面是萬一撞到時的修法。
+   **正解：** 回 Phase 82 §4.6.1 確認 `deploy/aws/mac-policy.json` 是含工人端動作的版本，
+   再發布成新的預設版本（IAM policy 是有版本的，`create-policy-version --set-as-default` 就是「換成新版」）。
+   ⚠ repo 裡那一份帶 `<ACCOUNT_ID>` 佔位，**直接 `file://` 上傳會 `MalformedPolicyDocument`**——
+   比照 Phase 82 §4.6.2 先 `sed` 出一份暫時檔（不進 repo）：
    ```bash
+   ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+   sed "s/<ACCOUNT_ID>/$ACCOUNT_ID/g" deploy/aws/mac-policy.json > /tmp/personaldocai-mac-policy.json
+   grep -c "<ACCOUNT_ID>" /tmp/personaldocai-mac-policy.json     # 預期：0
    aws iam create-policy-version \
-     --policy-arn "arn:aws:iam::<ACCOUNT_ID>:policy/personaldocai-mac-policy" \
-     --policy-document file://deploy/aws/mac-policy.json --set-as-default
+     --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/personaldocai-mac-policy" \
+     --policy-document file:///tmp/personaldocai-mac-policy.json --set-as-default
    ```
-   （`<ACCOUNT_ID>` ＝ `aws sts get-caller-identity --query Account --output text` 印出的 12 位數；
-   一個 policy 最多留 5 個版本，滿了先 `aws iam delete-policy-version` 刪舊的。）
+   （一個 policy 最多留 5 個版本，滿了先 `aws iam delete-policy-version` 刪舊的。）
    被拒之前 ① 已經送了一則進 jobs，記得用 admin 的 `aws sqs purge-queue` 清掉（§4.8）。
    **另一個常見的誤會：** 以為 `unset AWS_ACCESS_KEY_ID …` 之後腳本會改用 admin。不會——
    `unset` 只影響 `aws` CLI；Python 這邊 `load_dotenv()` 會把 `.env` 的 mac key 補回來，
@@ -1124,7 +1146,8 @@ git log -1 --stat
    所以「有訊息卻回空」在短輪詢下是**正常行為**、不是壞掉。
    **正解：** 本專案一律長輪詢：佇列層設 `ReceiveMessageWaitTimeSeconds=20`，
    程式端 `AwsMailbox._receive` 也一定帶 `WaitTimeSeconds`（Phase 83 已釘）。
-   `scripts/aws_check.py` 的 `收到自己那則()` 還多重試兩次，就是為了容忍這種抖動。
+   `scripts/aws_check.py` 的 `receive_own_message()` 還多重試兩次（`RECEIVE_RETRIES = 3`），
+   就是為了容忍這種抖動。
 
 8. **症狀：** 佇列 URL 被 commit 進 repo。
    **原因：** URL 長得像網址，看起來不像機密。但它**含有你的 12 位數帳號 ID**。
@@ -1155,8 +1178,10 @@ git log -1 --stat
   - 兩條都**不是** FIFO、都**沒有** dead-letter queue、都**沒有**自管金鑰
 - `.env` 多兩個有值的變數（`SQS_JOBS_QUEUE_URL`／`SQS_RESULTS_QUEUE_URL`），
   app 與 worker 容器都讀得到。
-- `scripts/aws_check.py` 的 `sqs` 子命令變成真的：兩條佇列各做一次
-  send → receive → delete，並在收到別人的訊息時停手提醒。
+- `scripts/aws_check.py` 的 `sqs` 子命令變成真的：`check_sqs()` 從佔位換成真的實作，
+  兩條佇列各做一次 send → receive → delete（helper `receive_own_message()` 長輪詢
+  最多 `RECEIVE_RETRIES = 3` 次），並在收到別人的訊息時停手提醒。
+  **`check_s3()`／`main()` 與檔頭那兩支 helper 一個字都沒動。**
   用 `.env` 的 mac key 跑（總覽 §10.2 N：`personaldocai-mac-policy` 兩條佇列的收發都有），
   第一行印出金鑰來源；purge 仍然是 admin 用 CLI 做的事。
 
@@ -1165,7 +1190,8 @@ git log -1 --stat
 `CLOUD_ROUTE` 仍然是 `off`、`get_cloud_route()` 仍然回 `CloudRouteOff()`——
 所以**沒有任何一張照片會被送進 S3，也沒有任何一則訊息會被送進這兩條佇列**。
 上傳、待決定、詢問、進度面板一個像素都沒變。
-測試顆數仍是 **632 passed ＋ 0 skipped**（本 phase +0），端點仍是 **22** 支、
+測試顆數仍是 **640 passed ＋ 0 skipped**（本 phase +0；640 ＝ 2026-09-02 實查基線 624
+＋ Phase 83 的 +16），端點仍是 **22** 支、
 `photo` 表零改動、前端零改動、`compose.yaml` 零改動、`docs/spec/` 一字未動、
 `app/` 底下**一行都沒改**。
 
@@ -1191,9 +1217,16 @@ S3 上真的出現 `input` 與 `context`、jobs 佇列有 1 則、results 佇列
 worker log 出現 `fallback=local reason=result_timeout`。
 **那一步驗的正是「雲端壞掉時使用者無感」**——比「雲端成功」更重要。
 
-**顆數：** 開工基線 **632** ＋ **0** ＝ **632**（0 skipped）。
+**顆數：** 開工基線 **640** ＋ **0** ＝ **640**（0 skipped；2026-09-02 實查基線 624 起算）。
 
 ---
+
+
+## 8.1 執行紀錄（2026-09-02，controller 親自執行；值不寫進文件）
+
+- AWS 指令全部以 default profile（`personaldocai-admin`）執行、不 source `.env`；`scripts/aws_check.py` 在 host venv 跑，金鑰來源印出「.env 那把（personaldocai-mac，最小權限）」。
+- `personaldocai-jobs`（Visibility 900）／`personaldocai-results`（30）兩條 Standard（`FifoQueue` 屬性不存在＝非 FIFO），Retention 345600、Wait 20；東京恰兩條；`.env` 新增兩條 URL，容器 restart 後 worker 讀到；`python scripts/aws_check.py s3 sqs` 印兩個 ✅；30 秒後兩條佇列 `ApproximateNumberOfMessages`／`NotVisible` 皆 0（未動用 purge）。
+- 驗收：全量 640 passed／0 skipped、三死埠 640、端點 22、ruff 綠、追蹤檔零帳號 ID／bucket 後綴／佇列 URL、`docs/spec/` 與 `data/` 乾淨。快照 T85_HEAD 記於 `.superpowers/sdd/phase0902-1/`。
 
 ## 附：本文件引用的官方文件
 

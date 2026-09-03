@@ -275,15 +275,12 @@ def test_get_cloud_route預設off時回CloudRouteOff(monkeypatch):
     assert config.CLOUD_ROUTE == "off", "第五道安全網應該已經把它蓋成 off"
     assert isinstance(get_cloud_route(), CloudRouteOff)
 
-    # assume／ec2 現在還沒接（總覽 §2.7：本增量**唯二**允許的暫時分支之一）。
-    # ⚠ 這兩行是**鬧鐘**：
-    #     Phase 86 接上 assume 時 → **拆掉 assume 那半**（改成驗它建出 CloudRoute）
-    #     Phase 89 接上 ec2 時   → **拆掉 ec2 那半**（改成驗它的探測是 Ec2Probe）
-    #   兩個 phase 各自的測試檔（test_dependencies_cloud_unit.py）會接手那一半的驗證。
-    for mode in ("assume", "ec2"):
-        monkeypatch.setattr(config, "CLOUD_ROUTE", mode)
-        with pytest.raises(NotImplementedError):
-            get_cloud_route()
+    # ec2 現在還沒接（總覽 §2.7：本增量唯二允許的暫時分支，只剩這最後一個）。
+    # ⚠ 這幾行是**鬧鐘**：Phase 89 接上 ec2 時 → **拆掉**（改成驗它的探測是 Ec2Probe）。
+    #   assume 那半已由 Phase 86 拆掉——它的正面斷言在 test_dependencies_cloud_unit.py。
+    monkeypatch.setattr(config, "CLOUD_ROUTE", "ec2")
+    with pytest.raises(NotImplementedError):
+        get_cloud_route()
 
     # 打錯字要當場炸，不要默默當成 off——「我明明開了雲端路怎麼都沒送出去」是最難查的
     monkeypatch.setattr(config, "CLOUD_ROUTE", "cloudy")

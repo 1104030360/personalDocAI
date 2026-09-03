@@ -357,6 +357,62 @@ read that one. Reading them together: a non-zero `llen celery` means work is que
 for the worker; something in `ingest:open` while `llen` is 0 means the worker is busy with it
 (`inspect active` should show it — if it does not, the job is stuck; see section 10).
 
+### S3 / SQS layer (the cloud route)
+
+Only relevant when `CLOUD_ROUTE` is not `off`. With `off` (the default) nothing ever
+reaches AWS: the S3 and queue commands below report an empty, idle mailbox. The last
+command is the exception — the worker log still shows `route=local` for every photo, and
+`fallback=local reason=remote_unavailable` whenever the gate cleared a file for the cloud
+and found the route switched off. Both lines are normal on `off`, not a failure.
+
+```bash
+set -a; . ./.env; set +a                          # load $S3_BUCKET, $AWS_REGION and the two queue URLs
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY     # so the CLI uses ~/.aws, not the app's key
+aws sts get-caller-identity --query Arn --output text
+                                                  # expect: .../personaldocai-admin
+
+# Anything in flight right now? (a finished job cleans up after itself, so normally empty)
+aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ \
+  --region "$AWS_REGION" --query 'Contents[].Key' --output text
+
+# How many messages are waiting / in flight on each queue
+for URL in "$SQS_JOBS_QUEUE_URL" "$SQS_RESULTS_QUEUE_URL"; do
+  echo "-- ${URL##*/}"
+  aws sqs get-queue-attributes --queue-url "$URL" --region "$AWS_REGION" \
+    --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
+    --query 'Attributes' --output json
+done
+
+# Which route did each photo take? The worker log is the only place this is visible.
+docker compose logs worker | grep -E "route=|fallback="
+```
+
+How to read it:
+
+- `documents/` empty and both queues at 0 = idle. That is the normal resting state.
+- `route=local verdict=SENSITIVE` or `verdict=UNCERTAIN` — the privacy gate kept the file
+  on this machine. Nothing was sent to AWS. The gate looks at the **image itself** (it is
+  shown to a vision model, one short question), never at the filename, and anything it is
+  not confident about stays here. That is the intended default.
+- `route=cloud verdict=NON_SENSITIVE` — it went to S3 and onto the jobs queue.
+- `fallback=local reason=...` — it tried the cloud route and came back. Four reasons:
+  `remote_unavailable` (the instance is not running, or `CLOUD_ROUTE=off`),
+  `submit_failed` (S3 or SQS refused),
+  `result_timeout` (nobody answered within `CLOUD_RESULT_TIMEOUT_SECONDS`),
+  `redelivered_without_result` (the task was retried but no result was on S3).
+  In every case the photo still lands in the inbox exactly as it would have without AWS —
+  that is the whole point of the design.
+- Objects left under `documents/` for more than a few minutes mean a cleanup was missed.
+  They are harmless: the bucket lifecycle rule expires everything under that prefix after
+  two days.
+- Messages piling up on `personaldocai-jobs` mean nobody is consuming them (no worker
+  running). Clear them with
+  `aws sqs purge-queue --queue-url "$SQS_JOBS_QUEUE_URL" --region "$AWS_REGION"`
+  — once per 60 seconds at most, and it takes up to a minute to take effect.
+
+`ApproximateNumberOfMessages` is approximate on purpose: SQS is distributed, so the
+number lags a send or a delete by up to a minute. Wait before concluding anything.
+
 ### app layer (the ask flow and the camera)
 
 ```bash

@@ -1,5 +1,26 @@
 # Phase 83：`aws_mailbox` 模組（全系統唯一碰 boto3 的地方）
 
+> 📌 **2026-09-02 校準紀錄**（本檔已依 `.superpowers/sdd/phase0902-1/progress.md` 的裁決 R0〜R7 重新校準過，
+> 對照基準是當天的工作樹 HEAD `a159131`。下面一列一條，寫清楚每條裁決落在本檔哪裡）：
+>
+> | 裁決 | 這一條在本檔怎麼落地 |
+> |---|---|
+> | **R0**（不 commit、用工作樹快照相減審） | §4.9 從「commit」改成「**不 commit——記快照**」；§6 最後一條的驗收改成 `.superpowers/sdd/phase0902-1/snapshot-tree` 兩顆 tree 相減 ＋ `git status --short` |
+> | **R1**（識別字一律英文） | §4.2 測試碼與 §4.4 實作碼裡的中文函式／變數／參數名全部改英文（`test_…` 的**測試函式名維持中文**；log 字樣、錯誤訊息、註解、docstring 也維持中文）。跨檔共用名見 §4.4 的常數與 §4.2 的 `StubS3`／`StubSqs`／`StubEc2`／`make_mailbox()`／`make_client_error()` |
+> | **R2**（顆數以 2026-09-02 實查 624 起算） | 全檔的 616／632 改成 **624／640**。**「+16」這個增量沒有變**——變的只是絕對值：總覽 §2.2／§2.7／§9 的 632 是用 616 基線算的，而總覽 §2.2 的 Phase 81 那列已註記「實 **624**」（Phase 75／79／81 的 review 裁決各多補了幾顆守門測試）。抄顆數時**只對「本 phase 新增幾顆」**，不要對絕對數字 |
+> | **R3**（AWS 操作歸 controller） | 本 phase **一條 `aws` 指令都沒有**（測試全部用手寫 stub、一個位元組都不出網），所以 R3 在本檔只影響 §4.1 的**重建映像**：那一步由 controller 親自執行，實作者只做 `uv pip install -r requirements.txt` |
+> | **R4**（`scripts/aws_check.py` 不寫自動化測試） | 與本 phase 無關（那支腳本是 Phase 84／85 建的）。本檔 §8 提到它時已註明是下一個 phase 的事 |
+> | **R5**（煙霧前開 Ollama、開關撥 cloud） | 與本 phase 無關（本 phase 零煙霧、零模型呼叫）。那是 Phase 86 |
+> | **R6**（不需要真機／手機） | 與本 phase 無關（零前端、零鏡頭） |
+> | **R7**（四份計畫檔平行校準，只改自己名下那一份） | 本檔是校準者 A 名下；`app/`／`tests/`／總覽／其他計畫檔一個字都沒動 |
+>
+> 另外校準時實查修正的過期事實（詳見各處的 📌 標記）：
+> `tests/integration/test_design5_error_paths.py` 檔頭**已經有** `import re`（實查第 30 行，不必再加）、
+> 目標那顆測試就在**第 426 行**（與 §4.6 寫的一致）、
+> `deploy/aws/mac-policy.json` 的 `s3:ListBucket` 那條 Sid 實際叫 **`ListMailboxBucket`**（§7 陷阱 10 已改成實檔名字）、
+> Phase 82 的計畫檔已歸檔到 `docs/plan/finish/`、
+> `ruff format --check` 現在的檔案數是 **105**（本 phase 之後 107）。
+
 > 🎯 **提醒：這是 side project，不要過度設計。** 只做本文件寫到的事。
 > 本 phase 特別**不要**做的四件事：
 > ① 不要建任何真的 bucket／佇列（那是 Phase 84／85，而且本 phase 的測試**一個位元組都不出網**）；
@@ -95,16 +116,30 @@ Phase 78〜81 的流程程式碼（`gated_ingest.py`、`cloud_ingest.py`）從�
 
 ### 2.1 前面的 phase
 
+📌 **2026-09-02 實查：下面四條全部已經滿足**（工作樹 HEAD `a159131`，Phase 74〜82 皆已 commit
+並歸檔到 `docs/plan/finish/`；`docs/plan/unfinish/` 只剩總覽與 83〜95）。
+
 - **Phase 74〜81 全部完成**（階段甲）。
-- **★G1 已由產品負責人明示通過。**
-- **Phase 82 完成**：AWS 帳號開好、CLI 裝好、`aws sts get-caller-identity` 通、
+- **★G1 已由產品負責人明示通過**（他親自做完 Phase 82，並以 dev-prompt `phase0902-1.md`
+  明示執行 83〜86＝總覽 §4 說的「一句明確的話……或 dev-prompt 檔案」）。
+- **Phase 82 完成**（計畫檔已歸檔到 `docs/plan/finish/phase-82-AWS帳號與工具.md`）：
+  AWS 帳號開好、CLI 2.36.38 裝好、`aws sts get-caller-identity` 的 Arn 結尾是
+  `user/personaldocai-admin`、region `ap-northeast-1`、Budget `personaldocai-budget` $5／月已建、
+  `deploy/aws/mac-policy.json` 在（七條 Sid，含 §7 陷阱 10 講的 `ListMailboxBucket`）、
   `.env` 已有 `AWS_ACCESS_KEY_ID`／`AWS_SECRET_ACCESS_KEY`／`AWS_REGION`。
 
   > 嚴格說，本 phase 的程式碼與測試**完全不需要 AWS 帳號**（一個位元組都不出網）。
   > 但 Phase 84 一開工就要拿這個模組去打真的 S3，順序照總覽 §2.3 排就好。
+  >
+  > ⚠ **`~/.aws` 裡只有 `[default]`，沒有叫 `personaldocai-admin` 的 profile。**
+  > default 就是 admin，所以**所有 `aws` 指令都不必也不可以加 `--profile personaldocai-admin`**
+  > （加了會噴 `The config profile (personaldocai-admin) could not be found`）。
+  > 本 phase 一條 `aws` 指令都沒有，寫在這裡是給接著做 84／85 的人看的。
 
-- **Phase 77 已經在 `app/services/cloud_ingest.py` 裡定義了 `MailboxMessage`**，
+- **Phase 77 已經在 `app/services/cloud_ingest.py` 裡定義了 `MailboxMessage`**（實查在第 115 行），
   本 phase 直接 import 它（**不要**在本檔另外定義一份，理由見 §4.4 的 ⚠ 框）。
+  同一個檔的 `CloudMailbox` Protocol（第 135 行起）**十四支方法的簽章與 §4.4 逐字相同**
+  ——校準時已用 `diff` 對過，實作時照抄 §4.4 就會結構相符（Protocol 是結構型別，不必繼承）。
 
 ### 2.2 開工基線（實查）
 
@@ -112,8 +147,12 @@ Phase 78〜81 的流程程式碼（`gated_ingest.py`、`cloud_ingest.py`）從�
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 
 pytest -q
-# 預期尾巴：616 passed，0 skipped
-#（543 增量五基線 ＋ Phase 74〜81 的 73 顆）
+# 預期尾巴：624 passed，0 skipped
+#（543 增量五基線 ＋ Phase 74〜81 實際落地的 81 顆）
+# 📌 2026-09-02 實查：624。總覽 §2.2／§2.7／§9 寫的 616 是「當初規劃的」數字；
+#    Phase 75／79／81 實作時各自的 code review 裁決多補了幾顆守門測試
+#    （總覽 §2.2 的 Phase 81 那列已註記「實 624」）。
+#    ⚠ 對顆數時**只對「本 phase 新增幾顆」**，不要對絕對數字。
 
 # Phase 77 留下的契約要在（本 phase 會 import 它）
 grep -n "class MailboxMessage" app/services/cloud_ingest.py
@@ -134,7 +173,18 @@ python -c "import boto3" 2>&1 | tail -1 # 預期：ModuleNotFoundError: No modul
 **+16 顆，與總覽 §2.7／§9／§10.2 J 一致（總覽已吸收這一顆）。**
 第 16 顆 `test_get_object拿得回位元組而delete_objects送出鍵清單` 是總覽 §10.2 追認項 J
 補進來的成功路徑測試（理由見 §8）；**不是**「比總覽多 1 顆」，不要再往上加。
-開工基線 **616** → 收工 **632**。
+開工基線 **624**（2026-09-02 實查）→ 收工 **640**。
+
+> 📌 **2026-09-02 review fix wave 之後是 +17**（本檔這一顆之外，Phase 86 的 fix 另加一顆，
+> 全量到 **644**）：review 裁決補了 `test_put_object與send失敗時例外原樣往外丟`
+> ——它是唯一會在有人把 `put_object`／`send_job`／`send_result` 包成 try/except 時變紅的測試。
+> 詳見 §8 的 fix wave 那一行。
+
+> 📌 **為什麼不是總覽寫的 616 → 632：** 那兩個數字是規劃階段算的，
+> 而 Phase 75／79／81 實作時各自的 code review 裁決多補了幾顆守門測試
+> （總覽 §2.2 的 Phase 81 那列已註記「實 **624**」）。
+> **本 phase 的 +16 一顆都沒變**，變的只是絕對值。
+> Phase 84／85 都是 +0，所以 Phase 86 開工基線是 **640**、收工 **642**。
 
 ---
 
@@ -142,7 +192,9 @@ python -c "import boto3" 2>&1 | tail -1 # 預期：ModuleNotFoundError: No modul
 
 ### 做
 
-1. `requirements.txt` 加 `boto3>=1.35`（本增量**唯一**的新套件），host 與映像都裝上。
+1. `requirements.txt` 加 `boto3>=1.35`（本增量**唯一**的新套件）。
+   實作者只負責 host 的 `.venv`（`uv pip install -r requirements.txt`）；
+   **重建映像由 controller 親自執行**（2026-09-02 裁決 R3，見 §4.1）。
 2. 新建 `tests/unit/test_aws_mailbox_unit.py`（16 顆，含一顆掃碼），**先寫、先跑紅**。
 3. 新建 `app/services/aws_mailbox.py`：`AwsMailbox` 的十四個方法。
 4. **改**一顆既有測試：`tests/integration/test_design5_error_paths.py::test_沒有背景任務框架的替代品也沒有雲端儲存`
@@ -160,8 +212,9 @@ python -c "import boto3" 2>&1 | tail -1 # 預期：ModuleNotFoundError: No modul
 | 用 `moto`／`localstack`／`pytest-localstack` | 本專案只用到八個 API，手寫 stub 更好讀、更好斷言，也少一個要裝要升級的相依 |
 | 在本檔用 `head_object` 判斷「結果寫好了沒」 | design6 §1.2 第 4 列**已否決**輪詢方案 A。完成訊號一律是 results 佇列的訊息（D9） |
 | 一次收多則訊息（`MaxNumberOfMessages > 1`） | 一次一則，邏輯最單純。多則會帶出「拿了三則只做完一則、另外兩則的可見度怎麼辦」的麻煩 |
-| 建 bucket／建佇列／刪佇列的方法 | **那些是人做的事**（Phase 84／85 的 CLI 指令），而且 `personaldocai-mac-policy` 根本沒給那些權限（Phase 82 §4.6.1） |
-| 改 `app/services/cloud_ingest.py` | 那是 Phase 77／79／80 的檔。本 phase 只**用**它的 `MailboxMessage`，一個字都不改 |
+| 建 bucket／建佇列／刪佇列的方法 | **那些是人做的事**（Phase 84／85 的 CLI 指令，而且 2026-09-02 裁決 R3 明訂由 controller 親自打），而且 `personaldocai-mac-policy` 根本沒給那些權限（`docs/plan/finish/phase-82-AWS帳號與工具.md` §4.6.1；Phase 82 已歸檔） |
+| 改 `app/services/cloud_ingest.py` | 那是 Phase 77／79／80 的檔。本 phase 只**用**它的 `MailboxMessage`，一個字都不改。⚠ 它自己也有一個 `MAX_WAIT_SECONDS = 20`（`app/services/cloud_ingest.py:61`，給 `_poll_wait_seconds()` 用）——本檔會**再定義一個同名常數**，那是刻意的：兩層各自夾一次，`aws_mailbox` 不必相信呼叫端有夾過。不要為了「去重複」把其中一個改成 import 另一個（那會讓 `cloud_worker` 那台 EC2 上的模組多一條相依） |
+| 改 `app/services/staging_service.py` | 本檔的 `INPUT_EXTENSIONS` 與它的 `STAGING_EXTENSIONS`（`app/services/staging_service.py:51`）三個鍵值**逐字相同**，但兩者是**不同的契約**：那邊是「本機暫存檔叫什麼」，這邊是「S3 物件叫什麼」。不要把其中一邊改成 import 另一邊——理由同上（`cloud_worker` 不該為了副檔名表把 `config`／`DATA_DIR` 那一串拉進 EC2）。§4.2 的 `test_input_key依content_type給副檔名` 把三對值逐字釘死，漂移會當場紅 |
 | 改 `app/dependencies.py` | `get_cloud_route()` 的 `assume` 分支是 **Phase 86**。本 phase 做完之後 `AwsMailbox` **還沒有任何人呼叫** |
 | 改 `compose.yaml` | 本增量零改動（總覽 §7 鐵律 11）。AWS 設定全部走 `.env` |
 | 改端點、改前端、改資料庫 | 端點恆 22、前端零改動、`photo` 表零改動 |
@@ -174,9 +227,9 @@ python -c "import boto3" 2>&1 | tail -1 # 預期：ModuleNotFoundError: No modul
 > 步驟 4 才寫實作讓它轉綠。「跑它確認紅」不可以跳過——沒看過紅的測試，
 > 你不知道它有沒有在測東西。
 
-### 4.1 `requirements.txt` 加 `boto3`，host 與映像都裝上
+### 4.1 `requirements.txt` 加 `boto3`，host 裝上（映像由 controller 重建）
 
-- [ ] 打開 `/Users/linjunting/personalDocAI/requirements.txt`，在
+- [x] 打開 `/Users/linjunting/personalDocAI/requirements.txt`，在
       「`# --- 佇列（增量五 design5.md D5：非同步入庫）---`」那一段的**後面**、
       「`# --- 設定 ---`」的**前面**插入：
 
@@ -190,7 +243,7 @@ boto3>=1.35               # AWS 的官方 Python 套件（S3／SQS／EC2 Describ
                           #   症狀會是走雲端路時 ModuleNotFoundError（容器裡根本沒有這個套件）
 ```
 
-- [ ] **host 的 `.venv` 也要裝**（pytest 在 host 跑，而測試檔要 `from botocore.exceptions import ClientError`）：
+- [x] **host 的 `.venv` 也要裝**（pytest 在 host 跑，而測試檔要 `from botocore.exceptions import ClientError`）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -198,13 +251,25 @@ uv pip install -r requirements.txt
 python -c "import boto3, botocore; print('boto3', boto3.__version__)"
 ```
 
-**預期輸出**（版本號會不一樣，`1.35` 以上就對）：
+**預期輸出**（版本號一定會不一樣，`1.35` 以上就對；2026-09 實際會裝到 `1.4x`）：
 
 ```text
-boto3 1.42.6
+boto3 1.4X.Y
 ```
 
-- [ ] **重建映像**（app 與 worker 用同一份映像，一次就好）：
+> 📌 **下限為什麼還是 `>=1.35`（2026-09-02 重新確認過，保留）：** 本檔只用到八個
+> 十年沒變過的 API（`put_object`／`get_object`／`delete_objects`／`send_message`／
+> `receive_message`／`delete_message`／`change_message_visibility`／`describe_instances`），
+> 下限拉高沒有任何好處，只會讓「裝不起來」多一種可能。
+> ⚠ 不要學 `ruff` 那一行加**上限**：ruff 有上限是因為它的 formatter 輸出會隨版本變、CI 會紅；
+> boto3 沒有這個問題。
+
+- [x] **重建映像**（app 與 worker 用同一份映像，一次就好）：
+
+> ⚠ **本步驟由 controller 親自執行；實作 subagent 不重建映像**
+> （2026-09-02 裁決 R3：容器的建立／重啟這種有外部副作用的動作集中在 controller 眼前做）。
+> 實作者做完上面那條 `uv pip install` 就可以直接往下走 §4.2 ——
+> 本 phase 的測試全部在 host 跑、而且一個位元組都不出網，映像裡有沒有 boto3 不影響任何一顆。
 
 ```bash
 docker compose -f compose.yaml up -d --build
@@ -214,7 +279,7 @@ docker compose exec worker python -c "import boto3; print('容器裡也有 boto3
 **預期輸出：**
 
 ```text
-容器裡也有 boto3 1.42.6
+容器裡也有 boto3 1.4X.Y
 ```
 
 > ⚠ **`up -d` 不帶 `--build` 不會重建映像。** 常駐模式的程式在映像裡（不是 bind-mount），
@@ -226,7 +291,7 @@ docker compose exec worker python -c "import boto3; print('容器裡也有 boto3
 > 這代表「重建映像」在本專案要當成**需要手動煙霧一次**的動作
 > ——本 phase 的煙霧就是上面那條 `docker compose exec worker python -c ...`。
 
-- [ ] **這時候跑一次全量，會看到「一顆紅」——這是預期的**：
+- [x] **這時候跑一次全量，會看到「一顆紅」——這是預期的**：
 
 ```bash
 pytest -q
@@ -236,7 +301,7 @@ pytest -q
 
 ```text
 FAILED tests/integration/test_design5_error_paths.py::test_沒有背景任務框架的替代品也沒有雲端儲存
-1 failed, 615 passed
+1 failed, 623 passed
 ```
 
 錯誤訊息會是：
@@ -254,7 +319,7 @@ assert 'boto3' not in '# --- web 框架 ---\nfastapi>=0.115 ...'
 
 ### 4.2 先寫測試（紅）
 
-- [ ] 新建 `/Users/linjunting/personalDocAI/tests/unit/test_aws_mailbox_unit.py`，**整份逐字貼上**：
+- [x] 新建 `/Users/linjunting/personalDocAI/tests/unit/test_aws_mailbox_unit.py`，**整份逐字貼上**：
 
 ```python
 """AwsMailbox 的單元測試：全部用手寫的 stub client，**一個位元組都不出網**。
@@ -280,20 +345,20 @@ from botocore.exceptions import ClientError
 
 from app.services.aws_mailbox import AwsMailbox
 
-專案根目錄 = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 JOBS_URL = "https://sqs.example.invalid/jobs"
 RESULTS_URL = "https://sqs.example.invalid/results"
 
 
-def 用戶端錯誤(代碼: str, 動作: str) -> ClientError:
+def make_client_error(code: str, operation: str) -> ClientError:
     """造一個 boto3 會丟的 ClientError。
 
     真實的 ClientError 是這樣被建出來的：第一個參數是「AWS 回來的錯誤內容」，
     第二個參數是「哪一個 API」。錯誤代碼要放在 response["Error"]["Code"]——
     aws_mailbox.get_object() 就是讀這個位置決定「回 None 還是往外丟」。
     """
-    return ClientError({"Error": {"Code": 代碼, "Message": "測試用"}}, 動作)
+    return ClientError({"Error": {"Code": code, "Message": "測試用"}}, operation)
 
 
 class StubS3:
@@ -334,7 +399,7 @@ class StubS3:
         # 真 S3 的回應長相：部分失敗也是 HTTP 200，失敗的 key 列在 Errors、成功的列在 Deleted
         if self._delete_errors:
             return {"Errors": list(self._delete_errors)}
-        return {"Deleted": [{"Key": 物件["Key"]} for 物件 in kwargs["Delete"]["Objects"]]}
+        return {"Deleted": [{"Key": obj["Key"]} for obj in kwargs["Delete"]["Objects"]]}
 
 
 class StubSqs:
@@ -386,7 +451,7 @@ class StubEc2:
         return {"Reservations": self._reservations}
 
 
-def 建信箱(*, s3=None, sqs=None, ec2=None) -> AwsMailbox:
+def make_mailbox(*, s3=None, sqs=None, ec2=None) -> AwsMailbox:
     """建一個全部用 stub 的 AwsMailbox。bucket 與兩條佇列都是假的（不會被真的連上）。"""
     return AwsMailbox(
         bucket="test-bucket",
@@ -405,22 +470,27 @@ def 建信箱(*, s3=None, sqs=None, ec2=None) -> AwsMailbox:
 def test_input_key依content_type給副檔名():
     """三種格式各對到一個副檔名。工人那端是**看副檔名**反推 content_type 的
     （總覽 §2.6 第 4 步），所以這張對照表是雙向契約。
-    """
-    信箱 = 建信箱()
 
-    assert 信箱.input_key("job-1", "image/jpeg") == "documents/job-1/input.jpg"
-    assert 信箱.input_key("job-1", "image/png") == "documents/job-1/input.png"
-    assert 信箱.input_key("job-1", "application/pdf") == "documents/job-1/input.pdf"
+    ⚠ 這三對值與 app/services/staging_service.py 的 STAGING_EXTENSIONS 逐字相同
+      （tests/fakes.FakeMailbox 的 input_key 用的就是那一份）。兩邊是**不同的契約**、
+      刻意各留一份定義；本顆與 test_cloud_ingest_unit.py::test_input鍵名依content_type決定副檔名
+      各自把值釘死，所以漂移一定會被抓到。
+    """
+    mailbox = make_mailbox()
+
+    assert mailbox.input_key("job-1", "image/jpeg") == "documents/job-1/input.jpg"
+    assert mailbox.input_key("job-1", "image/png") == "documents/job-1/input.png"
+    assert mailbox.input_key("job-1", "application/pdf") == "documents/job-1/input.pdf"
 
 
 def test_context_key與result_key的路徑():
     """三個物件全部住在 documents/{job_id}/ 底下。這是 Lifecycle 能生效的前提：
     Phase 84 的清潔規則掛在 documents/ 前綴上，鍵名跑掉那把掃把就掃不到。
     """
-    信箱 = 建信箱()
+    mailbox = make_mailbox()
 
-    assert 信箱.context_key("job-1") == "documents/job-1/context.json"
-    assert 信箱.result_key("job-1") == "documents/job-1/result.json"
+    assert mailbox.context_key("job-1") == "documents/job-1/context.json"
+    assert mailbox.result_key("job-1") == "documents/job-1/result.json"
 
 
 # ---------- S3 ----------
@@ -431,16 +501,16 @@ def test_put_object帶ContentType():
     application/octet-stream，用瀏覽器看時變成「下載檔案」而不是「顯示圖片」。
     """
     s3 = StubS3()
-    信箱 = 建信箱(s3=s3)
+    mailbox = make_mailbox(s3=s3)
 
-    信箱.put_object("documents/job-1/input.png", b"PNGDATA", "image/png")
+    mailbox.put_object("documents/job-1/input.png", b"PNGDATA", "image/png")
 
     assert len(s3.put_calls) == 1
-    呼叫 = s3.put_calls[0]
-    assert 呼叫["Bucket"] == "test-bucket"
-    assert 呼叫["Key"] == "documents/job-1/input.png"
-    assert 呼叫["Body"] == b"PNGDATA"
-    assert 呼叫["ContentType"] == "image/png"
+    call = s3.put_calls[0]
+    assert call["Bucket"] == "test-bucket"
+    assert call["Key"] == "documents/job-1/input.png"
+    assert call["Body"] == b"PNGDATA"
+    assert call["ContentType"] == "image/png"
 
 
 def test_get_object拿得回位元組而delete_objects送出鍵清單():
@@ -452,15 +522,15 @@ def test_get_object拿得回位元組而delete_objects送出鍵清單():
       壞掉的話整條雲端路會安靜地每次都逾時 fallback，看起來像 AWS 慢，其實是程式錯。
     """
     s3 = StubS3(get_body=b'{"job_id": "job-1"}')
-    信箱 = 建信箱(s3=s3)
+    mailbox = make_mailbox(s3=s3)
 
-    內容 = 信箱.get_object("documents/job-1/result.json")
+    content = mailbox.get_object("documents/job-1/result.json")
 
-    assert 內容 == b'{"job_id": "job-1"}'
+    assert content == b'{"job_id": "job-1"}'
     assert s3.get_calls[0]["Bucket"] == "test-bucket"
     assert s3.get_calls[0]["Key"] == "documents/job-1/result.json"
 
-    信箱.delete_objects(
+    mailbox.delete_objects(
         [
             "documents/job-1/input.png",
             "documents/job-1/context.json",
@@ -485,10 +555,10 @@ def test_get_object遇到NoSuchKey回None():
     誰會踩到：崩潰重送時的 fetch_result()（總覽 §2.5）、工人的冪等檢查
     （總覽 §2.6 第 1 步）——兩處的「不在」都是最常見的情況。
     """
-    s3 = StubS3(get_error=用戶端錯誤("NoSuchKey", "GetObject"))
-    信箱 = 建信箱(s3=s3)
+    s3 = StubS3(get_error=make_client_error("NoSuchKey", "GetObject"))
+    mailbox = make_mailbox(s3=s3)
 
-    assert 信箱.get_object("documents/job-1/result.json") is None
+    assert mailbox.get_object("documents/job-1/result.json") is None
     assert len(s3.get_calls) == 1
 
 
@@ -497,11 +567,11 @@ def test_get_object遇到其他錯誤照樣往外丟():
     偽裝的後果：權限設錯時每一筆都安靜地逾時 fallback，你會以為是 AWS 慢，
     永遠查不到其實是 IAM policy 少了一行。
     """
-    s3 = StubS3(get_error=用戶端錯誤("AccessDenied", "GetObject"))
-    信箱 = 建信箱(s3=s3)
+    s3 = StubS3(get_error=make_client_error("AccessDenied", "GetObject"))
+    mailbox = make_mailbox(s3=s3)
 
     with pytest.raises(ClientError):
-        信箱.get_object("documents/job-1/result.json")
+        mailbox.get_object("documents/job-1/result.json")
 
 
 def test_delete_objects失敗只記log不往外丟(caplog):
@@ -515,23 +585,23 @@ def test_delete_objects失敗只記log不往外丟(caplog):
          IAM 少了 s3:DeleteObject 時看起來就是「沒事」，殘骸卻一直留著。
     """
     # ① 整個請求炸掉
-    s3 = StubS3(delete_error=用戶端錯誤("AccessDenied", "DeleteObjects"))
-    信箱 = 建信箱(s3=s3)
+    s3 = StubS3(delete_error=make_client_error("AccessDenied", "DeleteObjects"))
+    mailbox = make_mailbox(s3=s3)
 
     with caplog.at_level(logging.WARNING, logger="app.services.aws_mailbox"):
-        信箱.delete_objects(["documents/job-1/input.png"])  # 不可以炸
+        mailbox.delete_objects(["documents/job-1/input.png"])  # 不可以炸
 
     assert len(s3.delete_calls) == 1
     assert "刪 S3 物件失敗" in caplog.text
 
     # ② HTTP 200，但 Errors 裡列了刪不掉的 key
     caplog.clear()
-    刪不掉 = {"Key": "documents/job-1/input.png", "Code": "AccessDenied", "Message": "測試用"}
-    s3_2 = StubS3(delete_errors=[刪不掉])
-    信箱2 = 建信箱(s3=s3_2)
+    failed_key = {"Key": "documents/job-1/input.png", "Code": "AccessDenied", "Message": "測試用"}
+    s3_2 = StubS3(delete_errors=[failed_key])
+    mailbox2 = make_mailbox(s3=s3_2)
 
     with caplog.at_level(logging.WARNING, logger="app.services.aws_mailbox"):
-        信箱2.delete_objects(["documents/job-1/input.png"])  # 一樣不可以炸
+        mailbox2.delete_objects(["documents/job-1/input.png"])  # 一樣不可以炸
 
     assert len(s3_2.delete_calls) == 1
     assert "刪 S3 物件失敗" in caplog.text
@@ -549,16 +619,16 @@ def test_send_job的body恰兩鍵():
     多頁 PDF 幾十 MB 放不下，而且放得下也不准放）。
     """
     sqs = StubSqs()
-    信箱 = 建信箱(sqs=sqs)
+    mailbox = make_mailbox(sqs=sqs)
 
-    信箱.send_job("job-1", "documents/job-1/input.jpg")
+    mailbox.send_job("job-1", "documents/job-1/input.jpg")
 
     assert len(sqs.send_calls) == 1
     assert sqs.send_calls[0]["QueueUrl"] == JOBS_URL
-    內容 = json.loads(sqs.send_calls[0]["MessageBody"])
-    assert 內容 == {"job_id": "job-1", "s3_key": "documents/job-1/input.jpg"}
-    assert set(內容) == {"job_id", "s3_key"}
-    assert all(isinstance(值, str) for 值 in 內容.values())
+    body = json.loads(sqs.send_calls[0]["MessageBody"])
+    assert body == {"job_id": "job-1", "s3_key": "documents/job-1/input.jpg"}
+    assert set(body) == {"job_id", "s3_key"}
+    assert all(isinstance(value, str) for value in body.values())
 
 
 def test_receive_job的等待秒數不超過20():
@@ -573,17 +643,17 @@ def test_receive_job的等待秒數不超過20():
             }
         ]
     )
-    信箱 = 建信箱(sqs=sqs)
+    mailbox = make_mailbox(sqs=sqs)
 
-    訊息 = 信箱.receive_job(300)
+    message = mailbox.receive_job(300)
 
     assert sqs.receive_calls[0]["QueueUrl"] == JOBS_URL
     assert sqs.receive_calls[0]["WaitTimeSeconds"] == 20
     assert sqs.receive_calls[0]["MaxNumberOfMessages"] == 1
-    assert 訊息 is not None
-    assert 訊息.job_id == "job-1"
-    assert 訊息.s3_key == "documents/job-1/input.jpg"
-    assert 訊息.receipt_handle == "rh-jobs-1"
+    assert message is not None
+    assert message.job_id == "job-1"
+    assert message.s3_key == "documents/job-1/input.jpg"
+    assert message.receipt_handle == "rh-jobs-1"
 
 
 def test_receive_job沒訊息時回None(caplog):
@@ -598,9 +668,9 @@ def test_receive_job沒訊息時回None(caplog):
     """
     # ① 空佇列
     sqs = StubSqs()
-    信箱 = 建信箱(sqs=sqs)
+    mailbox = make_mailbox(sqs=sqs)
 
-    assert 信箱.receive_job(20) is None
+    assert mailbox.receive_job(20) is None
     assert len(sqs.receive_calls) == 1
     assert sqs.delete_calls == []  # 沒東西可刪
 
@@ -611,11 +681,11 @@ def test_receive_job沒訊息時回None(caplog):
             {"Body": json.dumps({"s3_key": "documents/x/input.jpg"}), "ReceiptHandle": "rh-bad-2"},
         ]
     )
-    信箱2 = 建信箱(sqs=sqs2)
+    mailbox2 = make_mailbox(sqs=sqs2)
 
     with caplog.at_level(logging.WARNING, logger="app.services.aws_mailbox"):
-        assert 信箱2.receive_job(20) is None
-        assert 信箱2.receive_job(20) is None
+        assert mailbox2.receive_job(20) is None
+        assert mailbox2.receive_job(20) is None
 
     assert sqs2.delete_calls == [
         {"QueueUrl": JOBS_URL, "ReceiptHandle": "rh-bad-1"},
@@ -631,10 +701,10 @@ def test_delete_job_message帶receipt_handle():
     自己的 jobs 訊息沒刪掉，可見度到期又冒出來 → 同一張圖被看兩次。
     """
     sqs = StubSqs()
-    信箱 = 建信箱(sqs=sqs)
+    mailbox = make_mailbox(sqs=sqs)
 
-    信箱.delete_job_message("rh-jobs")
-    信箱.delete_result_message("rh-results")
+    mailbox.delete_job_message("rh-jobs")
+    mailbox.delete_result_message("rh-results")
 
     assert sqs.delete_calls == [
         {"QueueUrl": JOBS_URL, "ReceiptHandle": "rh-jobs"},
@@ -650,16 +720,16 @@ def test_send_result的body恰一鍵():
     是因為本機自己算得出來（result_key(job_id)），多一個欄位就多一種不一致。
     """
     sqs = StubSqs()
-    信箱 = 建信箱(sqs=sqs)
+    mailbox = make_mailbox(sqs=sqs)
 
-    信箱.send_result("job-7")
+    mailbox.send_result("job-7")
 
     assert len(sqs.send_calls) == 1
     assert sqs.send_calls[0]["QueueUrl"] == RESULTS_URL
-    內容 = json.loads(sqs.send_calls[0]["MessageBody"])
-    assert 內容 == {"job_id": "job-7"}
-    assert set(內容) == {"job_id"}
-    assert all(isinstance(值, str) for 值 in 內容.values())
+    body = json.loads(sqs.send_calls[0]["MessageBody"])
+    assert body == {"job_id": "job-7"}
+    assert set(body) == {"job_id"}
+    assert all(isinstance(value, str) for value in body.values())
 
 
 def test_release_result_message把可見度改成0():
@@ -672,17 +742,17 @@ def test_release_result_message把可見度改成0():
     順便釘住 results 佇列的 body 只有 job_id、沒有 s3_key（所以 s3_key 是 None）。
     """
     sqs = StubSqs(messages=[{"Body": json.dumps({"job_id": "job-9"}), "ReceiptHandle": "rh-9"}])
-    信箱 = 建信箱(sqs=sqs)
+    mailbox = make_mailbox(sqs=sqs)
 
-    訊息 = 信箱.receive_result(5)
+    message = mailbox.receive_result(5)
 
-    assert 訊息 is not None
-    assert 訊息.job_id == "job-9"
-    assert 訊息.s3_key is None
+    assert message is not None
+    assert message.job_id == "job-9"
+    assert message.s3_key is None
     assert sqs.receive_calls[0]["QueueUrl"] == RESULTS_URL
     assert sqs.receive_calls[0]["WaitTimeSeconds"] == 5
 
-    信箱.release_result_message(訊息.receipt_handle)
+    mailbox.release_result_message(message.receipt_handle)
 
     assert len(sqs.visibility_calls) == 1
     assert sqs.visibility_calls[0] == {
@@ -700,9 +770,9 @@ def test_instance_state讀得到狀態名():
     一次 run-instances 可以開好幾台，那一批叫一個 reservation）。本專案只問一台。
     """
     ec2 = StubEc2(reservations=[{"Instances": [{"State": {"Name": "running"}}]}])
-    信箱 = 建信箱(ec2=ec2)
+    mailbox = make_mailbox(ec2=ec2)
 
-    assert 信箱.instance_state("i-0123456789abcdef0") == "running"
+    assert mailbox.instance_state("i-0123456789abcdef0") == "running"
     assert ec2.calls[0]["InstanceIds"] == ["i-0123456789abcdef0"]
 
 
@@ -718,24 +788,24 @@ def test_instance_state查無回unknown():
     任何其他字串都自然變成「不可用 → fallback」，不必再多寫一條 None 的分支。
     """
     # 情況一：AWS 說「沒有這台」（最常見的查無）
-    找不到 = 用戶端錯誤("InvalidInstanceID.NotFound", "DescribeInstances")
-    信箱 = 建信箱(ec2=StubEc2(error=找不到))
-    assert 信箱.instance_state("i-0123456789abcdef0") == "unknown"
+    not_found = make_client_error("InvalidInstanceID.NotFound", "DescribeInstances")
+    mailbox = make_mailbox(ec2=StubEc2(error=not_found))
+    assert mailbox.instance_state("i-0123456789abcdef0") == "unknown"
 
     # 情況二：回應是空的（那台機器不是你的，AWS 默默不列）
-    信箱2 = 建信箱(ec2=StubEc2(reservations=[]))
-    assert 信箱2.instance_state("i-0123456789abcdef0") == "unknown"
+    mailbox2 = make_mailbox(ec2=StubEc2(reservations=[]))
+    assert mailbox2.instance_state("i-0123456789abcdef0") == "unknown"
 
     # 情況三：有 reservation 但裡面沒有 instance（AWS 偶爾會這樣回）
-    信箱3 = 建信箱(ec2=StubEc2(reservations=[{"Instances": []}]))
-    assert 信箱3.instance_state("i-0123456789abcdef0") == "unknown"
+    mailbox3 = make_mailbox(ec2=StubEc2(reservations=[{"Instances": []}]))
+    assert mailbox3.instance_state("i-0123456789abcdef0") == "unknown"
 
     # 反面：「查無」以外的錯誤（例如權限不足）照樣往外丟——
     # Phase 89 的 Ec2Probe 會接住它變成 False，並把真正的原因寫進 log
-    沒權限 = 用戶端錯誤("UnauthorizedOperation", "DescribeInstances")
-    信箱4 = 建信箱(ec2=StubEc2(error=沒權限))
+    unauthorized = make_client_error("UnauthorizedOperation", "DescribeInstances")
+    mailbox4 = make_mailbox(ec2=StubEc2(error=unauthorized))
     with pytest.raises(ClientError):
-        信箱4.instance_state("i-0123456789abcdef0")
+        mailbox4.instance_state("i-0123456789abcdef0")
 
 
 # ---------- 掃碼：boto3 只准出現在這一個檔 ----------
@@ -756,27 +826,31 @@ def test_boto3只在aws_mailbox裡出現():
       這個樣式只認「行首（允許縮排）的 import／from 陳述句」，
       所以連寫在函式裡面的延遲 import 也抓得到。
     """
-    匯入樣式 = re.compile(r"^\s*(?:import|from)\s+(?:boto3|botocore)\b", re.M)
+    import_pattern = re.compile(r"^\s*(?:import|from)\s+(?:boto3|botocore)\b", re.M)
 
-    違規 = []
-    for 檔案 in sorted((專案根目錄 / "app").rglob("*.py")):
-        if 檔案.name == "aws_mailbox.py":
+    offenders = []
+    for path in sorted((PROJECT_ROOT / "app").rglob("*.py")):
+        if path.name == "aws_mailbox.py":
             continue
-        if 匯入樣式.search(檔案.read_text(encoding="utf-8")):
-            違規.append(str(檔案.relative_to(專案根目錄)))
+        if import_pattern.search(path.read_text(encoding="utf-8")):
+            offenders.append(str(path.relative_to(PROJECT_ROOT)))
 
-    assert 違規 == [], f"只有 app/services/aws_mailbox.py 可以 import boto3／botocore：{違規}"
+    assert offenders == [], (
+        f"只有 app/services/aws_mailbox.py 可以 import boto3／botocore：{offenders}"
+    )
 
     # 反過來也釘一次：那個檔**必須**真的 import 了（不然這顆測試會變成永遠綠的裝飾品）
-    信箱檔 = (專案根目錄 / "app" / "services" / "aws_mailbox.py").read_text(encoding="utf-8")
-    assert 匯入樣式.search(信箱檔), "aws_mailbox.py 應該要 import boto3"
+    mailbox_source = (PROJECT_ROOT / "app" / "services" / "aws_mailbox.py").read_text(
+        encoding="utf-8"
+    )
+    assert import_pattern.search(mailbox_source), "aws_mailbox.py 應該要 import boto3"
 ```
 
 ---
 
 ### 4.3 跑它，確認是紅的
 
-- [ ] 執行：
+- [x] 執行：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -815,7 +889,7 @@ E   ModuleNotFoundError: No module named 'app.services.aws_mailbox'
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- [ ] 新建 `/Users/linjunting/personalDocAI/app/services/aws_mailbox.py`，**整份逐字貼上**：
+- [x] 新建 `/Users/linjunting/personalDocAI/app/services/aws_mailbox.py`，**整份逐字貼上**：
 
 ```python
 """AwsMailbox：把 AWS 的 S3 ＋ 兩條 SQS 佇列 ＋ EC2 狀態查詢包成十四個方法。
@@ -868,6 +942,12 @@ KEY_PREFIX = "documents"
 
 # content_type -> input 物件的副檔名。
 # ★ 工人那端是**看副檔名**反推 content_type 的（總覽 §2.6 第 4 步），這張表是雙向契約。
+# ⚠ 三對值與 app/services/staging_service.py 的 STAGING_EXTENSIONS 逐字相同，
+#   但**刻意各留一份**：那邊管的是「本機暫存檔叫什麼」（會拉進 config／DATA_DIR），
+#   這邊管的是「S3 物件叫什麼」，而本模組之後要被 EC2 上的 cloud_worker import
+#   （Phase 87；那台機器沒有資料庫也沒有 data/）。不要為了去重複改成 import 那一份。
+#   漂移的防線是測試：本 phase 的 test_input_key依content_type給副檔名 與
+#   既有的 test_cloud_ingest_unit.py::test_input鍵名依content_type決定副檔名 各把值釘死。
 INPUT_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -877,6 +957,9 @@ INPUT_EXTENSIONS = {
 # SQS 長輪詢的硬上限（AWS 規定就是 20 秒，填更大會被拒絕）。
 # 夾在這一層而不是要求每個呼叫端自己記得：wait_result 傳進來的是「還剩幾秒」，
 # 那個數字動輒 300。
+# ⚠ app/services/cloud_ingest.py 也有一個同名同值的常數（它的 _poll_wait_seconds 用）。
+#   **兩層各夾一次是刻意的**：這一層不必相信呼叫端夾過（Phase 87 的 cloud_worker
+#   直接呼叫 receive_job()，走的根本不是 cloud_ingest 那條路）。不要改成互相 import。
 MAX_WAIT_SECONDS = 20
 
 # get_object 遇到這兩個錯誤代碼時翻譯成 None。
@@ -966,9 +1049,9 @@ class AwsMailbox:
         """
         try:
             response = self._s3.get_object(Bucket=self._bucket, Key=key)
-        except ClientError as 錯誤:
-            代碼 = 錯誤.response.get("Error", {}).get("Code")
-            if 代碼 in MISSING_KEY_CODES:
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code in MISSING_KEY_CODES:
                 return None
             raise
         # 真 S3 的 Body 是「像檔案的物件」，一定要 .read() 才是位元組
@@ -989,18 +1072,18 @@ class AwsMailbox:
                 Bucket=self._bucket,
                 Delete={"Objects": [{"Key": key} for key in keys]},
             )
-        except Exception as 錯誤:  # 刻意攔全部：清理失敗不可以害到主流程
-            logger.warning("刪 S3 物件失敗（盡力就好，Lifecycle 兩天後會清）：%s", 錯誤)
+        except Exception as error:  # 刻意攔全部：清理失敗不可以害到主流程
+            logger.warning("刪 S3 物件失敗（盡力就好，Lifecycle 兩天後會清）：%s", error)
             return
         # ⚠ DeleteObjects 是「一次刪很多個」的批次 API：某幾個 key 刪不掉時 S3 **不會丟例外**，
         #   而是回 HTTP 200、把失敗的那幾個列在 Errors 裡（每個有 Key／Code／Message）。
         #   不看這個清單的話，IAM 少一行 s3:DeleteObject 會安靜地留下殘骸——一樣只 warning，不炸。
-        for 失敗 in response.get("Errors") or []:
+        for failure in response.get("Errors") or []:
             logger.warning(
                 "刪 S3 物件失敗（盡力就好，Lifecycle 兩天後會清）：key=%s code=%s message=%s",
-                失敗.get("Key"),
-                失敗.get("Code"),
-                失敗.get("Message"),
+                failure.get("Key"),
+                failure.get("Code"),
+                failure.get("Message"),
             )
 
     # ---------- SQS：jobs（本機 Send、工人 Receive／Delete）----------
@@ -1077,9 +1160,9 @@ class AwsMailbox:
         """
         try:
             response = self._ec2.describe_instances(InstanceIds=[instance_id])
-        except ClientError as 錯誤:
-            代碼 = 錯誤.response.get("Error", {}).get("Code")
-            if 代碼 in UNKNOWN_INSTANCE_CODES:
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code in UNKNOWN_INSTANCE_CODES:
                 return "unknown"
             raise
         reservations = response.get("Reservations") or []
@@ -1139,7 +1222,7 @@ class AwsMailbox:
 
 ### 4.5 跑新測試，看它轉綠
 
-- [ ] 執行：
+- [x] 執行：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -1152,7 +1235,7 @@ pytest tests/unit/test_aws_mailbox_unit.py -v
 16 passed
 ```
 
-- [ ] 確認這 16 顆**真的沒有出網**（把三個死埠一起指上去，顆數要一模一樣）：
+- [x] 確認這 16 顆**真的沒有出網**（把三個死埠一起指上去，顆數要一模一樣）：
 
 ```bash
 AWS_ENDPOINT_URL=http://127.0.0.1:9 \
@@ -1175,8 +1258,21 @@ OLLAMA_BASE_URL=http://127.0.0.1:9 pytest tests/unit/test_aws_mailbox_unit.py -q
 > **全部仍然禁止**——design6 沒有推翻它們，而且 D1 明文「S3 **不是**檔案櫃」，
 > 那三個套件正好都是「把 S3 當檔案系統或第二個檔案櫃」的用法。
 
-- [ ] 打開 `/Users/linjunting/personalDocAI/tests/integration/test_design5_error_paths.py`，
-      找到 `def test_沒有背景任務框架的替代品也沒有雲端儲存():`（約在第 426 行），
+> 📌 **2026-09-02 實查（兩件事，省得你自己找）：**
+> ① 那個檔的**檔頭已經有** `import re`（第 30 行，在 `import inspect` 與 `from pathlib import Path` 之間）
+>    ——下面這份替換用得到它，**不必再加 import**（加了 ruff 會判重複）。
+> ② 目標那顆函式就在**第 426 行**（`def test_沒有背景任務框架的替代品也沒有雲端儲存():`），
+>    模組層的 `專案根目錄` 在第 47 行、已經存在。
+
+> ⚠ **這一份替換裡的區域變數刻意維持中文**（`app目錄原始碼`／`需求`／`關鍵字`／`專案根目錄`）。
+> 2026-09-02 裁決 R1「識別字一律英文」只套用在**本 phase 新建**的兩個檔
+> （`test_aws_mailbox_unit.py`、`aws_mailbox.py`）；`test_design5_error_paths.py` 是增量五留下來的檔，
+> 裡面 20 顆測試共用同一套 design5 時代的中文命名。只把這一顆改成英文，
+> 會讓同一個檔內兩種命名混在一起——那比全中文更難讀，而且 diff 也會變大。
+> **本 phase 對那個檔的改動就只有這一顆函式的函式體，一行都不要多動。**
+
+- [x] 打開 `/Users/linjunting/personalDocAI/tests/integration/test_design5_error_paths.py`，
+      找到 `def test_沒有背景任務框架的替代品也沒有雲端儲存():`（**實查在第 426 行**），
       **把整顆函式換成下面這一份**：
 
 ```python
@@ -1220,7 +1316,7 @@ def test_沒有背景任務框架的替代品也沒有雲端儲存():
     assert "flower" not in 需求
 ```
 
-- [ ] 跑那一顆，確認它轉綠：
+- [x] 跑那一顆，確認它轉綠：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -1229,7 +1325,7 @@ pytest "tests/integration/test_design5_error_paths.py::test_沒有背景任務�
 
 **預期輸出：** `1 passed`
 
-- [ ] **證明它還在測東西**（不是被改成永遠綠）：把 `requirements.txt` 裡
+- [x] **證明它還在測東西**（不是被改成永遠綠）：把 `requirements.txt` 裡
       `boto3>=1.35` 那一行**暫時註解掉**（行首加 `#`；斷言用的是「行首 `^boto3`」的
       正規表示式，註解掉就等於不在，不必真的剪掉），再跑一次那一顆：
 
@@ -1244,16 +1340,16 @@ pytest "tests/integration/test_design5_error_paths.py::test_沒有背景任務�
 
 ### 4.7 全量回歸 ＋ 三個死埠的零依賴實證
 
-- [ ] 全量：
+- [x] 全量：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 pytest -q
 ```
 
-**預期輸出：** `632 passed`，**0 skipped**（616 ＋ 16）。
+**預期輸出：** `640 passed`，**0 skipped**（2026-09-02 實查基線 624 ＋ 16）。
 
-- [ ] **三個死埠一起指**（從本 phase 起，零依賴實證都用這一條）：
+- [x] **三個死埠一起指**（從本 phase 起，零依賴實證都用這一條）：
 
 ```bash
 AWS_ENDPOINT_URL=http://127.0.0.1:9 \
@@ -1261,13 +1357,13 @@ CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
 OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
 ```
 
-**預期輸出：** 顆數與上一條**一模一樣**（`632 passed`）。
+**預期輸出：** 顆數與上一條**一模一樣**（`640 passed`；fix wave 後實查 **644**）。
 
 這一條同時證明三件事：pytest 不連真 AWS、不連真 Redis、不打真 Ollama。
 **三個一起指也很重要**——分開指的話，它們可能會互相掩護
 （例如某個測試其實是被 Redis 那條路擋下來的，你卻以為是 AWS 那條）。
 
-- [ ] 端點沒變（本增量恆 22）：
+- [x] 端點沒變（本增量恆 22）：
 
 ```bash
 pytest tests/integration/test_nav_header.py::test_端點數仍為22 -q
@@ -1275,7 +1371,7 @@ pytest tests/integration/test_nav_header.py::test_端點數仍為22 -q
 
 **預期輸出：** `1 passed`
 
-- [ ] SQL 仍然只在 repository（新檔不可以碰資料庫）：
+- [x] SQL 仍然只在 repository（新檔不可以碰資料庫）：
 
 ```bash
 pytest "tests/integration/test_design3_error_paths.py::test_SQL只出現在repository與db層" -q
@@ -1287,7 +1383,7 @@ pytest "tests/integration/test_design3_error_paths.py::test_SQL只出現在repos
 
 ### 4.8 格式與 lint
 
-- [ ] 執行（與 CI 跑的兩句完全相同）：
+- [x] 執行（與 CI 跑的兩句完全相同）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -1297,11 +1393,12 @@ ruff format --check app tests scripts && ruff check app tests scripts
 **預期輸出：**
 
 ```text
-110 files already formatted
+107 files already formatted
 All checks passed!
 ```
 
-（檔案數會隨專案成長而不同，重點是**沒有** `Would reformat:` 也沒有 `error:`。）
+（2026-09-02 實查開工時是 **105** 個檔，本 phase 新增兩個 `.py` → **107**。
+檔案數會隨專案成長而不同，重點是**沒有** `Would reformat:` 也沒有 `error:`。）
 
 真的有東西要改時：
 
@@ -1312,28 +1409,57 @@ ruff check --fix app tests scripts
 
 ---
 
-### 4.9 commit
+### 4.9 收尾：**不 commit——記快照**
 
-> ⚠ **總覽 §7 鐵律 12：commit 節奏由產品負責人決定。** 他沒指示前先不要 commit。
+> ⛔ **本輪（2026-09-02，裁決 R0）明確不 commit。**
+> 總覽 §7 鐵律 12：commit 節奏由產品負責人決定，他沒指示前**不要 commit、不要 `git add`、
+> 不要 `git stash`、不要把計畫檔 `git mv` 進 `finish/`**（`git mv` 會直接 stage）。
+> 驗收改成「與開工前的工作樹快照相減」。
 
-- [ ] **僅在產品負責人指示 commit 時**執行：
+- [x] **開工前**（做 §4.1 之前）先照一張快照，把 SHA 記在自己的筆記裡：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-git add requirements.txt app/services/aws_mailbox.py \
-        tests/unit/test_aws_mailbox_unit.py \
-        tests/integration/test_design5_error_paths.py
-git commit -m "feat: Phase 83 aws_mailbox 模組——requirements 加 boto3>=1.35（本增量唯一新套件）、新增 app/services/aws_mailbox.py（全系統唯一 import boto3 的地方：三個鍵名函式＋S3 put/get/delete＋jobs 與 results 兩條佇列的六個動作＋instance_state），NoSuchKey 翻成 None、delete 失敗只 warning、WaitTimeSeconds 夾在 20；+16 tests（手寫 stub client、零出網、含 boto3 掃碼）；改 design5 那顆掃碼測試（design6 §1.1 第 1 列推翻 boto3 禁令，s3fs／minio／google-cloud-storage／flower 仍禁止）；端點仍 22、對外行為零改變"
+.superpowers/sdd/phase0902-1/snapshot-tree
 ```
 
-- [ ] 確認這一筆恰好動到四個檔：
+**預期輸出：** 一行 40 字元的 tree SHA（這個指令**不碰真正的 index、不建 commit、不動 stash**，
+只在物件庫多一顆 tree 物件）。
+
+- [x] **收工後**再照一張，然後兩顆相減，確認**恰好動到四個檔**：
 
 ```bash
-git log -1 --stat
+cd /Users/linjunting/personalDocAI
+AFTER=$(.superpowers/sdd/phase0902-1/snapshot-tree)
+git diff --stat <開工前那顆SHA> "$AFTER"
 ```
 
-**預期：** 只列出 `requirements.txt`、`app/services/aws_mailbox.py`、
-`tests/unit/test_aws_mailbox_unit.py`、`tests/integration/test_design5_error_paths.py`。
+**預期：** 只列出這四個檔（順序不拘）——
+
+```text
+ app/services/aws_mailbox.py               | ... +
+ requirements.txt                          | ... +
+ tests/integration/test_design5_error_paths.py | ... +-
+ tests/unit/test_aws_mailbox_unit.py       | ... +
+```
+
+- [x] 沒有快照 SHA 時的替代做法（工作樹本來就乾淨，所以這樣也看得出來）：
+
+```bash
+git status --short -- app tests requirements.txt
+```
+
+**預期：** 恰好四行——
+
+```text
+ M requirements.txt
+ M tests/integration/test_design5_error_paths.py
+?? app/services/aws_mailbox.py
+?? tests/unit/test_aws_mailbox_unit.py
+```
+
+> 📌 **給日後真的要 commit 的人**（產品負責人指示之後才做）：訊息可以用這一句——
+> `feat: Phase 83 aws_mailbox 模組——requirements 加 boto3>=1.35（本增量唯一新套件）、新增 app/services/aws_mailbox.py（全系統唯一 import boto3 的地方：三個鍵名函式＋S3 put/get/delete＋jobs 與 results 兩條佇列的六個動作＋instance_state），NoSuchKey 翻成 None、delete 失敗只 warning、WaitTimeSeconds 夾在 20；+16 tests（手寫 stub client、零出網、含 boto3 掃碼）；改 design5 那顆掃碼測試（design6 §1.1 第 1 列推翻 boto3 禁令，s3fs／minio／google-cloud-storage／flower 仍禁止）；端點仍 22、對外行為零改變`
 
 ---
 
@@ -1415,9 +1541,10 @@ git log -1 --stat
 
 ## 6. 驗收清單
 
-- [ ] **開工基線已實查**：`pytest -q` ＝ 616 passed ＋ 0 skipped
+- [x] **開工基線已實查**：`pytest -q` ＝ **624** passed ＋ 0 skipped（2026-09-02 實查值；
+      總覽 §2.2／§2.7／§9 寫的 616 是規劃值，見 §2.3 的 📌）
 
-- [ ] **`boto3` 進了 requirements，而且 host 與容器都裝上了**
+- [x] **`boto3` 進了 requirements，而且 host 與容器都裝上了**
 
   ```bash
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -1426,8 +1553,9 @@ git log -1 --stat
   docker compose exec worker python -c "import boto3; print(boto3.__version__)"
   ```
   最後一條預期印出同樣量級的版本號。**印不出來＝忘了 `--build`**（見 §7 陷阱 1）。
+  ⚠ **最後那一條（容器）由 controller 執行**（裁決 R3，同 §4.1）；實作者只驗前兩條。
 
-- [ ] **新模組的十四個公開方法都在**
+- [x] **新模組的十四個公開方法都在**
 
   ```bash
   grep -cE "^    def (input_key|context_key|result_key|put_object|get_object|delete_objects|send_job|receive_job|delete_job_message|send_result|receive_result|delete_result_message|release_result_message|instance_state)\(" \
@@ -1438,7 +1566,7 @@ git log -1 --stat
   > 清單裡列了 14 個名字，全部都要有。若印出來小於 14，
   > 用 `grep -nE "^    def " app/services/aws_mailbox.py` 看少了哪一個。
 
-- [ ] **`MailboxMessage` 是 import 來的，不是本檔自己定義的**（防「兩份 dataclass」）
+- [x] **`MailboxMessage` 是 import 來的，不是本檔自己定義的**（防「兩份 dataclass」）
 
   ```bash
   grep -n "from app.services.cloud_ingest import MailboxMessage" app/services/aws_mailbox.py
@@ -1446,21 +1574,21 @@ git log -1 --stat
   ```
   預期：第一條恰一行命中；第二條印 `0`。
 
-- [ ] **`instance_state` 認得「查無」是一個錯誤代碼**（不是只認空清單）
+- [x] **`instance_state` 認得「查無」是一個錯誤代碼**（不是只認空清單）
 
   ```bash
   grep -n "InvalidInstanceID.NotFound" app/services/aws_mailbox.py
   ```
   預期：至少一行命中（常數 `UNKNOWN_INSTANCE_CODES`）。
 
-- [ ] **新測試 16 顆全綠**
+- [x] **新測試 16 顆全綠**（2026-09-02 review fix wave 之後是 **17 顆**）
 
   ```bash
   pytest tests/unit/test_aws_mailbox_unit.py -v
   ```
-  預期最後一行：`16 passed`
+  預期最後一行：`16 passed`（fix wave 之後：`17 passed`）
 
-- [ ] **`boto3` 真的只在那一個檔**
+- [x] **`boto3` 真的只在那一個檔**
 
   ```bash
   pytest "tests/unit/test_aws_mailbox_unit.py::test_boto3只在aws_mailbox裡出現" -q
@@ -1473,7 +1601,7 @@ git log -1 --stat
   ```
   預期：只印出 `app/services/aws_mailbox.py` 的那兩行。
 
-- [ ] **改過的那顆 design5 掃碼測試是綠的，而且沒有把其他三個禁令一起拿掉**
+- [x] **改過的那顆 design5 掃碼測試是綠的，而且沒有把其他三個禁令一起拿掉**
 
   ```bash
   pytest "tests/integration/test_design5_error_paths.py::test_沒有背景任務框架的替代品也沒有雲端儲存" -q
@@ -1483,23 +1611,24 @@ git log -1 --stat
   預期：`1 passed`；後兩條各自命中（代表 `s3fs`／`minio`／`google-cloud-storage`／`flower`
   的禁令都還在）。
 
-- [ ] **全量測試 ＝ 開工基線 ＋ 16**
+- [x] **全量測試 ＝ 開工基線 ＋ 16**
 
   ```bash
   pytest -q
   ```
-  預期：`632 passed`，**0 skipped**。
+  預期：`640 passed`，**0 skipped**（624 ＋ 16）。
+  📌 2026-09-02 review fix wave 之後：**644**（Phase 86 落地的 +2 與 fix wave 的 +2 都在內）。
 
-- [ ] **零外部依賴實證（三個死埠一起指，顆數不變）**
+- [x] **零外部依賴實證（三個死埠一起指，顆數不變）**
 
   ```bash
   AWS_ENDPOINT_URL=http://127.0.0.1:9 \
   CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
   OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
   ```
-  預期：`632 passed`（與上一條**一模一樣**）。
+  預期：`640 passed`（與上一條**一模一樣**）。
 
-- [ ] **端點仍是 22 支、openapi 零 DELETE**
+- [x] **端點仍是 22 支、openapi 零 DELETE**
 
   ```bash
   pytest tests/integration/test_nav_header.py::test_端點數仍為22 \
@@ -1507,7 +1636,7 @@ git log -1 --stat
   ```
   預期：`2 passed`
 
-- [ ] **專案的 `data/` 沒被弄髒**（本 phase 的測試全部是純單元測試，連檔案都沒寫）
+- [x] **專案的 `data/` 沒被弄髒**（本 phase 的測試全部是純單元測試，連檔案都沒寫）
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -1515,23 +1644,32 @@ git log -1 --stat
   git status --short data/     # 預期：零輸出（data/ 已被 .gitignore 擋掉）
   ```
 
-- [ ] **格式與 lint 過**
+- [x] **格式與 lint 過**
 
   ```bash
   ruff format --check app tests scripts && ruff check app tests scripts
   ```
   預期：`All checks passed!`
 
-- [ ] **規格區一字未動**
+- [x] **規格區一字未動**
 
   ```bash
   git status --short docs/spec/
   ```
   預期：**零輸出**（本增量全程如此）。
 
-- [ ] **git 收尾符合現行節奏**：產品負責人已指示 commit → §4.9 已執行；
-      未指示（現行預設）→ 跳過 commit，改核對
-      `git status --short -- app tests requirements.txt` 的變更恰為那四個檔。
+- [x] **git 收尾符合現行節奏＝不 commit、記快照**（2026-09-02 裁決 R0）：
+
+  ```bash
+  cd /Users/linjunting/personalDocAI
+  AFTER=$(.superpowers/sdd/phase0902-1/snapshot-tree)
+  git diff --stat <開工前那顆SHA> "$AFTER"   # 恰四個檔，見 §4.9
+  git status --short -- app tests requirements.txt   # 沒有快照時的替代：恰四行
+  git log -1 --oneline                       # 預期：HEAD 沒有動（還是開工那一顆）
+  ```
+  **預期：** 前兩條各自恰為那四個檔（`requirements.txt`、`app/services/aws_mailbox.py`、
+  `tests/unit/test_aws_mailbox_unit.py`、`tests/integration/test_design5_error_paths.py`）；
+  第三條印出來的 commit 與開工時**逐字相同**（＝真的沒 commit）。
 
 ---
 
@@ -1547,6 +1685,7 @@ git log -1 --stat
    docker compose exec worker python -c "import boto3; print(boto3.__version__)"
    ```
    （這也是 `CLAUDE.md` 早就記過的規則：「改 requirements → `docker compose build app`，再 `up -d`」。）
+   ⚠ **上面那兩條由 controller 親自執行**（2026-09-02 裁決 R3，同 §4.1）。
    **同一個坑的另一半：** 只重建映像、忘了 host 的 `.venv`，測試檔會在
    `from botocore.exceptions import ClientError` 那一行爆 `ModuleNotFoundError`
    ——pytest 是在 host 跑的，兩邊都要裝：`uv pip install -r requirements.txt`。
@@ -1628,16 +1767,19 @@ git log -1 --stat
     （不是 `/documents/*`——ListBucket 是掛在 bucket 上的權限）：
     ```json
     {
-      "Sid": "ListBucketSoMissingKeyIs404",
+      "Sid": "ListMailboxBucket",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
       "Resource": "arn:aws:s3:::personaldocai-mailbox-*"
     }
     ```
-    這是唯讀權限，bucket 裡本來就只有我們自己的 `documents/`。Phase 82 的 `mac-policy.json`
-    與 Phase 91 的 `worker-role-policy.json` **都有這一條**（總覽 §10.2 已追認）；動手做 Phase 84
-    之前先打開 `deploy/aws/mac-policy.json` 確認它在——不在就是抄漏了，回 Phase 82 §4.6 補上
-    （IAM policy 改完要重新 `put-user-policy`）。**不要**反過來把 `AccessDenied`
+    這是唯讀權限，bucket 裡本來就只有我們自己的 `documents/`。
+    📌 **2026-09-02 實查：`deploy/aws/mac-policy.json` 裡這條 Sid 已經在了，名字就叫
+    `ListMailboxBucket`**（七條 Sid 之一；Phase 91 的 `worker-role-policy.json` 之後也要有，
+    總覽 §10.2 追認項 P）。動手做 Phase 84 之前順手打開那個檔看一眼即可——
+    不在就是抄漏了，回 `docs/plan/finish/phase-82-AWS帳號與工具.md` §4.6.1 補上
+    （IAM policy 改完要重新 `put-user-policy`；⚠ 那是 **controller** 的動作，裁決 R3）。
+    **不要**反過來把 `AccessDenied`
     塞進 `MISSING_KEY_CODES`——那會把真正的權限錯誤偽裝成「檔案不在」，正是陷阱 3 在防的事。
     Phase 84 的步驟 ④ 就是這條規則的實測：拿到 `None` ＝ policy 對了；
     拿到 `AccessDenied` ＝ 少了 `s3:ListBucket`。
@@ -1674,7 +1816,7 @@ git log -1 --stat
 **系統多了什麼：**
 
 - `requirements.txt` 多一行 `boto3>=1.35`（**本增量唯一的新套件**），host 的 `.venv`
-  與 Docker 映像都已裝上。
+  與 Docker 映像都已裝上（映像那一半由 controller 重建，裁決 R3）。
 - 新檔 `app/services/aws_mailbox.py`：`AwsMailbox` 十四個公開方法 ＋ `__init__` ＋ 一個內部 `_receive`。
   **全系統只有它 import boto3／botocore**，而且有一顆掃碼測試釘住。
 - 新檔 `tests/unit/test_aws_mailbox_unit.py`：16 顆，全部用手寫 stub client，
@@ -1690,10 +1832,14 @@ git log -1 --stat
 端點仍是 **22** 支、openapi 零 DELETE、`photo` 表零改動、前端零改動、
 `compose.yaml` 零改動、`docs/spec/` 一字未動。
 
-**顆數：+16，與總覽 §2.7／§9／§10.2 J 一致（總覽已吸收這一顆）。基線 616 → 632。**
+**顆數：+16，與總覽 §2.7／§9／§10.2 J 一致（總覽已吸收這一顆）。基線 624 → 640。**
 
-總覽 §2.7 給 Phase 83 的就是 **+16**（§9 軌跡表與 §2.2 一覽表同樣寫 632）；
-本 phase **沒有**比總覽多任何一顆，後面的 phase 抄顆數時以 632 為準。
+總覽 §2.7 給 Phase 83 的就是 **+16**（§9 軌跡表與 §2.2 一覽表寫的絕對值是 632）；
+本 phase **沒有**比總覽多任何一顆。
+📌 **絕對值為什麼是 640 不是 632**：總覽那三處是用「616 基線」算的規劃值，
+而 Phase 75／79／81 實作時各自的 code review 裁決多補了幾顆守門測試
+（總覽 §2.2 的 Phase 81 那列與 §9 軌跡表的 75／79／81 三列都已註記「實 …」，
+2026-09-02 實查基線＝**624**）。後面的 phase 抄顆數時**只對「本 phase 新增幾顆」**。
 其中第 16 顆 `test_get_object拿得回位元組而delete_objects送出鍵清單` 是總覽 §10.2 追認項 J
 特別補進來的：design6 §9 的「必釘」清單裡，`get_object` 只有兩條**失敗路徑**
 （`NoSuchKey` 回 None、其他錯誤往外丟），`delete_objects` 也只有失敗路徑那一顆。
@@ -1704,19 +1850,51 @@ git log -1 --stat
 同一顆順便把 `delete_objects` 的 `Delete={"Objects": [{"Key": ...}]}` 形狀也釘死
 （那個形狀打錯的話 boto3 會丟 `ParamValidationError`，但只有真的呼叫過才看得到）。
 
-> 📌 給接下來的 phase：本 phase 之後的累計顆數是 **632**（與總覽 §9 相同）。
-> Phase 84／85 都是 +0，所以到 Phase 86 開工時的基線是 632，收工 634。
+> 📌 給接下來的 phase：本 phase 之後的累計顆數是 **640**（2026-09-02 實查基線 624 ＋ 16；
+> 總覽 §9 寫的 632 是用 616 規劃基線算的，**差的 8 顆是 75／79／81 review 多補的守門測試**）。
+> Phase 84／85 都是 +0，所以到 Phase 86 開工時的基線是 **640**，收工 **642**。
 
 **下一個 phase：Phase 84「建 S3 寄物櫃」**——
 用 AWS CLI 在東京建 bucket（Block Public Access 四項全開、SSE-S3 預設加密、
 `documents/` 前綴 2 天過期的 Lifecycle），把 bucket 名填進 `.env` 的 `S3_BUCKET`，
-並寫一支 host 用的小腳本 `scripts/aws_check.py`——
+並寫一支 host 用的小腳本 `scripts/aws_check.py`（函式名是跨檔契約：`check_s3()`／
+`check_sqs()`／`main()`／常數 `CHECK_JOB_ID = "aws-check"`；Phase 84 建全檔＋`check_sqs()` 佔位，
+Phase 85 只換 `check_sqs()` 的本體）——
 它會用**本 phase 寫好的 `AwsMailbox`** 對真 S3 做一次 put → get → 比對 → delete，印 OK。
-那是本 phase 這個模組第一次真的打到 AWS。
+那是本 phase 這個模組第一次真的打到 AWS（⚠ 那一步與所有 `aws` 指令都由 **controller** 親自執行，
+裁決 R3；而且那支腳本走真 AWS，**不寫自動化測試**，裁決 R4）。
 
-**顆數：** 開工基線 **616** ＋ **16** ＝ **632**（0 skipped）。
+**顆數：** 開工基線 **624**（2026-09-02 實查）＋ **16** ＝ **640**（0 skipped）。
+
+**2026-09-02 review fix wave**：+1 顆 `test_put_object與send失敗時例外原樣往外丟`
+（`StubS3`／`StubSqs` 各加一個可選的 `put_error`／`send_error` 欄位；三個方法都用
+`pytest.raises` 拿到**同一個**例外物件——變異證據＝把 `put_object` 暫時包成
+try/except 就會紅）、壞紙條 warning 只印**佇列名**與 body 前 200 字（完整 QueueUrl 帶著
+AWS 帳號 ID，而這個 repo 是公開的）、掃碼測試改比**相對路徑**
+`app/services/aws_mailbox.py`（日後 `app/workers/aws_mailbox.py` 不會被誤放行）
+並加守「`app/dependencies.py` 檔頭不得 import `aws_mailbox`」。
+本檔的顆數因此是 **+17**、全量 **644**。
 
 ---
+
+## 9. 實作紀錄（2026-09-02，Task 1 實作者）
+
+- 實作四個檔（與 §4.9 預期完全一致）：`requirements.txt`（+8 行 boto3 段）、
+  新檔 `app/services/aws_mailbox.py`（324 行、十四個公開方法）、
+  新檔 `tests/unit/test_aws_mailbox_unit.py`（522 行、16 顆）、
+  `tests/integration/test_design5_error_paths.py`（只換那一顆的函式體，+28/-4）。
+  §4.2／§4.4／§4.6 的三段程式碼**逐字沿用**（直接從本計畫檔抽出，零手抄、`\xc2\xa0` 掃描零命中）。
+- TDD 紅綠：加完 boto3 後全量 `1 failed, 623 passed`（design5 那顆如預期變紅）→
+  新測試檔 `ModuleNotFoundError: No module named 'app.services.aws_mailbox'` →
+  實作後 `16 passed` → 改掉 design5 那顆 `1 passed`；
+  變異證據：把 `boto3>=1.35` 行首加 `#` → 那顆 `1 failed`（訊息「增量六需要 boto3」）→ 復原 `1 passed`。
+- 全量 **640 passed、0 skipped**（基線 624 ＋ 16）；三死埠一起指同為 640；
+  `ruff format --check` → `107 files already formatted`、`ruff check` → `All checks passed!`。
+- host 裝到 **boto3 1.43.87**（botocore 1.43.87、jmespath、s3transfer 一併裝上）。
+- 兩個未打勾的框（§4.1 重建映像、§6 第 2 條的容器驗證）＝ **controller 的動作**（裁決 R3）。
+- 未 commit（裁決 R0）：開工前快照 `9fd215d0d03b35651bc3afceb27b398057214418`、
+  收工後 `030e97edb6f24e43fb4696e5f6c53461cb25f52a`；`git status --short -- app tests requirements.txt`
+  恰四行、`git log -1` 仍是 `a159131`。
 
 ## 附：本文件引用的官方文件
 

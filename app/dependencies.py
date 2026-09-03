@@ -281,19 +281,24 @@ def get_task_dispatcher() -> TaskDispatcher:
 def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
     """這一台現在要不要走雲端路、怎麼走。**全系統只有這一個地方決定。**
 
-    三種模式（config.CLOUD_ROUTE，預設 off）：
-      off    → CloudRouteOff()：available() 恆為 False，行為與增量五**逐字相同**
-      assume → Phase 86 才接（CloudRoute ＋ AwsMailbox ＋ AlwaysRunning）
+    三種模式由 config.CLOUD_ROUTE 決定（總覽 §2.4.2）：
+      off    → CloudRouteOff()：available() 恆為 False，gated_ingest 直接 fallback 成
+               run_ingest_job——行為與增量五**逐字相同**（pytest 與新 clone 的預設）
+      assume → CloudRoute ＋ AwsMailbox ＋ AlwaysRunning：假設遠端開著、**不做探測**
+               （階段丁：工人跑在這台 Mac 上時用；機器沒開時它會傻傻送出、等到逾時才
+               fallback，所以不要拿來當日常設定——總覽 §10.1 追認項 l）
       ec2    → Phase 89 才接（探測換成 Ec2Probe）
 
     ★ 打錯字要當場炸（ValueError），不要默默當成 off：
       「我明明把 CLOUD_ROUTE 設成 cloud 了，怎麼都沒送出去」是最難查的一種壞法。
+      （Phase 77 的 test_get_cloud_route預設off時回CloudRouteOff 用 CLOUD_ROUTE=cloudy 釘住它。）
 
-    ★ 回傳型別註記裡的 cloud_ingest.CloudRoute 要 Phase 79 才存在。本檔最上面有
-      `from __future__ import annotations`，所以註記只是**字串**、執行時不會被求值，
-      現在寫上去不會炸——這樣 79 補完之後這一行不必再動。
-      （前提：這一支**不可以**被寫成 Depends(get_cloud_route) 塞進 router，
-      那會讓 FastAPI 真的去解析型別。本增量不新增端點，也不需要。）
+    ★ boto3 相關的 import 寫在函式**裡面**（不是檔案最上面），理由與既有的
+      get_task_dispatcher() 相同：pytest 收集階段不必為了跑一顆字串測試就載入 boto3，
+      而且 CLOUD_ROUTE=off 時根本走不到那一行。
+
+    ★ 三個資源名稱與逾時秒數一律 config.X **即時讀**（不要 from … import X）：
+      那樣才改得動（tests 用 monkeypatch 換、.env 改完 restart worker 就生效）。
 
     pytest 由 tests/conftest.py 的第五道安全網 wire_fake_cloud 兩管齊下換掉它。
     """
@@ -301,7 +306,20 @@ def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
     if mode == "off":
         return cloud_ingest.CloudRouteOff()
     if mode == "assume":
-        raise NotImplementedError("CLOUD_ROUTE=assume 要等 Phase 86 接上真 AWS 才能用")
+        # 只有真的要走雲端時才載入 boto3（唯一入口是 aws_mailbox）
+        from app.services.aws_mailbox import AwsMailbox
+
+        mailbox = AwsMailbox(
+            bucket=config.S3_BUCKET,
+            jobs_queue_url=config.SQS_JOBS_QUEUE_URL,
+            results_queue_url=config.SQS_RESULTS_QUEUE_URL,
+            region=config.AWS_REGION,
+        )
+        return cloud_ingest.CloudRoute(
+            mailbox,
+            cloud_ingest.AlwaysRunning(),
+            timeout_seconds=config.CLOUD_RESULT_TIMEOUT_SECONDS,
+        )
     if mode == "ec2":
         raise NotImplementedError("CLOUD_ROUTE=ec2 要等 Phase 89 的 Ec2Probe 才能用")
     raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{mode!r}")

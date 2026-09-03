@@ -12,6 +12,26 @@
 > 然後寫一支 host 用的小腳本 `scripts/aws_check.py`，
 > 用 **Phase 83 寫好的 `AwsMailbox`** 對真 S3 做一次 put → get → 比對 → delete，印出 OK。
 
+> 📌 **2026-09-02 校準紀錄**（ledger：`.superpowers/sdd/phase0902-1/progress.md`；
+> 共同事實：`.superpowers/sdd/phase0902-1/brief-common.md`。本檔已依裁決 R0〜R7 校準過）
+>
+> | 裁決 | 落在本檔哪裡 |
+> |---|---|
+> | **R0** 不 commit、用工作樹 tree 快照相減驗收 | §4.10 最後一步改成「不 commit——記快照」；§6 最後一條同步改寫 |
+> | **R1** 識別字一律英文（`test_中文` 名與 log／訊息／註解／docstring 維持中文） | §4.8 的 `scripts/aws_check.py` 整檔識別字英文化：`CHECK_JOB_ID`／`credential_source()`／`build_mailbox()`／`check_s3()`／`check_sqs()`／`main()`／`PROJECT_ROOT`；`check_s3`／`check_sqs`／`main`／`CHECK_JOB_ID` 是**跨檔契約**（Phase 85 只換 `check_sqs()` 本體） |
+> | **R2** 顆數以 2026-09-02 實查 **624** 起算 | Phase 83 收工 **640**，本 phase **+0 ＝ 仍 640**；§2.2／§3／§4.10／§6／§8 的數字全部改過（總覽 §9 的絕對值 632 是 2026-08-31 的舊基線，**要對的是「本 phase 新增幾顆」＝ 0**） |
+> | **R3** AWS 資源的建立／查詢／`.env` 改值／restart 容器／真跑 `scripts/aws_check.py`，**一律由 controller 親自執行** | §4.1〜§4.7、§4.9 與 §6 對應各條都加了「⚠ 本步驟由 controller 親自執行；實作 subagent 不打 `aws`」；實作 subagent 在本 phase 只做一件事＝**寫出 §4.5 的 JSON 與 §4.8 的 Python 檔**，然後跑 §4.10 的 ruff 與 pytest |
+> | **R4** `scripts/aws_check.py` 走真 AWS，**不寫自動化測試** | §2.3／§3「明確不做」已明文 +0；驗收＝controller 真跑印 OK |
+> | **R5**／**R6** 煙霧前開 Ollama、開關撥雲端；不需要真機 | **本 phase 不適用**（84 零煙霧、零 Ollama、零前端、零鏡頭；真煙霧在 Phase 86） |
+> | **R7** 四份計畫檔平行校準，只改自己名下的檔 | 本檔只改自己；跨檔問題（`docs/plan/aws/` 新手步驟檔仍帶 `--profile personaldocai-admin`）已回報給 controller，不在此檔修 |
+>
+> 另外三處過期事實也一併改掉：
+> ① **`--profile personaldocai-admin` 不存在**——`~/.aws` 只有 `[default]`，而 default 就是 admin，
+> 所有 `aws` 指令**不帶 profile**（本檔原本就沒帶，維持；§2.4 補上這句話免得有人照新手步驟檔加上去）。
+> ② §2.4 的 shell 準備改成「**優先：不要 source `.env`**；真的 source 了就一定要 `unset` 兩把 key」。
+> ③ §4.7 原本寫「把 Phase 82 留空的那一行填上」——**實查 2026-09-02 的 `.env` 根本沒有那一行**
+> （只有 `AWS_ACCESS_KEY_ID`／`AWS_SECRET_ACCESS_KEY`／`AWS_REGION` 三行），所以是**新增**一行。
+
 **為什麼要做這個：**
 
 本機要把一張圖交給遠端的工人看，但**工人不收連線**（design6 D11：EC2 的 inbound 全部關掉，
@@ -84,15 +104,24 @@ Bucket 的三個設定一件都不能少：
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
 
 pytest -q
-# 預期尾巴：632 passed，0 skipped（總覽 §9：Phase 83 收工 632，已含那顆 get_object 成功路徑）
+# 預期尾巴：640 passed，0 skipped
+#   （2026-09-02 實查：增量六開工基線 624；Phase 83 +16 ＝ 640。總覽 §9 那欄寫的 632
+#     是 2026-08-31 的舊絕對值，**要對的是「本 phase 新增幾顆」＝ 0**。）
 #   以你實查到的數字為準；本 phase 是 +0，收工時這個數字不能變。
 
 # Phase 83 的模組在
 python -c "from app.services.aws_mailbox import AwsMailbox; print('AwsMailbox OK')"
+```
 
+⚠ **下面這兩條由 controller 親自執行；實作 subagent 不打 `aws`**（裁決 R3）：
+
+```bash
 # 我是誰（要是 admin，不是 mac）
 aws sts get-caller-identity --query Arn --output text
 # 預期結尾：:user/personaldocai-admin
+#   ⚠ 不要加 --profile personaldocai-admin：~/.aws 只有 [default]，而 default 就是 admin
+#     （`docs/plan/aws/` 那幾份新手步驟檔寫了 --profile，那是給「另外設過 profile」的人看的，
+#       在這台機器上會 ProfileNotFound）
 
 aws configure get region        # 預期：ap-northeast-1
 ```
@@ -101,21 +130,38 @@ aws configure get region        # 預期：ap-northeast-1
 
 **+0 顆**（總覽 §2.7）。本 phase 不新增任何 pytest——
 「AWS 上有沒有一個設定對的 bucket」pytest 測不到，而且 **pytest 絕不准連真 AWS**（總覽 §7 鐵律 2）。
-驗收改用 **AWS CLI 的輸出** ＋ **`python scripts/aws_check.py s3` 印 OK**。
+驗收改用 **AWS CLI 的輸出** ＋ **`python scripts/aws_check.py s3` 印 OK**
+（裁決 R4：這支腳本走真 AWS，**刻意不寫自動化測試**；由 controller 真跑一次當驗收）。
 
 ### 2.4 每次開工都要先做的 shell 準備（本 phase 與 85／86 共用）
+
+> ⚠ **本節與 §4 的所有 `aws` 指令都由 controller 親自執行**（裁決 R3）。
+> 實作 subagent 在本 phase 只寫兩個檔（§4.5 的 JSON、§4.8 的 Python），**一條 `aws` 都不打**。
+
+**優先寫法：不要 `source .env`。** `~/.aws` 的 `[default]` 就是 `personaldocai-admin`，
+所以只要 shell 裡**沒有** `AWS_ACCESS_KEY_ID`，`aws` 指令天生就是 admin，什麼都不必準備：
 
 ```bash
 cd /Users/linjunting/personalDocAI
 
-# ① 把 .env 的變數載進 shell（$S3_BUCKET 之類的要用到）
+# 只把「這一個變數」撈出來，不要把 .env 整份載進來（載進來就會帶進最小權限的那兩把 key）
+S3_BUCKET=$(grep -E '^S3_BUCKET=' .env | cut -d= -f2-)
+echo "$S3_BUCKET"        # ⚠ 不要把輸出貼進任何文件（含帳號後六碼）
+
+aws sts get-caller-identity --query Arn --output text   # 結尾要是 :user/personaldocai-admin
+aws configure get region                                # 預期：ap-northeast-1
+```
+
+（§4.7 之前 `.env` 還沒有 `S3_BUCKET` 這一行，那時就用 §4.1 算出來的那個變數，別跑上面那條 `grep`。
+⚠ 每個 Bash 呼叫都是獨立的 shell，變數不會留到下一條指令——**每次都要重新帶上**。）
+
+**替代寫法：真的把 `.env` 整份載進來了**（例如照 `CLAUDE.md` 指令區的寫法），
+那就一定要**馬上**把那兩把 key 丟掉，否則下面每一條建立資源的指令都會 `AccessDenied`
+（環境變數的優先序高於 `~/.aws` 的 profile——Phase 82 §7 陷阱 1）：
+
+```bash
 set -a; . ./.env; set +a
-
-# ② ★ 馬上把「程式用的最小權限 key」丟掉，讓 aws 指令回去用 ~/.aws 的 admin profile
-#    （不做這一步的話，下面每一條建立資源的指令都會 AccessDenied——Phase 82 §7 陷阱 1）
-unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-
-# ③ 確認身分與區域
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY           # ★ 這一行不能漏
 aws sts get-caller-identity --query Arn --output text   # 結尾要是 :user/personaldocai-admin
 echo "region = ${AWS_REGION:-未設定}"                    # 預期：ap-northeast-1
 ```
@@ -129,16 +175,20 @@ echo "region = ${AWS_REGION:-未設定}"                    # 預期：ap-northe
 
 ### 做
 
-1. 算出 bucket 名 `personaldocai-mailbox-<帳號後六碼>`，建在**東京**。
-2. `put-public-access-block`：四項全部 `true`。
-3. `put-bucket-encryption`：預設 **SSE-S3（AES256）**。
-4. 新增 `deploy/aws/s3-lifecycle.json` 並 `put-bucket-lifecycle-configuration`：
-   `documents/` 前綴 **2 天**過期，順便清掉沒完成的分段上傳。
-5. 用三個 `get-*` 指令驗證上面三件事真的生效。
-6. 新增 `scripts/aws_check.py`（**host 手動用，不進映像、不進 pytest**）：
+> 標 **（controller）** 的是動到 AWS／`.env`／容器的步驟，一律由 controller 親自執行（裁決 R3）；
+> 標 **（實作）** 的兩個檔才是實作 subagent 的工作。
+
+1. **（controller）** 算出 bucket 名 `personaldocai-mailbox-<帳號後六碼>`，建在**東京**。
+2. **（controller）** `put-public-access-block`：四項全部 `true`。
+3. **（controller）** `put-bucket-encryption`：預設 **SSE-S3（AES256）**。
+4. **（實作）** 新增 `deploy/aws/s3-lifecycle.json`；**（controller）**
+   `put-bucket-lifecycle-configuration`：`documents/` 前綴 **2 天**過期，順便清掉沒完成的分段上傳。
+5. **（controller）** 用三個 `get-*` 指令驗證上面三件事真的生效。
+6. **（實作）** 新增 `scripts/aws_check.py`（**host 手動用，不進映像、不進 pytest**）：
    - `s3` 子命令：用 `AwsMailbox` put → get → 比對 → delete → 再 get 確認不在了 → 印 OK
-   - `sqs` 子命令：先印「Phase 85 才有」（Phase 85 會把它換成真的）
-7. `.env` 填 `S3_BUCKET`，restart worker 讓容器重讀。
+   - `sqs` 子命令：先印「Phase 85 才有」（Phase 85 會把它整支換成真的）
+   - **（controller）** 真的跑一次 `python scripts/aws_check.py s3`
+7. **（controller）** `.env` 加一行 `S3_BUCKET=…`，restart app 與 worker 讓容器重讀。
 
 ### 明確不做（防手滑）
 
@@ -154,7 +204,7 @@ echo "region = ${AWS_REGION:-未設定}"                    # 預期：ap-northe
 | 把 bucket 名寫進任何文件 | 總覽 §7 鐵律 10：只寫變數名 `$S3_BUCKET`。它含有帳號後六碼 |
 | 改任何 `app/` 底下的程式碼 | 本 phase 零產品碼變更。`scripts/` 不進映像，不算產品碼 |
 | 改 `compose.yaml` | 本增量零改動。`S3_BUCKET` 走 `.env`（已 bind-mount） |
-| 新增 pytest | 顆數維持 632。pytest 絕不連真 AWS |
+| 新增 pytest | 顆數維持 **640**。pytest 絕不連真 AWS（裁決 R4） |
 
 ---
 
@@ -162,11 +212,19 @@ echo "region = ${AWS_REGION:-未設定}"                    # 預期：ap-northe
 
 > 🧰 **人工＋CLI 型**：每一步都是「指令 → 逐個旗標解釋 → 預期輸出 → 做錯了怎麼退回 → 費用影響」。
 > 全部指令都在專案根目錄 `/Users/linjunting/personalDocAI` 執行，
-> 而且**先做完 §2.4 的 shell 準備**（尤其是 `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY`）。
+> 而且**先做完 §2.4 的 shell 準備**（優先是「不要 source `.env`」；真的 source 了就一定要
+> `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY`）。
+>
+> ⚠ **§4.1〜§4.7 與 §4.9 全部由 controller 親自執行**（裁決 R3：不可逆／有外部副作用的動作
+> 集中在 controller 眼前）。**實作 subagent 在本 phase 只寫兩個檔**——§4.5 的
+> `deploy/aws/s3-lifecycle.json` 與 §4.8 的 `scripts/aws_check.py`——然後跑 §4.10 的
+> `ruff` 與 `pytest`，**一條 `aws` 指令都不打、一次真連線都不做**。
 
 ### 4.1 算出 bucket 名字
 
-- [ ] 執行：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 `aws`。
+
+- [x] 執行：
 
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -185,7 +243,7 @@ echo "$S3_BUCKET"
 personaldocai-mailbox-XXXXXX
 ```
 
-- [ ] 檢查名字合法（S3 的規則比一般檔名嚴）：
+- [x] 檢查名字合法（S3 的規則比一般檔名嚴）：
 
 ```bash
 printf %s "$S3_BUCKET" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$' \
@@ -203,7 +261,9 @@ printf %s "$S3_BUCKET" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$' \
 
 ### 4.2 建 bucket（東京**一定**要帶 `LocationConstraint`）
 
-- [ ] 執行：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 `aws`。
+
+- [x] 執行：
 
 ```bash
 aws s3api create-bucket \
@@ -285,7 +345,9 @@ aws s3api delete-bucket --bucket "$S3_BUCKET" --region <它實際在的區>
 
 ### 4.3 Block Public Access：四項全開
 
-- [ ] 執行：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 `aws`。
+
+- [x] 執行：
 
 ```bash
 aws s3api put-public-access-block \
@@ -322,7 +384,9 @@ aws s3api put-public-access-block \
 
 ### 4.4 預設加密：SSE-S3（AES256）
 
-- [ ] 執行：
+> ⚠ 本步驟由 controller 親自執行；實作 subagent 不打 `aws`。
+
+- [x] 執行：
 
 ```bash
 aws s3api put-bucket-encryption \
@@ -353,7 +417,10 @@ aws s3api put-bucket-encryption \
 
 ### 4.5 Lifecycle：`documents/` 前綴 2 天過期（掃把）
 
-- [ ] 新增 `/Users/linjunting/personalDocAI/deploy/aws/s3-lifecycle.json`，**整份逐字貼上**：
+> 🧩 **這一節分工**：新增 JSON 檔 ＝ **實作 subagent**；`put-bucket-lifecycle-configuration`
+> ＝ **controller 親自執行**（裁決 R3）。
+
+- [x] 新增 `/Users/linjunting/personalDocAI/deploy/aws/s3-lifecycle.json`，**整份逐字貼上**：
 
 ```json
 {
@@ -385,7 +452,7 @@ aws s3api put-bucket-encryption \
 | `Expiration.Days: 2` | 物件放超過 2 天就自動刪掉。design6 D8 寫「1〜3 天當掃把」，取中間值 |
 | `AbortIncompleteMultipartUpload.DaysAfterInitiation: 1` | **沒完成的分段上傳**（傳到一半斷線留下的碎片）放超過 1 天就丟掉。⚠ 這些碎片用 `list-objects` **看不到**，但**會佔空間、會扣點數**——沒有這一條的話它們會永遠留著 |
 
-- [ ] 套用：
+- [x] 套用（⚠ 本步驟由 controller 親自執行；實作 subagent 不打 `aws`）：
 
 ```bash
 aws s3api put-bucket-lifecycle-configuration \
@@ -428,7 +495,9 @@ aws s3api put-bucket-lifecycle-configuration \
 
 ### 4.6 三個 `get-*` 指令驗證設定真的生效
 
-- [ ] **① Block Public Access**：
+> ⚠ 本節四條全部由 controller 親自執行；實作 subagent 不打 `aws`。
+
+- [x] **① Block Public Access**：
 
 ```bash
 aws s3api get-public-access-block --bucket "$S3_BUCKET" --region ap-northeast-1
@@ -447,7 +516,7 @@ aws s3api get-public-access-block --bucket "$S3_BUCKET" --region ap-northeast-1
 }
 ```
 
-- [ ] **② 預設加密**：
+- [x] **② 預設加密**：
 
 ```bash
 aws s3api get-bucket-encryption --bucket "$S3_BUCKET" --region ap-northeast-1
@@ -472,7 +541,7 @@ aws s3api get-bucket-encryption --bucket "$S3_BUCKET" --region ap-northeast-1
 
 （`BucketKeyEnabled` 只跟 KMS 有關：這裡是 `false`、或根本沒出現，都正常。）
 
-- [ ] **③ Lifecycle**：
+- [x] **③ Lifecycle**：
 
 ```bash
 aws s3api get-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region ap-northeast-1
@@ -503,7 +572,7 @@ aws s3api get-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region ap-n
 
 （最後那個欄位是 §4.5 提過的預設值，可能有也可能沒有，都正常；**要對的是 `Rules` 那一段**。）
 
-- [ ] **④ 順手確認它真的在東京**：
+- [x] **④ 順手確認它真的在東京**：
 
 ```bash
 aws s3api get-bucket-location --bucket "$S3_BUCKET"
@@ -530,15 +599,23 @@ aws s3api get-bucket-location --bucket "$S3_BUCKET"
 
 ### 4.7 `.env` 填 `S3_BUCKET`，並讓容器重讀
 
-- [ ] 打開 `/Users/linjunting/personalDocAI/.env`，把 Phase 82 留空的那一行填上：
+> ⚠ 本節由 controller 親自執行；實作 subagent **不改 `.env`、不 restart 容器**。
+
+- [x] 打開 `/Users/linjunting/personalDocAI/.env`，**加上這一行**：
 
 ```ini
 S3_BUCKET=personaldocai-mailbox-你的帳號後六碼
 ```
 
-  （⚠ 等號兩邊**不可以有空白**；值不要加引號。）
+  （⚠ 等號兩邊**不可以有空白**；值不要加引號。
+  ⚠ **2026-09-02 實查**：Phase 82 §4.8 雖然寫「先留空」，但這台機器的 `.env` **並沒有**
+  `S3_BUCKET=` 這一行——目前 AWS 相關只有 `AWS_ACCESS_KEY_ID`／`AWS_SECRET_ACCESS_KEY`／
+  `AWS_REGION` 三行。所以這一步是**新增**，不是「把空的填滿」。
+  `CLOUD_ROUTE` 也還沒有那一行：本 phase **不必**加它——`config.py` 的預設值就是 `off`，
+  行為與現在逐字相同；真的要切到 `assume` 是 Phase 86 的事。）
 
-- [ ] 讓容器重新讀 `.env`：
+- [x] 讓容器重新讀 `.env`（⚠ 現在跑的是 **dev overlay**，所以兩個 `-f` 都要帶；
+      `restart` 只是重啟、不重建容器）：
 
 ```bash
 cd /Users/linjunting/personalDocAI
@@ -565,9 +642,28 @@ S3_BUCKET 有值 = True
 
 > 這支腳本的角色與既有的 `scripts/check_embedding_dim.py` 完全一樣：
 > **host 手動跑的煙霧測試**，不進 Docker 映像（`.dockerignore` 排除了 `scripts/`）、
-> 也**不在 pytest 裡跑**（pytest 絕不連真 AWS）。
+> 也**不在 pytest 裡跑**（pytest 絕不連真 AWS；裁決 R4：本檔**不寫任何自動化測試**）。
+>
+> 🧩 **這一節分工**：**寫檔 ＝ 實作 subagent**（純寫程式，不連線）；
+> **真的跑它 ＝ controller**（§4.9，會打真 AWS）。
 
-- [ ] 新增 `/Users/linjunting/personalDocAI/scripts/aws_check.py`，**整份逐字貼上**：
+> 📌 **識別字一律英文**（裁決 R1）。log 字樣、`print` 的訊息、註解與 docstring 維持中文。
+> 下面四個名字是**跨檔契約**，Phase 85 會逐字沿用：
+>
+> | 名字 | 用途 | 誰會再動它 |
+> |---|---|---|
+> | `CHECK_JOB_ID = "aws-check"` | 檢查用的固定假 `job_id` | 85 **沿用**（送出的那一則訊息可以直接拿它當 `job_id`） |
+> | `check_s3() -> None` | `s3` 子命令的本體 | 85 **不改** |
+> | `check_sqs() -> None` | `sqs` 子命令的本體（本 phase 是**佔位**：直接 `raise SystemExit`） | **85 把整支換掉**（簽章維持 `def check_sqs() -> None:`；失敗 `raise SystemExit`、成功 `print`） |
+> | `main() -> None` | 解析 `sys.argv`、印金鑰來源、依序分派子命令 | 85 **不改** |
+>
+> ⚠ `main()` **不看子命令函式的回傳值**（只靠 `SystemExit` 判定失敗），
+> 所以 Phase 85 把 `check_sqs()` 整支換掉時，就算回傳型別改成別的也不會壞。
+> 另外兩個 helper（`credential_source()`／`build_mailbox()`）與常數 `PROJECT_ROOT`
+> 是本檔內部用的，**Phase 85 不改它們**——但 `check_sqs()` 可以直接呼叫 `build_mailbox()`：
+> 它已經把 `config.SQS_JOBS_QUEUE_URL`／`config.SQS_RESULTS_QUEUE_URL` 傳進 `AwsMailbox` 了。
+
+- [x] 新增 `/Users/linjunting/personalDocAI/scripts/aws_check.py`，**整份逐字貼上**：
 
 ```python
 """對真 AWS 做一次最小的來回，確認「這台 Mac 的憑證與權限真的能用」。
@@ -602,11 +698,11 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-專案根目錄 = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 用 `python scripts/aws_check.py` 執行時，Python 只會在 scripts/ 資料夾裡找模組，
 # 會找不到 app 套件——把專案根目錄加進搜尋路徑就解決了（與 check_embedding_dim.py 同一招）。
-sys.path.insert(0, str(專案根目錄))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core import config  # noqa: E402  （必須在改完搜尋路徑之後 import）
 from app.services.aws_mailbox import AwsMailbox  # noqa: E402
@@ -614,26 +710,27 @@ from app.services.aws_mailbox import AwsMailbox  # noqa: E402
 # 檢查用的假 job_id。用固定值（不是隨機）有兩個好處：
 #   ・出事時你知道要去 bucket 的哪個位置找殘骸（documents/aws-check/）
 #   ・它一樣落在 documents/ 前綴底下，所以萬一沒刪掉，Lifecycle 兩天後會清掉
-檢查用的JOB_ID = "aws-check"
+CHECK_JOB_ID = "aws-check"
 
 
-def 金鑰來源() -> str:
+def credential_source() -> str:
     """回報 boto3 這次會用哪一把 key。只比對「是不是 .env 那把」，**不印任何值**。
 
     一定要在 config 被 import（＝ load_dotenv() 已經跑完）之後呼叫：那時 os.environ 裡的
     AWS_ACCESS_KEY_ID 要嘛是 shell 帶進來的、要嘛是 .env 補上的、要嘛兩邊都沒有。
     """
-    env檔 = 專案根目錄 / ".env"
-    env檔那把 = (dotenv_values(env檔) if env檔.is_file() else {}).get("AWS_ACCESS_KEY_ID") or ""
-    現在這把 = os.environ.get("AWS_ACCESS_KEY_ID", "")
-    if not 現在這把:
+    env_path = PROJECT_ROOT / ".env"
+    env_values = dotenv_values(env_path) if env_path.is_file() else {}
+    env_key = env_values.get("AWS_ACCESS_KEY_ID") or ""
+    current_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    if not current_key:
         return "沒有任何 key（boto3 會退到 ~/.aws 的 default profile ＝ admin）⚠ 這不是最小權限"
-    if 現在這把 == env檔那把:
+    if current_key == env_key:
         return ".env 那把（personaldocai-mac，最小權限）"
     return "不是 .env 那把（多半是你帶進來的 admin key）"
 
 
-def 建信箱() -> AwsMailbox:
+def build_mailbox() -> AwsMailbox:
     """照 .env 的設定建一個真的信箱。region 一律明傳，不靠環境變數猜。"""
     if not config.S3_BUCKET:
         raise SystemExit("⛔ .env 的 S3_BUCKET 是空的——先做完 Phase 84 §4.7")
@@ -645,7 +742,7 @@ def 建信箱() -> AwsMailbox:
     )
 
 
-def 檢查S3() -> None:
+def check_s3() -> None:
     """put → get → 比對內容 → delete → 再 get 確認真的不在了。
 
     最後那個「再 get 一次」不是多餘的：只做 delete 不檢查的話，
@@ -658,58 +755,71 @@ def 檢查S3() -> None:
     所以 personaldocai-mac-policy 一定要含 s3:ListBucket（總覽 §10.2 P）；
     ④ 炸 AccessDenied ＝ policy 還是舊版。
     """
-    信箱 = 建信箱()
-    鍵 = 信箱.input_key(檢查用的JOB_ID, "image/png")
-    內容 = b"personaldocai aws-check"
+    mailbox = build_mailbox()
+    key = mailbox.input_key(CHECK_JOB_ID, "image/png")
+    body = b"personaldocai aws-check"
 
     print(f"bucket = {config.S3_BUCKET}   region = {config.AWS_REGION}")
 
-    print(f"① PutObject      {鍵}")
-    信箱.put_object(鍵, 內容, "image/png")
+    print(f"① PutObject      {key}")
+    mailbox.put_object(key, body, "image/png")
 
-    print(f"② GetObject      {鍵}")
-    拿回來 = 信箱.get_object(鍵)
-    if 拿回來 != 內容:
-        raise SystemExit(f"⛔ 拿回來的位元組跟放進去的不一樣：{拿回來!r}")
+    print(f"② GetObject      {key}")
+    fetched = mailbox.get_object(key)
+    if fetched != body:
+        raise SystemExit(f"⛔ 拿回來的位元組跟放進去的不一樣：{fetched!r}")
 
-    print(f"③ DeleteObjects  {鍵}")
-    信箱.delete_objects([鍵])
+    print(f"③ DeleteObjects  {key}")
+    mailbox.delete_objects([key])
 
     print("④ 再 GetObject 一次，確認真的不在了")
-    if 信箱.get_object(鍵) is not None:
+    if mailbox.get_object(key) is not None:
         raise SystemExit("⛔ 刪掉之後還拿得回東西——delete 沒有真的生效（多半是權限）")
 
     print("✅ S3 OK：put → get → 內容一致 → delete → 確認不在了")
 
 
-def 檢查SQS() -> None:
+def check_sqs() -> None:
     """Phase 85 會把這裡換成真的（送一則 → 收回來 → 刪掉）。"""
     raise SystemExit("這個子命令要等 Phase 85 建好兩條佇列之後才有內容（現在沒有東西可以打）")
 
 
 def main() -> None:
-    子命令 = sys.argv[1:]
-    if not 子命令:
+    commands = sys.argv[1:]
+    if not commands:
         raise SystemExit("用法：python scripts/aws_check.py s3 [sqs]")
-    print(f"金鑰來源 = {金鑰來源()}")
-    for 名稱 in 子命令:
-        if 名稱 == "s3":
-            檢查S3()
-        elif 名稱 == "sqs":
-            檢查SQS()
+    print(f"金鑰來源 = {credential_source()}")
+    for name in commands:
+        if name == "s3":
+            check_s3()
+        elif name == "sqs":
+            check_sqs()
         else:
-            raise SystemExit(f"不認得的子命令：{名稱}（只有 s3 與 sqs）")
+            raise SystemExit(f"不認得的子命令：{name}（只有 s3 與 sqs）")
 
 
 if __name__ == "__main__":
     main()
 ```
 
+- [x] 寫完自己驗一次「識別字真的全是英文」（不連 AWS，純靜態掃描）：
+
+```bash
+cd /Users/linjunting/personalDocAI && source .venv/bin/activate
+python -c "import io,tokenize,sys; src=open(sys.argv[1],encoding='utf-8').read(); \
+print(sorted({t.string for t in tokenize.generate_tokens(io.StringIO(src).readline) \
+if t.type==tokenize.NAME and not t.string.isascii()}))" scripts/aws_check.py
+```
+
+**預期輸出：** `[]`（空清單 ＝ 沒有任何非 ASCII 的識別字）。
+
 ---
 
 ### 4.9 跑它
 
-- [ ] 執行（⚠ 這一步會真的打 AWS，而且用的是 **`.env` 裡那把最小權限的 key**）：
+> ⚠ 本節由 controller 親自執行；實作 subagent **不跑這支腳本**（它會真的連 AWS）。
+
+- [x] 執行（⚠ 這一步會真的打 AWS，而且用的是 **`.env` 裡那把最小權限的 key**）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -734,7 +844,7 @@ bucket = personaldocai-mailbox-XXXXXX   region = ap-northeast-1
 ✅ S3 OK：put → get → 內容一致 → delete → 確認不在了
 ```
 
-- [ ] 順手看一眼 bucket 現在是**空的**（`aws-check` 那個物件已經被刪掉）：
+- [x] 順手看一眼 bucket 現在是**空的**（`aws-check` 那個物件已經被刪掉）：
 
 ```bash
 aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ --region ap-northeast-1
@@ -773,7 +883,9 @@ aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ --region ap-
 
 ### 4.10 格式、回歸、收尾
 
-- [ ] 格式與 lint（`scripts/` 也在 CI 的檢查範圍內）：
+> 🧩 **本節全部由實作 subagent 執行**（零 `aws`、零真連線）。
+
+- [x] 格式與 lint（`scripts/` 也在 CI 的檢查範圍內）：
 
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -782,15 +894,15 @@ ruff format --check app tests scripts && ruff check app tests scripts
 
 **預期輸出：** `All checks passed!`
 
-- [ ] 全量測試（本 phase **+0 顆**，數字不能變）：
+- [x] 全量測試（本 phase **+0 顆**，數字不能變）：
 
 ```bash
 pytest -q
 ```
 
-**預期輸出：** `632 passed`，0 skipped。
+**預期輸出：** `640 passed`，0 skipped（2026-09-02 實查基線 624 ＋ Phase 83 的 16）。
 
-- [ ] 零外部依賴實證（三個死埠一起指，顆數一模一樣）：
+- [x] 零外部依賴實證（三個死埠一起指，顆數一模一樣）：
 
 ```bash
 AWS_ENDPOINT_URL=http://127.0.0.1:9 \
@@ -798,19 +910,27 @@ CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
 OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
 ```
 
-**預期輸出：** `632 passed`
+**預期輸出：** `640 passed`
 
-- [ ] **commit**（⚠ 總覽 §7 鐵律 12：產品負責人沒指示前先不要 commit）：
+- [x] **不 commit——記快照**（總覽 §7 鐵律 12：產品負責人沒指示前不要 commit；
+      本輪裁決 R0 也明示「不建 worktree、不 commit、tree 快照相減審」）。
+      **不要 `git add`／`git commit`／`git stash`／`git mv`**，改成：
 
 ```bash
 cd /Users/linjunting/personalDocAI
-git add deploy/aws/s3-lifecycle.json scripts/aws_check.py
-git commit -m "feat: Phase 84 建 S3 寄物櫃——東京 bucket（BPA 四項全開、預設 SSE-S3、Lifecycle documents/ 前綴 2 天過期＋清掉未完成的分段上傳）、deploy/aws/s3-lifecycle.json 落地、新增 scripts/aws_check.py（host 手動煙霧：用 AwsMailbox 對真 S3 put→get→比對→delete→確認不在），.env 填 S3_BUCKET；零產品碼變更、顆數仍 632、端點仍 22"
-git log -1 --stat
+git status --short -- deploy scripts
+.superpowers/sdd/phase0902-1/snapshot-tree     # 印出收工時的工作樹 tree SHA，寫進回報
 ```
 
-**預期：** 只列出 `deploy/aws/s3-lifecycle.json` 與 `scripts/aws_check.py` 兩個檔
-（`.env` 不入版控，bucket 名不會進 repo）。
+**預期輸出**（`git status` 恰兩行；`snapshot-tree` 印一顆 40 碼 SHA）：
+
+```text
+?? deploy/aws/s3-lifecycle.json
+?? scripts/aws_check.py
+```
+
+（`.env` 不入版控，bucket 名不會進 repo。review 用
+`git diff -U10 <開工 tree> <收工 tree>` 相減，不需要 commit。）
 
 ---
 
@@ -879,19 +999,26 @@ git log -1 --stat
 
 ## 6. 驗收清單
 
-- [ ] **開工基線已實查**：`pytest -q` ＝ 632 passed ＋ 0 skipped
+> ⚠ 下面凡是有 `aws` 指令的條目，都由 **controller 親自執行**（裁決 R3）；
+> 實作 subagent 只負責 `pytest`／`ruff`／`git status` 那幾條。
 
-- [ ] **bucket 存在，而且在東京**
+- [x] **開工基線已實查**：`pytest -q` ＝ **640** passed ＋ 0 skipped
+      （2026-09-02 實查：增量六開工基線 624 ＋ Phase 83 的 16）
+
+- [x] **bucket 存在，而且在東京**
 
   ```bash
   cd /Users/linjunting/personalDocAI
-  set -a; . ./.env; set +a
-  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  # 只撈這一個變數，不要 source 整份 .env（那會帶進最小權限的兩把 key，讓 aws 變成 mac 身分）
+  S3_BUCKET=$(grep -E '^S3_BUCKET=' .env | cut -d= -f2-)
   aws s3api get-bucket-location --bucket "$S3_BUCKET"
   ```
   預期：`{"LocationConstraint": "ap-northeast-1"}`（回 `null` ＝ 建在 us-east-1，要重來）
 
-- [ ] **Block Public Access 四項全 `true`**
+  ⚠ 每個 Bash 呼叫都是獨立的 shell：**下面每一條都要自己再帶一次那兩行**
+  （`cd` ＋ 撈 `S3_BUCKET`），不然 `$S3_BUCKET` 會是空的、`aws` 會抱怨參數不合法。
+
+- [x] **Block Public Access 四項全 `true`**
 
   ```bash
   aws s3api get-public-access-block --bucket "$S3_BUCKET" --region ap-northeast-1 \
@@ -899,7 +1026,7 @@ git log -1 --stat
   ```
   預期：四個欄位全部是 `true`
 
-- [ ] **預設加密是 SSE-S3，而且沒有 KMS 金鑰**
+- [x] **預設加密是 SSE-S3，而且沒有 KMS 金鑰**
 
   ```bash
   aws s3api get-bucket-encryption --bucket "$S3_BUCKET" --region ap-northeast-1 \
@@ -908,7 +1035,7 @@ git log -1 --stat
   ```
   預期：`{"SSEAlgorithm": "AES256"}`（**不可以**出現 `KMSMasterKeyID`）
 
-- [ ] **Lifecycle 規則在，前綴與天數都對**
+- [x] **Lifecycle 規則在，前綴與天數都對**
 
   ```bash
   aws s3api get-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region ap-northeast-1 \
@@ -927,14 +1054,14 @@ git log -1 --stat
   }
   ```
 
-- [ ] **版本控制沒有被打開**（總覽 §2.8：不開）
+- [x] **版本控制沒有被打開**（總覽 §2.8：不開）
 
   ```bash
   aws s3api get-bucket-versioning --bucket "$S3_BUCKET" --region ap-northeast-1
   ```
   預期：**完全沒有輸出**（或 `{}`）——有 `"Status": "Enabled"` 就是被打開了
 
-- [ ] **Lifecycle 的 JSON 檔在 repo 裡，而且是合法 JSON**
+- [x] **Lifecycle 的 JSON 檔在 repo 裡，而且是合法 JSON**
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -943,7 +1070,17 @@ git log -1 --stat
   ```
   預期：兩行都印出來
 
-- [ ] **`scripts/aws_check.py s3` 印 OK**（★ 本 phase 最重要的一條）
+- [x] **`scripts/aws_check.py` 的識別字全是英文**（裁決 R1；純靜態掃描，不連 AWS，**實作 subagent 跑**）
+
+  ```bash
+  cd /Users/linjunting/personalDocAI && source .venv/bin/activate
+  python -c "import io,tokenize,sys; src=open(sys.argv[1],encoding='utf-8').read(); \
+  print(sorted({t.string for t in tokenize.generate_tokens(io.StringIO(src).readline) \
+  if t.type==tokenize.NAME and not t.string.isascii()}))" scripts/aws_check.py
+  ```
+  預期：`[]`
+
+- [x] **`scripts/aws_check.py s3` 印 OK**（★ 本 phase 最重要的一條；**controller 親自跑**）
 
   ```bash
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
@@ -953,48 +1090,50 @@ git log -1 --stat
   預期第一行：`金鑰來源 = .env 那把（personaldocai-mac，最小權限）`（印出別的＝驗錯把 key，見 §7 陷阱 11）
   預期最後一行：`✅ S3 OK：put → get → 內容一致 → delete → 確認不在了`
 
-- [ ] **bucket 現在是空的**（檢查用的物件已經被刪掉）
+- [x] **bucket 現在是空的**（檢查用的物件已經被刪掉）
 
   ```bash
+  cd /Users/linjunting/personalDocAI
+  S3_BUCKET=$(grep -E '^S3_BUCKET=' .env | cut -d= -f2-)
   aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix documents/ --region ap-northeast-1 \
     --query 'Contents' --output text
   ```
   預期：`None`（＝回應裡沒有 `Contents` ＝ 一個物件都沒有；還有東西的話會列出每個物件的 Key 等欄位）
 
-- [ ] **`.env` 有 `S3_BUCKET`，容器也讀得到**
+- [x] **`.env` 有 `S3_BUCKET`，容器也讀得到**
 
   ```bash
   grep -c '^S3_BUCKET=.' /Users/linjunting/personalDocAI/.env      # 預期：1
-  docker compose exec worker python -c \
+  cd /Users/linjunting/personalDocAI && docker compose exec worker python -c \
     "from app.core import config; print('S3_BUCKET 有值 =', bool(config.S3_BUCKET))"
   ```
   預期最後一行：`S3_BUCKET 有值 = True`
 
-- [ ] **全量測試 ＝ 開工基線 ＋ 0**
+- [x] **全量測試 ＝ 開工基線 ＋ 0**
 
   ```bash
   cd /Users/linjunting/personalDocAI && source .venv/bin/activate
   pytest -q
   ```
-  預期：`632 passed`，**0 skipped**（本 phase 沒有新增任何測試）
+  預期：`640 passed`，**0 skipped**（本 phase 沒有新增任何測試）
 
-- [ ] **零外部依賴實證（三個死埠一起指，顆數不變）**
+- [x] **零外部依賴實證（三個死埠一起指，顆數不變）**
 
   ```bash
   AWS_ENDPOINT_URL=http://127.0.0.1:9 \
   CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
   OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q
   ```
-  預期：`632 passed`（與上一條一模一樣）
+  預期：`640 passed`（與上一條一模一樣）
 
-- [ ] **端點仍是 22 支**
+- [x] **端點仍是 22 支**
 
   ```bash
   pytest tests/integration/test_nav_header.py::test_端點數仍為22 -q
   ```
   預期：`1 passed`
 
-- [ ] **專案的 `data/` 沒被弄髒**
+- [x] **專案的 `data/` 沒被弄髒**
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -1002,14 +1141,14 @@ git log -1 --stat
   git status --short data/     # 預期：零輸出（.gitignore 擋掉了）
   ```
 
-- [ ] **格式與 lint 過**（`scripts/` 也在 CI 的範圍內）
+- [x] **格式與 lint 過**（`scripts/` 也在 CI 的範圍內）
 
   ```bash
   ruff format --check app tests scripts && ruff check app tests scripts
   ```
   預期：`All checks passed!`
 
-- [ ] **機密沒有進 repo**
+- [x] **機密沒有進 repo**
 
   ```bash
   cd /Users/linjunting/personalDocAI
@@ -1019,17 +1158,29 @@ git log -1 --stat
   ```
   預期：兩行都印 `OK：…`
 
-- [ ] **`docs/spec/` 一字未動**
+- [x] **`docs/spec/` 一字未動**
 
   ```bash
   git status --short docs/spec/
   ```
   預期：零輸出
 
-- [ ] **git 收尾符合現行節奏**：產品負責人已指示 commit → §4.10 已執行；
-      未指示（現行預設）→ 跳過 commit，改核對
-      `git status --short -- deploy scripts` 的新增項恰為
-      `deploy/aws/s3-lifecycle.json` 與 `scripts/aws_check.py`。
+- [x] **不 commit——記快照**（裁決 R0＋總覽 §7 鐵律 12：本輪產品負責人指示不 commit）
+
+  ```bash
+  cd /Users/linjunting/personalDocAI
+  git status --short -- deploy scripts
+  .superpowers/sdd/phase0902-1/snapshot-tree     # 收工的工作樹 tree SHA，寫進回報
+  ```
+  預期 `git status` 恰兩行新增項：
+
+  ```text
+  ?? deploy/aws/s3-lifecycle.json
+  ?? scripts/aws_check.py
+  ```
+
+  ⛔ 不要 `git add`／`git commit`／`git stash`／`git mv`（計畫檔搬進 `finish/` 也是 commit 時才做）。
+  review 用 `git diff -U10 <開工 tree> <收工 tree>` 相減，不需要任何 commit。
 
 ---
 
@@ -1065,6 +1216,8 @@ git log -1 --stat
    aws sts get-caller-identity --query Arn --output text   # 要回到 :user/personaldocai-admin
    ```
    §2.4 的 shell 準備就是在做這件事，**每次開新終端機都要做一次**。
+   **更省事的做法：一開始就不要 `source .env`**（只用 `grep` 撈出要用的那一個變數），
+   那就永遠不會踩到這個坑——§2.4 的「優先寫法」。
 
 4. **症狀：** 設好 Lifecycle 之後，故意放一個檔進去等兩天，第三天去看它還在，
    以為 Lifecycle 壞了。
@@ -1139,10 +1292,30 @@ git log -1 --stat
     bucket 本身 `arn:aws:s3:::personaldocai-mailbox-*`）加進 `personaldocai-mac-policy` 的原因：
     正式流程裡 `fetch_result()`／工人的冪等檢查都靠「缺 key → None」判斷。
     **正解：** 回 Phase 82 §4.6.1 確認 `deploy/aws/mac-policy.json` 有那一條，沒有就補上並
-    `aws iam create-policy-version --policy-arn "arn:aws:iam::<ACCOUNT_ID>:policy/personaldocai-mac-policy"
-    --policy-document file://deploy/aws/mac-policy.json --set-as-default` 發布新版本，再跑一次 ④。
+    先把佔位換成真帳號（該檔帶 `<ACCOUNT_ID>` 佔位，直接 `file://` 會 `MalformedPolicyDocument`）：
+    `sed "s/<ACCOUNT_ID>/$ACCOUNT_ID/g" deploy/aws/mac-policy.json > /tmp/mac-policy.json`，再
+    `aws iam create-policy-version --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/personaldocai-mac-policy"
+    --policy-document file:///tmp/mac-policy.json --set-as-default` 發布新版本，再跑一次 ④。
+    （2026-09-02 controller 實查：目前掛在 AWS 上的 `personaldocai-mac-policy` v1 已含 `ListMailboxBucket` 且 ARN 是真帳號，正常不必走到這裡。）
     （這一步也解釋了為什麼 mac key 現在可以 `list-objects-v2`——但本文件的 `aws` 指令一律仍用 admin，
     載完 `.env` 照樣 `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY`，不必為了 list 切來切去。）
+
+13. **症狀：** 照 `docs/plan/aws/2026-09-02-S3寄物櫃新手步驟.md` 抄指令，每一條都回
+    `The config profile (personaldocai-admin) could not be found`。
+    **原因：** 那幾份新手步驟檔的每條指令都帶 `--profile personaldocai-admin`，
+    但**這台機器的 `~/.aws` 只有 `[default]`**，而 default 裡設的就是 admin 那把 key
+    ——根本沒有一個叫 `personaldocai-admin` 的 profile。
+    **正解：** **不要帶 `--profile`**（本文件的每一條指令都沒帶，照本文件抄就對了）。
+    想確認：`aws configure list-profiles` 只會印一行 `default`；
+    `aws sts get-caller-identity --query Arn --output text` 結尾是 `:user/personaldocai-admin`。
+    （新手步驟檔的寫法是給「另外設過具名 profile」的人看的，兩種都對，只是這台機器沒設。）
+
+14. **症狀：** §4／§6 的第二條 `aws` 指令開始噴
+    `Invalid bucket name "": Bucket name must match the regex ...`。
+    **原因：** 每一個 Bash 呼叫都是**獨立的 shell**，上一條算出來的 `$S3_BUCKET` 不會留下來。
+    **正解：** 每條指令自己帶上前置兩行（`cd` ＋
+    `S3_BUCKET=$(grep -E '^S3_BUCKET=' .env | cut -d= -f2-)`）。
+    §4.7 之前 `.env` 還沒有那一行，那時就用 §4.1 的公式現算。
 
 ---
 
@@ -1163,7 +1336,8 @@ git log -1 --stat
 
 `CLOUD_ROUTE` 仍然是 `off`、`get_cloud_route()` 仍然回 `CloudRouteOff()`，
 所以**沒有任何一張照片會被送進這個 bucket**。上傳、待決定、詢問、進度面板一個像素都沒變。
-測試顆數仍是 **632 passed ＋ 0 skipped**（本 phase +0），端點仍是 **22** 支、
+測試顆數仍是 **640 passed ＋ 0 skipped**（本 phase +0；2026-09-02 實查基線 624 ＋ Phase 83 的 16），
+端點仍是 **22** 支、
 `photo` 表零改動、前端零改動、`compose.yaml` 零改動、`docs/spec/` 一字未動、
 `app/` 底下**一行都沒改**。
 
@@ -1172,13 +1346,23 @@ git log -1 --stat
 **下一個 phase：Phase 85「建 SQS 兩條佇列」**——
 建 `personaldocai-jobs`（本機 Send、工人 Receive；`VisibilityTimeout=900` 秒，
 因為工人看一份多頁 PDF 要很久）與 `personaldocai-results`（工人 Send、本機 Receive；
-`VisibilityTimeout=30` 秒），兩條都開 20 秒長輪詢；
-把 `aws_check.py` 的 `sqs` 子命令換成真的（送一則 → 收回來 → 刪掉）；
+`VisibilityTimeout=30` 秒），兩條都開 20 秒長輪詢、訊息保留 4 天（總覽 §2.8）；
+把 `aws_check.py` 的 **`check_sqs()` 整支**換成真的（送一則 → 收回來 → 刪掉；
+`main()`／`check_s3()`／`CHECK_JOB_ID` 一個字都不動）；
 `.env` 填兩個佇列 URL。做完之後「東西怎麼過去」與「怎麼通知對方」就都齊了。
 
-**顆數：** 開工基線 **632** ＋ **0** ＝ **632**（0 skipped）。
+**顆數：** 開工基線 **640** ＋ **0** ＝ **640**（0 skipped）。
+（2026-09-02 實查：增量六開工基線 **624**、Phase 83 +16 ＝ 640；總覽 §9 那欄的 632 是
+2026-08-31 的舊絕對值，**要對的是「本 phase 新增幾顆」＝ 0**。）
 
 ---
+
+
+## 8.1 執行紀錄（2026-09-02，controller 親自執行；值不寫進文件）
+
+- AWS 指令全部以 default profile（`personaldocai-admin`）執行、不 source `.env`；`scripts/aws_check.py` 在 host venv 跑，金鑰來源印出「.env 那把（personaldocai-mac，最小權限）」。
+- bucket 建於 ap-northeast-1（`get-bucket-location` 驗過）；BPA 四項 true；SSE-S3 AES256、無 KMS；Lifecycle `expire-documents-after-2-days`（`documents/` 2 天＋未完成分段 1 天）`get` 驗過；版本控制未開；`deploy/aws/s3-lifecycle.json` 入 repo；`.env` 新增 `S3_BUCKET`，容器 restart 後 worker 讀到；`python scripts/aws_check.py s3` 印 ✅ 且 bucket 之後為空。
+- 驗收：全量 640 passed／0 skipped、三死埠 640、端點 22、ruff 綠、追蹤檔零帳號 ID／bucket 後綴／佇列 URL、`docs/spec/` 與 `data/` 乾淨。快照 T85_HEAD 記於 `.superpowers/sdd/phase0902-1/`。
 
 ## 附：本文件引用的官方文件
 

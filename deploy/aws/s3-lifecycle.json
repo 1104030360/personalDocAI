@@ -1,0 +1,17 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-documents-after-2-days",
+      "Filter": {
+        "Prefix": "documents/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 2
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
+    }
+  ]
+}
