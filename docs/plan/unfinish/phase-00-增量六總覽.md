@@ -453,9 +453,9 @@ git branch --show-current             # 預期：main
 | 91 | `phase-91-EC2的網路IAM與ECR.md` | 戊 | 人＋CLI：SG（inbound 空）、S3 Gateway endpoint、IAM role＋instance profile、ECR repo、第一次手動 push | ★G2 | D11、D15、§6、§7 網路那列 | +0 | 662（實 672） | [ ] |
 | 92 | `phase-92-EC2真機與文件.md` | 戊 | **拆兩段（追認項 U）**：**92-A**（現在做）啟動 `t3.xlarge`（CPU、`WORKER_VLM_BACKEND=cloud`、30 GB）、SSM 放 `worker.env`、**Demo 2／2b**、**Stop**；`LAUNCH.md`／`CLAUDE.md`／`README.md`（**兩段式誠實版**）。**92-B**（G and VT 配額核准後）先 Terminate 92-A → 開 `g4dn.xlarge`（GPU、`local`、80 GB）→ 重跑 Demo 2 → **Terminate** | 91 | D12、D15、§7、§12 Demo 2／2b、§3「Free plan 約束寫進文件」；追認項 T／U | +0 | 662 | [ ] |
 | **★G3** | （人的動作，沒有檔案） | — | 戊的驗收（真機 Demo 2／2b 親眼看過、機器已 Stop）；**之後才做 OIDC／CD** | **92-A**（追認項 U：不等 GPU；92-B 是獨立後續、不設新閘門） | §0 戊那列、§0 己那列 | — | 662 | [ ] |
-| 93 | `phase-93-GitHub_OIDC與部署角色.md` | 己 | IAM OIDC provider＋deploy role；trust 的 `sub` **精確鎖 `main`**；GitHub secret `AWS_DEPLOY_ROLE_ARN` | ★G3（＝92-A 之後；**不等 GPU**） | D16、§6 最後一列、§8 第 9 列 | +4 | 666 | [ ] |
-| 94 | `phase-94-CD工作流程.md` | 己 | `.github/workflows/deploy.yml`：`workflow_run`→OIDC→buildx `linux/arm64`→ECR→SSM；**Demo 3** | 93 | D16、§12 Demo 3 | +6 | 672 | [ ] |
-| 95 | `phase-95-增量六錯誤收尾與驗收包.md` | 收尾 | §8 十列逐列點名＋六禁與被否決清單掃碼＋三死埠實證＋驗收包 | 74〜94 | §0 六禁、§1.2、§3「不做」、§8 全表、§9、§12 | +10 | **682** | [ ] |
+| 93 | `phase-93-GitHub_OIDC與部署角色.md` | 己 | IAM OIDC provider＋deploy role；trust 的 `sub` **精確鎖 `main`**；GitHub secret `AWS_DEPLOY_ROLE_ARN` | ★G3（＝92-A 之後；**不等 GPU**） | D16、§6 最後一列、§8 第 9 列 | +4 | 666（實 696） | [ ] |
+| 94 | `phase-94-CD工作流程.md` | 己 | `.github/workflows/deploy.yml`：`workflow_run`→OIDC→buildx `linux/amd64,linux/arm64`（多架構，2026-09-03 校準）→ECR→SSM；**Demo 3**（需 push，由產品負責人執行） | 93 | D16、§12 Demo 3 | +6 | 672（實 702） | [ ] |
+| 95 | `phase-95-增量六錯誤收尾與驗收包.md` | 收尾 | §8 十列逐列點名＋六禁與被否決清單掃碼＋三死埠實證＋驗收包 | 74〜94 | §0 六禁、§1.2、§3「不做」、§8 全表、§9、§12 | +10（實 +14） | **682**（實 716） | [ ] |
 
 ### 2.3 依賴順序總結
 
@@ -1082,22 +1082,24 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 
 **新增測試（6 顆）：**
 
-`test_CD綁在test工作流程成功之後`、`test_CD要求id_token寫入權限`、`test_CD只建linux_arm64的映像`、`test_CD打的是cloud_worker這個target`、`test_CD的tag含commit的sha`、`test_CD沒有寫死任何AWS金鑰`
+`test_CD綁在test工作流程成功之後`、`test_CD要求id_token寫入權限`、`test_CD建linux_amd64與linux_arm64的映像`（2026-09-03 校準：多架構改判後改名，原 `test_CD只建linux_arm64的映像`）、`test_CD打的是cloud_worker這個target`、`test_CD的tag含commit的sha`、`test_CD沒有寫死任何AWS金鑰`
 
 **人工：** Demo 3（§5.4）。
 
 > `deploy` job 的 `if` 是 **`github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'`**——只看 conclusion 的話，fork PR 的分支若取名 `main`，`test.yml` 的 `pull_request` 觸發也會讓 `deploy` 在預設分支上下文拿到 secret 與 `id-token`（phase-94 reviewer 抓到，§10.2 M）。
 
-#### Phase 95 · 收尾 · +10 顆（累計 **682**）
+#### Phase 95 · 收尾 · +10 顆（累計 **682**；**2026-09-03 實作：實 +14、累計 716**——§4.3.3 停放項 3 顆＋ledger R18 ② 1 顆，見下）
 
 **動到的檔：** `tests/integration/test_design6_error_paths.py`、
-`docs/plan/report/2026-XX-XX-增量六驗收包-請產品負責人確認.md`（新）、`docs/plan/todo/`
+`docs/plan/report/2026-XX-XX-增量六驗收包-請產品負責人確認.md`（新）、`docs/plan/todo/`；**2026-09-03 校準（§4.3.3 停放項）另動：** `app/workers/cloud_worker.py`（`read_context` 型別加固，本增量收尾唯一產品碼改動）、`tests/unit/test_cloud_worker_unit.py`、`tests/integration/test_gated_ingest.py`、`tests/unit/test_cloud_ingest_unit.py`、`README.md`／`CLAUDE.md`（Tests 顆數）
 ~~另（純註解校正）：`test_ingest_job_pdf.py` 的 `_fail`／`_insert_photo_with_files` 舊名~~ → **已於 2026-09-01 Phase 74〜80 收工的 final fix wave 修完**（連同 `test_ai_timing_log.py`／`test_folder_correction.py` 的「六個注入點」、`test_ingest_job.py` 的「四道」、`test_entity_suggestion_unit.py` 的「五種 kind」、`test_privacy_gate_unit.py` 的 `get_privacy_gate()` docstring），95 不必再處理
-另（候選補測，Phase 80 review 發現、顆數留給 95）：① `route=cloud` 崩潰重送時 `cloud` 已是 `CloudRouteOff`（使用者半路把 `CLOUD_ROUTE` 改回 off）——`_繼續雲端路`／`_盡力清雲端` 的兩個 try 撐住整條路，目前零測試；② `_處理別人的訊息` 的 `store.get` 丟例外會被 R14 接成 result_timeout（行為安全但白費一趟）。
+另（候選補測，Phase 80 review 發現、顆數留給 95）：① `route=cloud` 崩潰重送時 `cloud` 已是 `CloudRouteOff`（使用者半路把 `CLOUD_ROUTE` 改回 off）——`_resume_cloud_route`／`_best_effort_cloud_cleanup`（2026-09-02 英文名） 的兩個 try 撐住整條路，目前零測試；② `_handle_foreign_message`（2026-09-02 英文名）的 `store.get` 丟例外會被 R14 接成 result_timeout（行為安全但白費一趟）。
 
 **新增測試（10 顆）：**
 
 `test_產品碼與部署檔都沒有NAT或EIP或ALB或Lambda或ECS字樣`、`test_compose沒有為了雲端新增任何服務`、`test_端點仍是22支而且openapi零DELETE`、`test_兩條佇列的訊息body都不含影像位元組`、`test_工人不寫Postgres也不算embedding`、`test_boto3唯一入口仍是aws_mailbox`（掃 `app/`＋`tests/`＋`scripts/` 三棵樹，只放行 `app/services/aws_mailbox.py`、`tests/unit/test_aws_mailbox_unit.py`、`scripts/aws_check.py`；83 那顆只掃 `app/`，兩顆不重複）、`test_photo表沒有為了雲端新增任何欄位`、`test_隱私閘門不會去碰AI後端開關`、`test_雲端看圖三次失敗是整筆失敗不是fallback本機`（**真缺口補測**）、`test_遠端不可用時上傳仍然回202不會變5xx`（**真缺口補測**）
+
+**§4.3.3 停放項（+3，2026-09-03 校準 ledger R9）：** `test_context值不是list時當空清單不炸`（`tests/unit/test_cloud_worker_unit.py`）、`test_崩潰重送時雲端路已經關掉_照樣fallback本機`（`tests/integration/test_gated_ingest.py`）、`test_處理別人的訊息時store掛掉_例外往外丟`（`tests/unit/test_cloud_ingest_unit.py`）
 
 ---
 
@@ -1164,7 +1166,7 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 | **D3** | 三分類；**敏感→本機、不確定→本機、只有非敏感才允許雲端** | **74**（`Verdict`）、**78**（分流） | 74 的 11 顆＋78 的第 1／2 顆 |
 | **D4** | Classifier ＝ 現有看圖 VLM 的短問題；不看檔名；失敗→UNCERTAIN；完整看圖仍是入庫那一次 | **74**（VlmGate＋假模型）、**75**（OllamaPrivacyModel 跟開關） | `test_檔名完全不影響判斷`；`test_短prompt不含完整understand欄位` |
 | **D5** | 插在 Celery 開頭：`POST /photos` 仍 202、仍先 staging；分類在拿 job 之後、看圖之前 | **78**（`celery_app.ingest_task` 改呼叫 `run_gated_ingest_job`） | `test_ingest_task把gate與cloud都傳進去`；`test_一進門status就變analyzing` |
-| **D6** | 頁首 AI 開關閘門**跟著走**、不准去關它 | **75**（`OllamaPrivacyModel` 讀 `AI_BACKEND`）、**95**（掃碼不准寫入） | `test_get_privacy_gate跟AI_BACKEND走`；**95** `test_隱私閘門不會去關AI後端開關`（掃碼無 `AI_BACKEND =`） |
+| **D6** | 頁首 AI 開關閘門**跟著走**、不准去關它 | **75**（`OllamaPrivacyModel` 讀 `AI_BACKEND`）、**95**（掃碼不准寫入） | `test_get_privacy_gate跟AI_BACKEND走`；**95** `test_隱私閘門不會去碰AI後端開關`（掃碼無 `AI_BACKEND =`；2026-09-03 校準：名稱統一用「碰」） |
 | **D7** | 雲端管線**只給非敏感且遠端可用**：Put → jobs → EC2 → result.json → results → 本機 Get | **78**（守門）、**79**（單圖全程）、**81**（PDF） | 79 的第 5 顆端到端；78 的第 1／2／3 顆零 submit |
 | **D8** | S3 是寄物櫃：private、BPA、SSE-S3（不加 KMS）、處理成功後刪、Lifecycle 1〜3 天當掃把 | **79**（`cleanup`）、**84**（bucket 設定 ＋ Lifecycle **2 天**） | `aws s3api get-public-access-block`／`get-bucket-encryption`／`get-bucket-lifecycle-configuration` |
 | **D9** | 完成訊號＝results 佇列（方案 B）；工人 **PutObject 成功後才 Send**；本機禁止輪詢 HeadObject | **79**（本機 Receive→GetObject）、**87**（工人的順序鐵律） | `test_result先PutObject才SendMessage`（記錄呼叫順序）；掃碼無 `head_object` |
@@ -1190,7 +1192,7 @@ results 0 則 → 30 秒後 fallback 本機入庫、S3 清空、worker log 有 `
 | 7 | VLM 三次失敗（本機或雲端看圖） | 沿用 design5 D10 | 不留 photo 列、清 staging；雲端路還要清 S3 | **79**、**87** | `test_雲端結果說看不懂_job標failed且不留照片`、`test_看圖三次都失敗_result標understood_false而且attempts是3`；★ **95** `test_雲端看圖三次失敗是整筆失敗不是fallback本機` |
 | 8 | 格式 415 | HTTP | 不變；不建 job | （不動 `app/api/`） | 既有 `test_photos_upload.py` 的 415 三顆＋`test_design5_error_paths.py`；**95** 只點名 |
 | 9 | GitHub OIDC 未鎖 `sub` | CD | 不准合併；trust 必須釘 repo ＋ branch | **93** | `test_OIDC信任文件的sub逐字鎖住main分支`、`test_OIDC信任文件沒有星號萬用字元` |
-| 10 | 誤開 NAT／EIP／GPU | 操作 | 本文件禁止；驗收掃 compose／文件／Console | **95** | `test_產品碼與部署檔都沒有NAT或EIP或ALB或Lambda或ECS字樣`；§5.5 的 `describe-nat-gateways`／`describe-addresses` 預期空 |
+| 10 | 誤開 NAT／EIP／GPU（⚠「GPU」隨 §10.2 追認項 T 作廢：92-B 的工人就是 g4dn 自裝 Ollama，掃碼**不把** `g4dn`／`nvidia` 當違規；掃的是 NAT／EIP／ALB／Lambda／ECS 等未核准服務） | 操作 | 本文件禁止；驗收掃 compose／文件／Console | **95** | `test_產品碼與部署檔都沒有NAT或EIP或ALB或Lambda或ECS字樣`；§5.5 的 `describe-nat-gateways`／`describe-addresses` 預期空 |
 
 ### 3.4 §1.1「本增量明確推翻的舊決策」→ 哪個 phase 執行推翻（4 列）
 
@@ -1465,7 +1467,7 @@ Ollama 不進本機 Docker、`postgresql@14` 不動、待決定／詢問流程�
 
   # 2. 到 GitHub 看兩個 workflow：test 綠了之後 deploy 才會跑
   #    https://github.com/1104030360/personalDocAI/actions
-  #    ⚠ deploy 要 5〜15 分鐘：GitHub runner 是 amd64，用 QEMU 模擬 arm64 很慢
+  #    ⚠ deploy 要 5〜15 分鐘：GitHub runner 是 amd64（amd64 那一半原生建），arm64 那一半靠 QEMU 模擬很慢（2026-09-03 校準：多架構 manifest）
 
   # 3. ECR 上要看得到這個 sha
   aws ecr describe-images --repository-name personaldocai-worker --region "$AWS_REGION" \
@@ -1494,7 +1496,7 @@ Ollama 不進本機 Docker、`postgresql@14` 不動、待決定／詢問流程�
   ```
 
   > EC2 是 Stop 的時候，deploy 這個 job **仍然算成功**（D16），
-  > log 會印 `instance stopped; image pushed; next Start pulls latest`。
+  > log 會印 `instance not running; image pushed, next Start pulls latest`（2026-09-03 校準：以 phase-94 §4.3 deploy.yml 的實際字串為準；stopped／terminated／找不到實例都走這一句）。
 
 ### 5.5 Demo 1、費用與安全（design6 §12 剩下的四條）
 
@@ -1584,36 +1586,36 @@ Ollama 不進本機 Docker、`postgresql@14` 不動、待決定／詢問流程�
 [x] Phase 78  gated_ingest.py：閘門接線、route=local、遠端不可用→fallback
 [x] Phase 79  CloudRoute 本體＋雲端成功路（單圖）
 [x] Phase 80  wait_result 完整版：逾時、別人的訊息、崩潰重送、D17 冪等
-[ ] Phase 81  PDF 走雲端路：逐頁配對、跳頁、pages_done 續跑
-[ ] ★★★ G1   產品負責人照 §5.1 三條看過並明示「可以開始花 AWS 資源」
+[x] Phase 81  PDF 走雲端路：逐頁配對、跳頁、pages_done 續跑
+[x] ★★★ G1   產品負責人照 §5.1 三條看過並明示「可以開始花 AWS 資源」
 
 ── 階段乙：AWS 帳號與 S3 寄物櫃 ────────────────────────────────────
-[ ] Phase 82  Free plan 開戶、**先建 Budget**、東京區、AWS CLI、IAM user（零程式碼）
-[ ] Phase 83  requirements 加 boto3；改 design5 那顆掃碼測試；aws_mailbox.py
-[ ] Phase 84  建 bucket：BPA 全開、SSE-S3、Lifecycle 2 天；aws_check.py s3
+[x] Phase 82  Free plan 開戶、**先建 Budget**、東京區、AWS CLI、IAM user（零程式碼）
+[x] Phase 83  requirements 加 boto3；改 design5 那顆掃碼測試；aws_mailbox.py
+[x] Phase 84  建 bucket：BPA 全開、SSE-S3、Lifecycle 2 天；aws_check.py s3
 
 ── 階段丙：兩條 SQS 佇列 ───────────────────────────────────────────
-[ ] Phase 85  建 personaldocai-jobs／personaldocai-results；aws_check.py sqs
-[ ] Phase 86  get_cloud_route() 補 assume；真 AWS 逾時煙霧（30 秒 fallback）
+[x] Phase 85  建 personaldocai-jobs／personaldocai-results；aws_check.py sqs
+[x] Phase 86  get_cloud_route() 補 assume；真 AWS 逾時煙霧（30 秒 fallback）
 
 ── 階段丁：Mac 上的工人 ────────────────────────────────────────────
-[ ] Phase 87  cloud_worker.process_job_message()＋result.json＋假信箱端到端
-[ ] Phase 88  main() 主迴圈、SIGTERM、啟動 log；Mac 上真跑一次端到端
+[x] Phase 87  cloud_worker.process_job_message()＋result.json＋假信箱端到端
+[x] Phase 88  main() 主迴圈、SIGTERM、啟動 log；Mac 上真跑一次端到端
 
 ── 階段戊前半：探測與 arm64 映像 ───────────────────────────────────
-[ ] Phase 89  Ec2Probe：DescribeInstances＋60 秒 TTL；get_cloud_route() 補 ec2
-[ ] Phase 90  Dockerfile 多階段（base → cloud-worker → app 最後）；容器跑端到端
-[ ] ★★★ G2   產品負責人照 §5.5 最後一條看過並明示「可以開始建 EC2」
+[x] Phase 89  Ec2Probe：DescribeInstances＋60 秒 TTL；get_cloud_route() 補 ec2
+[x] Phase 90  Dockerfile 多階段（base → cloud-worker → app 最後）；容器跑端到端
+[x] ★★★ G2   產品負責人照 §5.5 最後一條看過並明示「可以開始建 EC2」
 
 ── 階段戊後半：真的 EC2 ────────────────────────────────────────────
-[ ] Phase 91  SG（inbound 空）、S3 endpoint、IAM role＋instance profile、ECR、手動 push
-[ ] Phase 92-A 啟動 **t3.xlarge（CPU、worker.env 走 cloud、30 GB）**、SSM 放 worker.env、Demo 2／2b、**Stop**、文件三份（兩段式誠實版）——計畫已改、**尚未實作**；前置只要 Standard 配額（本帳號 8，夠）
+[x] Phase 91  SG（inbound 空）、S3 endpoint、IAM role＋instance profile、ECR、手動 push
+[x] Phase 92-A 啟動 **t3.xlarge（CPU、worker.env 走 cloud、30 GB）**、SSM 放 worker.env、Demo 2／2b、**Stop**、文件三份（兩段式誠實版）——**2026-09-03 已完成**（Demo 2／2b 通過、收工 Stop；commit c40a3b3）；前置只要 Standard 配額（本帳號 8，夠）
 [ ] Phase 92-B 配額核准後：先 Terminate 92-A → 開 **g4dn.xlarge（GPU、worker.env 走 local、80 GB）** → 重跑 Demo 2 → **Terminate**；**不設新閘門**、文件零改動
-[ ] ★★★ G3   產品負責人照 §5.2／§5.3 看過並明示「可以做 CD」
+[x] ★★★ G3   產品負責人照 §5.2／§5.3 看過並明示「可以做 CD」（2026-09-03：commit c40a3b3 ＋ dev-prompt phase0903-1 明示執行 93〜95；ledger R2）
 
 ── 階段己：CI 之後的 CD ────────────────────────────────────────────
-[ ] Phase 93  IAM OIDC provider＋deploy role（sub 精確鎖 main）
-[ ] Phase 94  .github/workflows/deploy.yml；Demo 3
+[x] Phase 93  IAM OIDC provider＋deploy role（sub 精確鎖 main）（2026-09-03 完成；review Approved）
+[x] Phase 94  .github/workflows/deploy.yml（2026-09-03 完成；review 一輪 fix 後全 ADDRESSED）；Demo 3 待產品負責人 push
 
 ── 收尾 ────────────────────────────────────────────────────────────
 [ ] Phase 95  §8 十列逐列點名＋六禁與被否決清單掃碼＋三死埠實證＋驗收包
@@ -1848,11 +1850,11 @@ design5 §3 的兩條限制**本增量不改**：3 次自動重試做完就是�
 | 89 | `test_cloud_ingest_unit.py` 追加 6 ＋ `test_dependencies_cloud_unit.py` 追加 1 | **+7** | 658（實 668） | 22 |
 | 90 | 新檔 `tests/integration/test_design6_error_paths.py`（Dockerfile／compose 掃碼 4 顆） | **+4** | 662（實 672） | 22 |
 | 91 | 人工＋CLI（SG／IAM／ECR） | +0 | 662（實 672） | 22 |
-| 92 | 人工（真機 Demo 2／2b）＋文件三份 | +0 | 662 | 22 |
-| 93 | `test_design6_error_paths.py` 追加 4（OIDC trust 掃碼） | **+4** | 666 | 22 |
-| 94 | 同檔追加 6（CD workflow 掃碼）＋人工 Demo 3 | **+6** | 672 | 22 |
-| 95 | 同檔追加 10（8 顆掃碼 ＋ 2 顆真缺口補測） | **+10** | **682** | 22 |
-| （收工） | 合計 **+139** | — | **682 ＋ 0 skipped** | **22** |
+| 92 | 人工（真機 Demo 2／2b）＋文件三份；**owner 於 `f2fc067` 補 2 顆 unit／user-data 掃碼** | +0（實 +2） | 662（實 **692**） | 22 |
+| 93 | `test_design6_error_paths.py` 追加 4（OIDC trust 掃碼） | **+4** | 666（實 **696**） | 22 |
+| 94 | 同檔追加 6（CD workflow 掃碼）＋人工 Demo 3（需 push，由產品負責人執行） | **+6** | 672（實 **702**） | 22 |
+| 95 | 同檔追加 10（8 顆掃碼 ＋ 2 顆真缺口補測）＋ §4.3.3 停放項 3 顆（2026-09-03 校準 R9） | **+10**（實 **+14**：§4.3.3 停放項 3 ＋ R18 ② `test_部署policy恰五段而且SendCommand綁實例與document` 1） | **682**（實 **716**） | 22 |
+| （收工） | 合計 **+139**（實 **+173**＝716−543） | — | **682 ＋ 0 skipped**（實 **716**，2026-09-03 收工實跑） | **22** |
 
 ### 端點數怎麼算（不要用 `app.routes`）
 

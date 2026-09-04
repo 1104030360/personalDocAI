@@ -118,6 +118,19 @@ def content_type_from_key(s3_key: str) -> str | None:
     return None
 
 
+def _only_list(value: object) -> list[dict]:
+    """context.json 的三個鍵**只認 list**，其他型別一律當空清單。
+
+    為什麼不能只寫 `list(value or [])`（2026-09-03 收尾時補的）：
+      {"folders": 5}      -> list(5)        TypeError（例外往外丟 → 訊息沒被刪 → 毒訊息）
+      {"folders": "abc"}  -> ["a","b","c"]  **安靜地**變成三個假資料夾
+      {"folders": {"a":1}} -> ["a"]         同上
+    三種都不是「壞檔」（json.loads 過得了關、payload 也真的是 dict），
+    所以上面兩道 except／isinstance 都攔不到它們。
+    """
+    return list(value) if isinstance(value, list) else []
+
+
 def read_context(mailbox: CloudMailbox, job_id: str) -> tuple[list[dict], list[dict], list[dict]]:
     """把 context.json 讀回三份清單：資料夾、實體、最近的人工糾錯。
 
@@ -148,10 +161,19 @@ def read_context(mailbox: CloudMailbox, job_id: str) -> tuple[list[dict], list[d
             type(payload).__name__,
         )
         return [], [], []
+    dropped = [
+        key
+        for key in ("folders", "entities", "corrections")
+        if payload.get(key) is not None and not isinstance(payload.get(key), list)
+    ]
+    if dropped:
+        # 與上面兩條壞檔路徑同一個規矩：**降級可以，安靜不行**。
+        # 少了資料夾清單會以「AI 最近都建議未分類」的樣子出現，沒有人會聯想到 context.json。
+        logger.warning("job %s：context.json 的 %s 不是清單，當空的", job_id, dropped)
     return (
-        list(payload.get("folders") or []),
-        list(payload.get("entities") or []),
-        list(payload.get("corrections") or []),
+        _only_list(payload.get("folders")),
+        _only_list(payload.get("entities")),
+        _only_list(payload.get("corrections")),
     )
 
 

@@ -1,9 +1,9 @@
 # Phase 93：GitHub OIDC 與部署角色
 
-> 📌 **2026-09-03 夜裡校準（產品負責人拍板；本 phase 仍不准開工，要等 ★G3）：**
+> 📌 **2026-09-03 校準（產品負責人拍板；★G3 已通過，本 phase 可以開工）：**
 >
 > Phase 92 已拆成兩段（總覽 §10.2 追認項 **U**）：**92-A** ＝ CPU 機 `t3.xlarge`
-> ＋ `WORKER_VLM_BACKEND=cloud`，**現在就做、收工 Stop**（30 GB ≈ $2.9／月，留給 Phase 94 的 Demo 3）；
+> ＋ `WORKER_VLM_BACKEND=cloud`，**已建好、Demo 2／2b 通過、收工 Stop**（30 GB ≈ $2.9／月，留給 Phase 94 的 Demo 3）；
 > **92-B** ＝ GPU 機 `g4dn.xlarge` ＋ `local`，**等 G and VT 配額（`L-DB2E81BA`，現況 0、`CASE_OPENED`）**，測完 Terminate。
 > **★G3 在 92-A 之後**，所以本 phase **不必等 GPU 配額**。帳號已升 Paid。
 > 本 phase **仍然零 AWS 運算費**（只建 IAM／OIDC，不開機）。
@@ -35,6 +35,13 @@
 
 ## ⛔ 開工門檻：★ 閘門 G3 必須已由產品負責人通過
 
+> ✅ **本次：已通過（2026-09-03）。**
+> 憑據三項：① commit **`c40a3b3`**「docs: Phase 92-A 三份文件與 EC2 手動測試教學」——92-A（`t3.xlarge`）
+> 已建好並留下手動測試教學；② `CLAUDE.md` 專案概述已寫「**92-A**（CPU 機 t3.xlarge）已建、**Demo 2／2b 通過**、日常 Stop」；
+> ③ dev-prompt `docs/plan/dev-prompts/phase0903-1.md` 由產品負責人**明示執行 Phase 93〜95**。
+> 這三項就是下面那張表要的「人看過 Demo 2 與 Demo 2b、同意往下走」的那句話。
+> **下面的規則本身保留**（將來重跑、或有人想跳過閘門時，仍以它為準）。
+
 **★G3 沒過，本 phase 一個字都不准開始。** 這不是形式——CD 的失敗與工人的失敗
 **長得一模一樣**（都是「EC2 上沒反應」）。手動部署還沒跑通就加自動部署，
 除錯時分不清是「新映像沒推上去」還是「工人本來就壞」。
@@ -48,6 +55,7 @@
 | 憑什麼確認 | design6 §0 戊那列：真機 Start → 處理一筆 → Stop；Stop 後下一筆自動本機。逐條指令見總覽 **§5.2**（Demo 2）與 **§5.3**（Demo 2b） |
 | 沒過會怎樣 | Phase 93〜94 停擺。理由：CD 的失敗與工人的失敗**長得一模一樣**（都是「EC2 上沒反應」）。手動部署還沒跑通就加自動部署，除錯時分不清是「新映像沒推上去」還是「工人本來就壞」 |
 | 卡住時怎麼辦 | ① 真機起不來 → 看 `deploy/ec2/user-data.sh`（回 **91／92**）；② 工人起得來但拿不到訊息 → IAM instance role（回 **91**）；③ 拿得到訊息但看圖失敗 → 先看啟動行 `vlm=`：`cloud`（92-A）查 `OLLAMA_API_KEY`／`OLLAMA_CLOUD_VLM_MODEL`；`local`（92-B）查 GPU／Ollama（回 **92**）。⚠ Demo 當下除錯可 Stop；**92-A 收工 Stop、92-B 測完 Terminate**（已拍板） |
+| **本次狀態** | **已通過（2026-09-03，產品負責人）**。憑據見本節開頭那個框的三項 |
 
 > 🚦 **閘門是「人」的動作，實作者不可以自己勾掉。** 指令只是**證據**，
 > 「看過證據、同意往下走」的那個動作必須由產品負責人做出來——
@@ -142,13 +150,23 @@ design6 §8 錯誤表第 9 列因此明文寫「**GitHub OIDC 未鎖 `sub` → �
 
 ## 2. 前置條件
 
-- **Phase 74〜92 全部完成**（甲＋乙＋丙＋丁＋戊全段）。
-- **★ 閘門 G3 已由產品負責人通過**（本檔最上面那張表；**沒過不准開工**）。
+- **Phase 74〜92 全部完成**（甲＋乙＋丙＋丁＋戊全段；92-A 已建、Demo 2／2b 已過，92-B 等 GPU 配額，與本 phase 無關）。
+- **★ 閘門 G3 已由產品負責人通過**（本檔最上面那張表；**沒過不准開工**）。**2026-09-03 已通過**，憑據見上面的框。
 - EC2 實例：**不需要 running**。通常是 92-A 那台 `t3.xlarge` 停著（stopped），也可能已被 Terminate。
   建 IAM／OIDC 不碰那台機器；`.env` 的 `EC2_WORKER_INSTANCE_ID` 留著或留空都行（stopped／terminated 的 ID 對本 phase 無影響）。
-- ECR repository `personaldocai-worker` 已存在（Phase 91 建的），而且裡面**已經有一個手動推上去的映像**（應是多架構 manifest：amd64＋arm64）。
-- AWS CLI（`aws configure` 的 default profile）指到 **`personaldocai-admin`**（Phase 82 §4.7 設的；本 phase 要建 IAM 東西，最小權限的 `personaldocai-mac` 做不到——它的 key 只在 `.env`）。
+- ECR repository `personaldocai-worker` 已存在（Phase 91 建的），而且裡面**已經有手動推上去的映像**。
+  2026-09-03 實查有三個 tag：`bb3921a`（**單架構 arm64**，Phase 90／91 推的）、
+  `bb3921a-dirty` 與 `latest`（**多架構 manifest：amd64＋arm64**，Phase 92 改判後重推的）。
+  本 phase 不推也不刪任何 tag。
+- AWS CLI 的 **default profile** 就是 `personaldocai-admin` 那把 key（Phase 82 §4.7 用 `aws configure` 設的）。
+  ⚠ **這台 Mac 上沒有叫 `personaldocai-admin` 的具名 profile**——所有 `aws` 指令一律**不要加 `--profile`**，
+  加了會噴 `The config profile (personaldocai-admin) could not be found`。
+  （本 phase 要建 IAM 東西，最小權限的 `personaldocai-mac` 做不到——它的 key 只在 `.env`，
+  而且會被 §4.1 那行 `unset` 丟掉。）
 - `gh` 已登入，而且 `origin` 是 `https://github.com/1104030360/personalDocAI.git`。
+  ⚠ **這個 repo 是 PUBLIC**（2026-09-03 實查）——所以「不寫值只寫變數名」那條鐵律在本 phase 是硬性的，不是潔癖。
+- `docs/plan/aws/` 底下有產品負責人自己寫的**六份新手步驟檔**（含 `2026-09-03-EC2工人手動測試與監控.md`）。
+  本 phase **只當對照、一個字都不改**——它們是產品負責人的筆記，不是計畫檔。
 
 ### 開工基線（自己再驗一次，不要抄）
 
@@ -162,8 +180,14 @@ set -a; . ./.env; set +a
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 
 pytest -q
-# 預期尾巴：662 passed（Phase 92 之後的累計；92 是人工 phase，+0 顆）
-#           而且沒有 skipped
+# 預期尾巴：692 passed，而且沒有 skipped
+# ⚠ 這個數字比總覽 §9 的「累計 662」大 30，兩個都沒錯，只是算法不同：
+#   總覽 §9 的絕對值只保證「本 phase 新增幾顆」，不保證累計對得上實查
+#   （§9 自己在 Phase 75 那列就註明過「實查 +12、之後各列絕對值一律 +2」）。
+#   Phase 92 本身確實是人工 phase（+0 顆），但產品負責人在 commit `f2fc067`
+#   補了 2 顆 unit／user-data 掃碼（見下面那條 --collect-only），所以
+#   `test_design6_error_paths.py` 現在是 **6 顆**、全量基線是 **692**。
+#   本 phase 一律以「692 → 696、檔內 6 → 10」為準。
 
 git branch --show-current
 # 預期：main   ← 若不是 main，先停下來，§4.3 的 sub 要跟著改
@@ -202,16 +226,28 @@ ls deploy/aws/
 #             s3-lifecycle.json（84）
 # 本 phase 會在同一個目錄多兩份
 
-ls tests/integration/test_design6_error_paths.py
-# 預期：檔案存在（Phase 90 開的檔，目前 4 顆 Dockerfile／compose 掃碼）
+ls docs/plan/aws/
+# 預期：看得到產品負責人的六份新手步驟檔（含 2026-09-03-EC2工人手動測試與監控.md）
+# 本 phase 只當對照，不改它們
+
+pytest tests/integration/test_design6_error_paths.py --collect-only -q | tail -1
+# 預期：6 tests collected
+# 這 6 顆是：Phase 90 放的 4 顆
+#   test_Dockerfile有cloud_worker這個target
+#   test_Dockerfile的app階段在最後
+#   test_Dockerfile的cloud_worker帶ARG_GIT_SHA
+#   test_compose_yaml沒有新增服務也沒有AWS設定
+# ＋ 產品負責人在 commit f2fc067 補的 2 顆
+#   test_unit檔與user_data內嵌段逐字相同
+#   test_unit只在local才等本機Ollama
 ```
 
 把數字填進這張表（**執行時填入，不要留空交差**）：
 
 | 項目 | 值 |
 |---|---|
-| 開工時 `pytest -q` | ＿＿＿ passed ＋ 0 skipped（應為 **662**＝總覽 §9 Phase 92 那列的累計） |
-| 開工時 `test_design6_error_paths.py` 顆數 | ＿＿＿（總覽 §9 寫 **4**，Phase 90 放的） |
+| 開工時 `pytest -q` | ＿＿＿ passed ＋ 0 skipped（應為 **692**；2026-09-03 controller 實查值。總覽 §9 那個「662」是舊的累計推算值，見上面的說明） |
+| 開工時 `test_design6_error_paths.py` 顆數 | ＿＿＿（應為 **6**＝Phase 90 的 4 ＋ `f2fc067` 補的 2。總覽 §9 寫的 **4** 是 90 當下的值） |
 | EC2 狀態 | ＿＿＿（應為 `stopped`（92-A 留下的 `t3.xlarge`）／`terminated`／查無／空 ID；**不准 running**） |
 
 ---
@@ -230,7 +266,8 @@ ls tests/integration/test_design6_error_paths.py
 - 用 AWS CLI 建角色 `personaldocai-github-deploy`（`create-role` ＋ `put-role-policy`）。
 - 把角色 ARN 放進 GitHub repository secret **`AWS_DEPLOY_ROLE_ARN`**。
 - 在 `tests/integration/test_design6_error_paths.py` 追加 **4 顆**掃碼測試（名稱見 §4.7；第 4 顆掃 `deploy/aws/*.json` **全部**）。
-- 更新 `CLAUDE.md` 指令區的 AWS 小段（Phase 82 建的那一段）補「部署角色」三行。
+- 更新 `CLAUDE.md` 指令區：在**「雲端工人（EC2）」那一段的最後面**（`# ── 格式與 lint` 之前）
+  補一個「部署角色（Phase 93）」小段（§4.8 有逐字內容與插入點）。
 
 ### 明確不做（防手滑）
 
@@ -252,16 +289,50 @@ ls tests/integration/test_design6_error_paths.py
 
 ## 4. 實作步驟
 
-> 📌 **順序是有意義的：** 先建 provider（②）→ 寫兩份 JSON（③④）→ 建角色（⑤）→
-> 放 secret（⑥）→ 才寫測試（⑦）。
-> **測試放在最後不是偷懶**——這 4 顆是「**掃設定檔**」的測試，設定檔還沒寫出來時
-> 它們紅得毫無資訊量（只會說「檔案不存在」）。真正的 TDD 節奏在 §4.7：
+> ⚠️ **誰做哪一段（2026-09-03 校準；controller 裁決 R3）**
+>
+> 這個 phase 有兩種工作，**不可以混在一起**：
+>
+> | 誰 | 做哪幾節 | 為什麼 |
+> |---|---|---|
+> | **controller（Fable 本人）** | §4.1（載 `.env`／`unset`）、§4.2（建 provider）、§4.3 的 `gh api` 複查、§4.4 的 `sed` 展開、§4.5（建角色）、§4.6（`gh secret set`）、§4.9（全量回歸與 `git status`） | 這些會**真的動到 AWS 與 GitHub 帳號**，而且要用到 `.env` 裡的憑證。實作 subagent 一律**零 `aws`／`gh`／`docker` 指令、零真連線** |
+> | **實作 subagent** | §4.3 的**兩份 JSON 內容**、§4.4 的**兩份 JSON 內容**、§4.7（4 顆測試，紅→綠）、§4.8（`CLAUDE.md` 的「部署角色」小段） | 這些只碰 repo 裡的檔案，本機就驗得完（`json.loads` ＋ pytest），不需要任何雲端 |
+>
+> **執行順序因此是（跟章節編號不同，照這個走）：**
+>
+> ```text
+> ① subagent  §4.3 §4.4  寫出兩份 JSON（只寫檔，不 sed、不打 aws）
+> ② subagent  §4.7       追加 4 顆測試 → 故意寫壞 → 看紅 → 還原 → 看綠（10 passed）
+> ③ subagent  §4.8       CLAUDE.md 補「部署角色」小段
+> ④ controller §4.1 §4.2 載 .env／unset → 建 OIDC provider
+> ⑤ controller §4.3 框    gh api 複查 sub 前綴（與 JSON 裡那一串逐字比對）
+> ⑥ controller §4.4 §4.5  sed 展開到 $SCRATCH → create-role → put-role-policy
+> ⑦ controller §4.6       gh secret set AWS_DEPLOY_ROLE_ARN
+> ⑧ controller §4.9       全量回歸、零依賴實證、git status、snapshot-tree 快照相減
+> ```
+>
+> **為什麼倒過來（先測試、後 AWS）：** 這 4 顆掃的是**檔案**不是雲端，
+> 所以 JSON 一寫出來就驗得完；而 AWS 那幾步一旦建下去，錯了要 `delete-role` 才回得去。
+> 先讓「鑰匙的形狀」被測試釘死，再拿去配鎖，順序反了只是多繞路。
+> **測試不是偷懶擺最後**——真正的 TDD 節奏在 §4.7：
 > **先把 JSON 故意寫錯一個字、跑測試看它紅、再改回來**（那才是「看過紅」）。
 
 ### 4.1 把會用到的值放進這個終端機（不寫進任何檔案）
 
+> 👤 **這一節由 controller 執行**（要載 `.env`，subagent 不碰憑證）。
+
 ```bash
 cd /Users/linjunting/personalDocAI && source .venv/bin/activate
+
+# ★ 展開後的 policy（含真實帳號 ID 與實例 ID）要寫到哪裡：**專案外的暫存目錄**。
+#   本輪一律用 agent 的 scratchpad，不用 /tmp——scratchpad 是這個 session 專屬的，
+#   而且不需要額外的權限確認。定義一次，下面每一節都用 $SCRATCH：
+export SCRATCH=/private/tmp/claude-501/-Users-linjunting-personalDocAI/1f4eca1f-0382-4915-97be-215ebc934bab/scratchpad
+mkdir -p "$SCRATCH"
+# export 不能省：下面 §4.4 有一句 python3 -c 會讀 os.environ['SCRATCH']，
+# 沒 export 的話那是「只有這個 shell 看得到」的變數，子行程拿不到（KeyError）
+# ⚠ 這個路徑是**這一次 session 的**。人自己在終端機重做時，換成任何專案外的暫存目錄
+#   （例如 /tmp）都可以——唯一的規矩是「展開後的檔案永遠不准落在 repo 裡」。
 
 # set -a ＝接下來的賦值自動 export 成環境變數；set +a ＝關掉這個行為
 set -a; . ./.env; set +a
@@ -278,6 +349,7 @@ GITHUB_REPO=1104030360/personalDocAI
 # 確認三個都讀到了（⚠ 這一行的輸出**不要**貼進任何文件或 commit message）
 echo "region=$AWS_REGION  repo=$GITHUB_REPO  instance=$EC2_WORKER_INSTANCE_ID"
 echo "account 長度=${#ACCOUNT_ID}"      # 預期：12
+echo "scratch=$SCRATCH"                 # 預期：一個**專案外**的絕對路徑
 ```
 
 **預期輸出長相：**
@@ -296,6 +368,9 @@ account 長度=12
 
 ### 4.2 建 IAM OIDC identity provider（已存在就跳過）
 
+> 👤 **這一節由 controller 執行**（真的會在 AWS 帳號裡建東西）。
+> 2026-09-03 實查：**這個帳號目前 OIDC provider ＝ 0 個**，所以底下那個 `if` 一定會走「建立」那條路。
+
 **這是什麼：** 在你的 AWS 帳號裡登記一句話——「我信任
 `https://token.actions.githubusercontent.com` 這個發證所簽出來的令牌」。
 **整個 AWS 帳號只需要建一次**，之後所有 GitHub 的角色共用同一個 provider。
@@ -305,7 +380,7 @@ account 長度=12
 > **結論：不用了。`--thumbprint-list` 是選填的，本專案不填。**
 >
 > AWS 官方文件（[Create an OIDC identity provider in IAM](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc.html)）
-> 現在寫著（2026-08-31 以 WebFetch 讀原文，逐字翻譯）：
+> 現在寫著（2026-08-31 以 WebFetch 讀原文，**2026-09-03 校準時再讀一次，原文一字未變**，逐字翻譯）：
 >
 > > 「AWS 使用**我們自己的可信根憑證機構（CA）清單**來驗證 OIDC 身分提供者的
 > > JSON Web Key Set（JWKS）端點的 TLS 憑證。**只有當**你的 OIDC IdP 用的憑證
@@ -323,8 +398,15 @@ account 長度=12
 > [--tags <value>]
 > ```
 >
-> 且明文：「**這個參數是選填的。**沒有提供時，IAM 會自己去取得並使用該 OIDC 身分提供者
+> 且明文（2026-09-03 複查，原句仍是）：*"This parameter is optional. If it is not included,
+> IAM will retrieve and use the top intermediate certificate authority (CA) thumbprint of the
+> OpenID Connect identity provider server certificate."*
+> ——「**這個參數是選填的。**沒有提供時，IAM 會自己去取得並使用該 OIDC 身分提供者
 > 伺服器憑證的**最上層中繼 CA thumbprint**。」
+>
+> 💡 順帶一提：Console 的「Thumbprints」分頁寫著「一個 IAM OIDC identity provider **至少要有一個**、
+> 最多五個 thumbprint」。這跟「不必自己填」**不衝突**——不填的時候是 IAM 自己去抓一個填進去，
+> 所以之後在 Console 看到那裡有一筆值是**正常的**，不是有人手動加的。
 >
 > `token.actions.githubusercontent.com` 的憑證是由公開可信的 CA 簽的，
 > 所以走的是「AWS 自己的可信 CA 清單」那條路——**填不填 thumbprint 都不影響結果**。
@@ -423,6 +505,8 @@ aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" 
 
 ### 4.3 寫 trust policy：`deploy/aws/github-oidc-trust.json`
 
+> 🤖 **JSON 內容由 subagent 寫**（純檔案）；框裡那條 `gh api` 複查**由 controller 執行**。
+
 **這是什麼：** 角色的「**誰能借我**」文件。整個 OIDC 的安全性都在這一份。
 
 > ✅ **本 repo 的 `sub` 前綴含 GitHub 的數字 ID——這是正式格式，不是筆誤**
@@ -436,10 +520,18 @@ aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" 
 > ```
 >
 > 官方原文（[OIDC reference §Immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)、
-> [Changelog 2026-04-23](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/)）：
-> *"Repositories created after July 15, 2026 now use an immutable default subject format that includes
-> both the owner ID and repository ID."* … *"Repository renames and transfers after July 15, 2026 will
-> also adopt the new format."* … *"Update your trust policies to match the format your repository uses."*
+> [Changelog 2026-04-23](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/)；
+> **2026-09-03 校準時以 WebFetch 重讀，三句都還在**）：
+> *"Repositories created after July 15, 2026 use the immutable default subject format."* …
+> 格式寫成 `repo:OWNER@OWNER-ID/REPO@REPO-ID:ref:refs/heads/BRANCH`，官方例子是
+> `repo:octo-org@123456/octo-repo@456789:ref:refs/heads/main` …
+> *"Repository renames and transfers after July 15, 2026 also move to the immutable subject format."* …
+> *"Update your trust policies to match the format your repository uses."*
+>
+> 另外 [GitHub OIDC → AWS 的官方指南](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
+> **同一頁現在兩種格式都列**（舊的 `repo:octo-org/octo-repo:ref:…` 與新的 `repo:octo-org@123456/octo-repo@456789:ref:…`），
+> 並自己說明「2026-07-15 之後建立、或有開這個功能的 repo」用新格式——所以照那一頁抄範例時
+> **要挑對版本**，抄到上面那個舊的就是 §7 陷阱 1 的第一種死法。
 >
 > 本 repo 建於 **2026-08-28**（Phase 73 的 `gh repo create`），所以 GitHub **只會**簽新格式。
 > 前綴是 GitHub 決定的、不是我們選的——2026-08-31 用這條**唯讀**指令實查：
@@ -451,6 +543,9 @@ aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" 
 > ```json
 > {"use_default":true,"use_immutable_subject":false,"sub_claim_prefix":"repo:1104030360@92135456/personalDocAI@1349196211"}
 > ```
+>
+> ✅ **2026-09-03 controller 又跑了一次同一條唯讀指令：三個欄位逐字相同**（`sub_claim_prefix` 沒有變）。
+> 也就是說下面 heredoc 裡那一串 `sub` 現在就是對的——但**動手前仍然要自己再跑一次**（理由見這一段最後）。
 >
 > `92135456` 是 GitHub 使用者 `1104030360` 的數字 ID、`1349196211` 是這個 repo 的數字 ID
 > （`gh api users/1104030360 --jq .id`、`gh repo view 1104030360/personalDocAI --json id` 都查得到；
@@ -543,7 +638,7 @@ even if the previous workflow was not."*——所以 `deploy` 讀得到 `secrets
 （Phase 94 另外用 `branches: [main]` 這個過濾條件確保「只有 `main` 上跑成功的 CI 才觸發 CD」——
 那是**觸發**層的守門，跟這裡的**憑證**層是兩道獨立的鎖。）
 
-- [ ] 檔案寫好了，而且用 Python 檢查它是合法 JSON、`<ACCOUNT_ID>` 佔位還在：
+- [x] 檔案寫好了，而且用 Python 檢查它是合法 JSON、`<ACCOUNT_ID>` 佔位還在：
 
 ```bash
 python3 -c "
@@ -569,6 +664,8 @@ aud     = sts.amazonaws.com
 ```
 
 ### 4.4 寫權限 policy：`deploy/aws/github-deploy-policy.json`
+
+> 🤖 **JSON 內容由 subagent 寫**（純檔案）；底下「用 `sed` 展開」那一小節**由 controller 執行**（要用到真值）。
 
 **這是什麼：** 角色的「**能做什麼**」文件。恰好三件事，多一件都不給。
 
@@ -630,7 +727,7 @@ EOF
 | 2 | `EcrPushOnlyToTheWorkerRepository` | 推映像會用到的六個動作（＝AWS 官方「推映像最小權限」範例的那六個） | `…:repository/personaldocai-worker` | 只准推**這一個** repository。以後就算多了別的 repository，這把鑰匙也碰不到 |
 | 3 | `SsmRestartOnlyThatOneInstance` | `ssm:SendCommand` | **兩個** ARN：那台實例 ＋ 那份 document | SSM 的 `SendCommand` **同時檢查兩種資源**：「對哪台機器下」與「用哪份劇本」。**兩個都要給，少一個就 AccessDenied**。這是最容易漏的一條 |
 | 4 | `SsmReadTheCommandResult` | `ssm:GetCommandInvocation` | `*` | 「查那句指令跑完了沒」（Phase 94 的輪詢迴圈就只用這一個）。這個動作沒有資源型別——執行紀錄的 ID 是送出當下才生出來的，事先寫不出 ARN，所以只能 `*`。它是**唯讀**的，風險極低 |
-| 5 | `DescribeInstancesToSeeIfItIsRunning` | `ec2:DescribeInstances` | `*` | AWS 的 `Describe*` 系列**一律不支援資源層級限制**（官方限制，不是我們偷懶）。同樣是唯讀 |
+| 5 | `DescribeInstancesToSeeIfItIsRunning` | `ec2:DescribeInstances` | `*` | `ec2:DescribeInstances` **不支援資源層級限制**（EC2 的 `Describe*` 幾乎都是如此；這是 AWS 的限制，不是我們偷懶），寫成實例 ARN 會直接 AccessDenied。同樣是唯讀 |
 
 六個 ECR 動作各自的用途（推一次映像真的會全部用到；清單逐字等於 AWS 官方 [image-push-iam](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-push-iam.html) 的範例）：
 
@@ -645,16 +742,30 @@ EOF
 
 #### `<INSTANCE_ID>` 怎麼帶進去（用 `sed`，不要手改檔案）
 
+> 👤 **這一小節由 controller 執行**（`$ACCOUNT_ID`／`$EC2_WORKER_INSTANCE_ID` 都是真值）。
+
 檔案裡永遠是佔位符（總覽 §7 鐵律 10），**要送給 AWS 的時候才在管線上換掉**：
 
 ```bash
 sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
     -e "s|<INSTANCE_ID>|$EC2_WORKER_INSTANCE_ID|g" \
-    deploy/aws/github-deploy-policy.json > /tmp/github-deploy-policy.rendered.json
+    deploy/aws/github-deploy-policy.json > "$SCRATCH/github-deploy-policy.rendered.json"
 
 sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
-    deploy/aws/github-oidc-trust.json > /tmp/github-oidc-trust.rendered.json
+    deploy/aws/github-oidc-trust.json > "$SCRATCH/github-oidc-trust.rendered.json"
 ```
+
+> ⚠️ **`<INSTANCE_ID>` 綁的是「現在那一台」——92-B 換機之後這份 policy 會失效。**
+> 92-A（`t3.xlarge`）測完 GPU 配額下來時，流程是「Terminate 92-A → 開一台新的 `g4dn.xlarge`」，
+> **新機器的實例 ID 一定是新的**。那時候要做兩件事，**少做一件 CD 就會安靜地半殘**：
+>
+> | 要改什麼 | 指令 | 漏了會怎樣 |
+> |---|---|---|
+> | ① 這份 policy 裡那台實例 | `.env` 的 `EC2_WORKER_INSTANCE_ID` 改新值 → 重跑上面的 `sed` → **重跑 §4.5 ② 的 `put-role-policy`**（同名直接覆蓋，不必刪角色） | CD 的 build／push 全綠，最後一步 `ssm send-command` 回 `AccessDeniedException`——policy 還指著那台已經不存在的機器 |
+> | ② Phase 94 的 GitHub variable | `gh variable set EC2_WORKER_INSTANCE_ID --body "<新的 ID>"` | CD 會對**舊 ID** 下指令，回一個「找不到實例」的錯，而 ECR 上其實已經有新映像了 |
+>
+> 兩處是**不同的東西**（一個在 AWS 的 policy 裡、一個在 GitHub 的變數裡），
+> 換機時**一起改**，而且改完跑一次 Phase 94 的 Demo 3 確認。
 
 `sed` 的旗標：
 
@@ -663,19 +774,22 @@ sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
 | `-e` | 「接下來是一句編輯指令」。要換兩種佔位符就寫兩個 `-e` |
 | `s\|舊\|新\|g` | `s` ＝ substitute（取代）；`g` ＝ global（同一行出現幾次就換幾次） |
 | 為什麼用 `\|` 當分隔符而不是 `/` | ARN 裡有 `/`（`instance/i-xxx`、`repository/personaldocai-worker`）。用 `/` 當分隔符就得逐個跳脫，很容易漏。`\|` 在 ARN 裡不會出現，最安全 |
-| 為什麼輸出到 `/tmp` | **展開後的檔案含真實帳號 ID 與實例 ID，絕對不能進 repo。** 放 `/tmp` 是刻意的：重開機就沒了，而且 `.gitignore` 管不到專案外的東西 |
+| 為什麼輸出到 `$SCRATCH`（專案外） | **展開後的檔案含真實帳號 ID 與實例 ID，絕對不能進 repo。** 寫在專案外是刻意的：`git add .` 掃不到、`.gitignore` 也不必為它加規則。本輪 `$SCRATCH` ＝ agent 的 scratchpad（§4.1 定義）；人自己做時用 `/tmp` 也一樣 |
 
 - [ ] 檢查展開結果（**這一步的輸出不要貼進任何文件**）：
 
 ```bash
 python3 -c "
-import json
-d = json.load(open('/tmp/github-deploy-policy.rendered.json'))
+import json, os
+d = json.load(open(os.environ['SCRATCH'] + '/github-deploy-policy.rendered.json'))
 for s in d['Statement']:
     print(s['Sid'], '->', s['Resource'])
 "
-grep -c '<' /tmp/github-deploy-policy.rendered.json    # 預期：0（佔位符全換掉了）
+grep -c '<' "$SCRATCH/github-deploy-policy.rendered.json"   # 預期：0（佔位符全換掉了）
 ```
+
+> ⚠️ 上面那句 `python3 -c` 讀的是 `os.environ['SCRATCH']` ——所以 §4.1 那一行是
+> `export SCRATCH=…`（沒 export 就會噴 `KeyError: 'SCRATCH'`）。
 
 **預期輸出長相（帳號與實例是你的真值）：**
 
@@ -695,11 +809,15 @@ DescribeInstancesToSeeIfItIsRunning -> *
 
 ### 4.5 建角色並掛上 policy
 
+> 👤 **這一節由 controller 執行。**
+> 2026-09-03 實查：**IAM 裡目前沒有 `personaldocai-github-deploy` 這個角色**（只有 91 建的
+> `personaldocai-worker-role`），所以是全新建立，不會撞 `EntityAlreadyExists`。
+
 ```bash
 # ① 建角色（trust policy 就是「誰能借」那一份）
 aws iam create-role \
   --role-name personaldocai-github-deploy \
-  --assume-role-policy-document file:///tmp/github-oidc-trust.rendered.json \
+  --assume-role-policy-document "file://$SCRATCH/github-oidc-trust.rendered.json" \
   --description "GitHub Actions CD: push image to ECR and restart the EC2 worker" \
   --max-session-duration 3600
 ```
@@ -709,7 +827,7 @@ aws iam create-role \
 | 旗標 | 用途 |
 |---|---|
 | `--role-name personaldocai-github-deploy` | 角色名字（總覽 §2.8 定的，逐字沿用） |
-| `--assume-role-policy-document file://…` | **trust policy**。`file://` 後面接**絕對路徑**，所以是**三條斜線**（`file://` ＋ `/tmp/…`）。這是 AWS CLI 的通用寫法 |
+| `--assume-role-policy-document file://…` | **trust policy**。`file://` 後面接**絕對路徑**，所以展開後是**三條斜線**（`file://` ＋ `/private/tmp/…`）。`$SCRATCH` 是絕對路徑，所以 `"file://$SCRATCH/x.json"` 展開就對了；**外面的雙引號不要拿掉**（路徑裡有 `-`／`/` 沒關係，但少了引號萬一路徑含空白就會斷成兩個參數） |
 | `--description` | 給人看的。半年後在 Console 看到這個角色時，一眼知道它是幹嘛的 |
 | `--max-session-duration 3600` | 借到的臨時憑證**最多活 1 小時**。CD 跑完大概 10〜20 分鐘，1 小時綽綽有餘。給更長沒有好處 |
 
@@ -734,7 +852,7 @@ aws iam create-role \
 aws iam put-role-policy \
   --role-name personaldocai-github-deploy \
   --policy-name personaldocai-github-deploy-policy \
-  --policy-document file:///tmp/github-deploy-policy.rendered.json
+  --policy-document "file://$SCRATCH/github-deploy-policy.rendered.json"
 ```
 
 **預期輸出：完全沒有輸出**（AWS CLI 的慣例：成功的 `put-*` 不印東西）。
@@ -778,7 +896,7 @@ EcrLoginTokenIsAccountWide      EcrPushOnlyToTheWorkerRepository SsmRestartOnlyT
 
 | 出錯情況 | 訊息長相 | 怎麼救 |
 |---|---|---|
-| trust JSON 打錯字 / 不是合法 JSON | `MalformedPolicyDocument` 或 `Error parsing parameter` | 改 `deploy/aws/github-oidc-trust.json` → 重跑 §4.4 的 `sed` → **`aws iam update-assume-role-policy --role-name personaldocai-github-deploy --policy-document file:///tmp/github-oidc-trust.rendered.json`**（角色已存在時用這個「更新 trust」的指令，不必刪掉重建） |
+| trust JSON 打錯字 / 不是合法 JSON | `MalformedPolicyDocument` 或 `Error parsing parameter` | 改 `deploy/aws/github-oidc-trust.json` → 重跑 §4.4 的 `sed` → **`aws iam update-assume-role-policy --role-name personaldocai-github-deploy --policy-document "file://$SCRATCH/github-oidc-trust.rendered.json"`**（角色已存在時用這個「更新 trust」的指令，不必刪掉重建） |
 | 權限 policy 寫錯 | 同上 | 改檔 → 重跑 `sed` → **再跑一次 `put-role-policy`**（同名會直接覆蓋，這是預期行為） |
 | 角色名打錯，建了一個多餘的 | — | `aws iam delete-role-policy --role-name <錯的> --policy-name <那個 policy>` 然後 `aws iam delete-role --role-name <錯的>`。**順序不能反**——inline policy 還在的話 `delete-role` 會失敗（`DeleteConflict`） |
 | `EntityAlreadyExists` | 角色已經有了 | 不必刪。改用 `update-assume-role-policy` ＋ `put-role-policy` 把兩份文件更新上去 |
@@ -791,6 +909,10 @@ IAM 的 role、policy、OIDC provider **全部免費**，沒有數量計費、�
 它一行 EC2、一 byte S3 都沒有碰。
 
 ### 4.6 把角色 ARN 放進 GitHub secret
+
+> 👤 **這一節由 controller 執行。**
+> 2026-09-03 實查：`gh secret list` 與 `gh variable list` **兩個都是空的**，
+> 所以這是這個 repo 的**第一個** secret。
 
 ```bash
 ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/personaldocai-github-deploy"
@@ -832,8 +954,9 @@ AWS_DEPLOY_ROLE_ARN    less than a minute ago
 
 1. **它是設定，不是常數。** 帳號換了、角色改名了，只要改這一格，workflow 一個字都不必動。
 2. **Actions 的 log 會自動把 secret 的值遮成 `***`。** 帳號 ID 不是機密，
-   但也沒必要每次 build 都印在公開的 log 裡（這個 repo 現在是 private，
-   哪天改成 public 就不必回頭補救）。
+   但也沒必要每次 build 都印在公開的 log 裡——**這個 repo 已經是 PUBLIC**
+   （2026-09-03 實查），Actions 的 log 任何人都看得到，所以這一條現在是實質保護，
+   不是「以後可能有用」。
 3. **一致性。** GitHub 官方的 OIDC 範例就是這樣寫（`role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}`），
    照著走，之後查文件對得起來。
 
@@ -845,6 +968,8 @@ AWS_DEPLOY_ROLE_ARN    less than a minute ago
 
 ### 4.7 TDD：4 顆掃碼測試（先看到紅，再看到綠）
 
+> 🤖 **這一節由 subagent 執行**（純本機：讀檔 ＋ pytest，零 AWS、零 `gh`）。
+
 > 📌 這 4 顆追加在 **Phase 90 開的**那個檔 `tests/integration/test_design6_error_paths.py`
 > 的最後面。**不要新開檔**（總覽 §10 追認項 B 的裁決：90 開檔、93／94 追加、95 收尾）。
 
@@ -852,7 +977,11 @@ AWS_DEPLOY_ROLE_ARN    less than a minute ago
 
 ```bash
 pytest tests/integration/test_design6_error_paths.py --collect-only -q | tail -1
-# 預期：4 tests collected（Phase 90 放的 Dockerfile／compose 掃碼）
+# 預期：6 tests collected
+#   ＝ Phase 90 放的 4 顆（Dockerfile／compose 掃碼）
+#   ＋ 產品負責人在 commit f2fc067 補的 2 顆（EC2 unit 與 user-data）
+# 該檔的模組 docstring 裡有一張「誰在哪個 phase 加了什麼」的表，Phase 93 那一列
+# 已經先寫好了（「GitHub OIDC trust JSON 的掃碼（4 顆…）」）——**不必改那張表**。
 ```
 
 **② 把下面這一整段追加到檔案最後面（照抄）：**
@@ -869,7 +998,7 @@ pytest tests/integration/test_design6_error_paths.py --collect-only -q | tail -1
 # ⚠ 這幾顆**不連 AWS**（只讀本機檔案），所以三個死埠一起指也不會變顆數。
 # ---------------------------------------------------------------------------
 
-部署目錄 = 專案根目錄 / "deploy" / "aws"
+DEPLOY_AWS_DIR = PROJECT_ROOT / "deploy" / "aws"
 
 # 總覽 §10 追認項 b：分支是 main（design6 §6 寫的 master 是筆誤）。
 # 這一串是契約——Phase 94 的 workflow 也靠它才換得到憑證。
@@ -879,16 +1008,16 @@ GITHUB_OIDC_AUD = "sts.amazonaws.com"
 
 # 12 位純數字 ＝ AWS 帳號 ID 的長相。前後加 \b（詞界）才不會把
 # 更長的數字串的其中 12 位誤判成帳號。
-帳號ID的長相 = re.compile(r"\b\d{12}\b")
+ACCOUNT_ID_PATTERN = re.compile(r"\b\d{12}\b")
 
 
-def 信任文件() -> dict:
+def read_trust_policy() -> dict:
     """讀 deploy/aws/github-oidc-trust.json 並解析成 dict。
 
     用 json.loads 而不是字串比對：這樣「條件寫在 StringLike 而不是 StringEquals」
     這種**結構**上的錯誤才抓得到——字串比對只看得到有沒有那幾個字。
     """
-    return json.loads((部署目錄 / "github-oidc-trust.json").read_text(encoding="utf-8"))
+    return json.loads((DEPLOY_AWS_DIR / "github-oidc-trust.json").read_text(encoding="utf-8"))
 
 
 def test_OIDC信任文件的sub逐字鎖住main分支():
@@ -902,15 +1031,15 @@ def test_OIDC信任文件的sub逐字鎖住main分支():
       也就是說，任何能在這個 repo 觸發 workflow 的分支／PR／tag，都能拿到
       可以推 ECR、可以對那台 EC2 下指令的 AWS 憑證。
     """
-    語句 = 信任文件()["Statement"]
-    assert len(語句) == 1, f"信任文件應該只有一條 Statement，現在有 {len(語句)} 條"
-    條件 = 語句[0]["Condition"]
+    statements = read_trust_policy()["Statement"]
+    assert len(statements) == 1, f"信任文件應該只有一條 Statement，現在有 {len(statements)} 條"
+    condition = statements[0]["Condition"]
 
-    assert "StringLike" not in 條件, (
+    assert "StringLike" not in condition, (
         "sub 必須用 StringEquals 逐字比對。StringLike 會允許萬用字元，"
         "等於任何分支／任何 PR 都借得到這個角色（design6 §8 第 9 列）"
     )
-    assert 條件["StringEquals"]["token.actions.githubusercontent.com:sub"] == GITHUB_OIDC_SUB
+    assert condition["StringEquals"]["token.actions.githubusercontent.com:sub"] == GITHUB_OIDC_SUB
 
 
 def test_OIDC信任文件沒有星號萬用字元():
@@ -922,9 +1051,9 @@ def test_OIDC信任文件沒有星號萬用字元():
     Action 只有一個，Principal 是完整 ARN——所以「整份零星號」是可以成立的
     最強斷言，而且改壞了一定會紅。
     """
-    原文 = (部署目錄 / "github-oidc-trust.json").read_text(encoding="utf-8")
+    source = (DEPLOY_AWS_DIR / "github-oidc-trust.json").read_text(encoding="utf-8")
 
-    assert "*" not in 原文, (
+    assert "*" not in source, (
         "信任文件不可以出現任何萬用字元。要放寬「誰能借這個角色」必須是"
         "產品負責人的決定，不是實作者順手改的（design6 §8 第 9 列：不准合併）"
     )
@@ -937,18 +1066,18 @@ def test_OIDC信任文件的aud是sts():
       - Principal 必須是 Federated，而且指向 GitHub 的那個 provider
       - Action 必須是 sts:AssumeRoleWithWebIdentity（寫成 sts:AssumeRole 永遠換不到）
     """
-    語句 = 信任文件()["Statement"][0]
+    statement = read_trust_policy()["Statement"][0]
 
-    assert 語句["Condition"]["StringEquals"]["token.actions.githubusercontent.com:aud"] == (
+    assert statement["Condition"]["StringEquals"]["token.actions.githubusercontent.com:aud"] == (
         GITHUB_OIDC_AUD
     )
-    assert 語句["Action"] == "sts:AssumeRoleWithWebIdentity", (
+    assert statement["Action"] == "sts:AssumeRoleWithWebIdentity", (
         "OIDC 換憑證的動作是 AssumeRoleWithWebIdentity；sts:AssumeRole 是給 AWS 內部身分用的"
     )
-    assert 語句["Principal"]["Federated"].endswith(
+    assert statement["Principal"]["Federated"].endswith(
         ":oidc-provider/token.actions.githubusercontent.com"
     ), "Principal 必須指向 GitHub Actions 的 OIDC provider"
-    assert 語句["Effect"] == "Allow"
+    assert statement["Effect"] == "Allow"
 
 
 def test_部署用的policy裡沒有寫死帳號ID():
@@ -960,44 +1089,68 @@ def test_部署用的policy裡沒有寫死帳號ID():
 
     帳號 ID 本身不算機密（ARN 到處都是它），但把它寫死進版控有兩個實際壞處：
       1. 換帳號／重開帳號時要逐檔搜尋取代
-      2. 這個 repo 哪天轉成 public，帳號 ID 就永遠留在 git 歷史裡（改不掉）
-    做法是「檔案裡永遠是佔位符，要送給 AWS 的時候才用 sed 展開到 /tmp」。
+      2. **這個 repo 已經是 public**，寫進去就等於公開，而且會永遠留在 git 歷史裡（改不掉）
+    做法是「檔案裡永遠是佔位符，要送給 AWS 的時候才用 sed 展開到專案外的暫存目錄」。
     """
-    檔案們 = sorted(部署目錄.glob("*.json"))
-    名稱們 = {檔.name for 檔 in 檔案們}
-    assert {"github-oidc-trust.json", "github-deploy-policy.json"} <= 名稱們, (
-        f"deploy/aws/ 應該至少有本 phase 的兩份 JSON，現在只有：{sorted(名稱們)}"
+    json_files = sorted(DEPLOY_AWS_DIR.glob("*.json"))
+    names = {path.name for path in json_files}
+    assert {"github-oidc-trust.json", "github-deploy-policy.json"} <= names, (
+        f"deploy/aws/ 應該至少有本 phase 的兩份 JSON，現在只有：{sorted(names)}"
     )
 
-    命中: list[str] = []
-    for 檔 in 檔案們:
-        原文 = 檔.read_text(encoding="utf-8")
-        json.loads(原文)  # 順便證明每一份都是合法 JSON（JSON 沒有註解語法，見 §7 陷阱 10）
-        命中 += [f"{檔.name}：{疑似}" for 疑似 in 帳號ID的長相.findall(原文)]
+    hits: list[str] = []
+    for path in json_files:
+        source = path.read_text(encoding="utf-8")
+        json.loads(source)  # 順便證明每一份都是合法 JSON（JSON 沒有註解語法，見 §7 陷阱 10）
+        hits += [f"{path.name}：{suspect}" for suspect in ACCOUNT_ID_PATTERN.findall(source)]
 
-    assert 命中 == [], f"deploy/aws/*.json 不可以寫死 12 位數的 AWS 帳號 ID：{命中}"
+    assert hits == [], f"deploy/aws/*.json 不可以寫死 12 位數的 AWS 帳號 ID：{hits}"
 
     # 本 phase 的兩份一定會用到帳號 ID（provider ARN、ECR／實例 ARN），所以佔位符必須在
-    for 檔名 in ("github-oidc-trust.json", "github-deploy-policy.json"):
-        assert "<ACCOUNT_ID>" in (部署目錄 / 檔名).read_text(encoding="utf-8"), (
-            f"{檔名} 應該用 <ACCOUNT_ID> 佔位，而不是真的帳號"
+    for filename in ("github-oidc-trust.json", "github-deploy-policy.json"):
+        assert "<ACCOUNT_ID>" in (DEPLOY_AWS_DIR / filename).read_text(encoding="utf-8"), (
+            f"{filename} 應該用 <ACCOUNT_ID> 佔位，而不是真的帳號"
         )
 ```
 
-**③ 檔頭的 import 要補一行 `json`**（Phase 90 開檔時只用到 `re` 與 `Path`）：
+> 📌 **為什麼沒有 `read_deploy_policy()`：** 這 4 顆裡沒有任何一顆需要「把權限 policy 解析成 dict」——
+> 第 4 顆掃的是 `deploy/aws/` 底下**全部** JSON 的**原始文字**（`glob` ＋ regex），
+> 所以多寫一個 helper 只會變成沒人呼叫的死碼。要驗權限 policy 的**結構**（五段 Sid）
+> 是在 §4.5 與 §6 用 `aws iam get-role-policy` 對**真的掛上去那一份**驗的，比讀本機檔更有意義。
+
+**③ 檔頭只補一行 `import json`——其餘沿用，不要重貼整個檔頭：**
 
 ```bash
-head -30 tests/integration/test_design6_error_paths.py
+sed -n '20,32p' tests/integration/test_design6_error_paths.py
 ```
 
-確認最上面那批 import 裡有這三行；缺 `import json` 就補上去（放在 `import re` 前面，
-ruff 的 `I` 規則要求標準函式庫依字母排序）：
+現況（2026-09-03 實查）長這樣，**已經有** `re`／`Path`／`yaml` 與 `PROJECT_ROOT`：
+
+```python
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import yaml
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+```
+
+**唯一要動的是加一行 `import json`**，放在 `import re` **前面**
+（ruff 的 `I` 規則要求標準函式庫依字母排序，`json` < `re`）：
 
 ```python
 import json
 import re
 from pathlib import Path
 ```
+
+⚠ **不要**再宣告一次 `PROJECT_ROOT`（重複定義 ruff 不會擋，但兩份會漂）。
+本 phase 的四個新常數（`DEPLOY_AWS_DIR`／`GITHUB_OIDC_SUB`／`GITHUB_OIDC_AUD`／`ACCOUNT_ID_PATTERN`）
+**跟著上面那段一起放在檔案最後面**，就在用到它們的測試旁邊——
+這樣一整段（註解框 ＋ 常數 ＋ helper ＋ 4 顆）是可以整塊搬動的，
+之後 Phase 94／95 再各自往下追加自己的那一段。
 
 **④ 先看到紅（TDD 的關鍵一步，不可以跳過）：**
 
@@ -1025,7 +1178,7 @@ FAILED …::test_OIDC信任文件沒有星號萬用字元 - AssertionError: 信�
 # 改回來（重跑 §4.3 的 heredoc 就好，它是整檔覆寫）
 ```
 
-- [ ] 親眼看過那兩顆紅了。**沒看過紅的測試，你不知道它有沒有在測東西。**
+- [x] 親眼看過那兩顆紅了。**沒看過紅的測試，你不知道它有沒有在測東西。**
 
 ```bash
 # 再驗一次「寫死帳號 ID」那顆也會紅（用一個假的 12 位數字）
@@ -1042,7 +1195,7 @@ pytest tests/integration/test_design6_error_paths.py -k 帳號ID -q
 （這顆掃的是 `deploy/aws/*.json` **全部**——把 82 的 `mac-policy.json` 或 91 的 `worker-role-policy.json`
 寫死帳號 ID 一樣會紅，所以之後的 phase 不必各自再寫一顆。）
 
-- [ ] 看過紅了，然後**重跑 §4.4 的 heredoc 把檔案還原**。
+- [x] 看過紅了，然後**重跑 §4.4 的 heredoc 把檔案還原**。
 
 **⑤ 全部改回來之後跑綠：**
 
@@ -1050,9 +1203,12 @@ pytest tests/integration/test_design6_error_paths.py -k 帳號ID -q
 pytest tests/integration/test_design6_error_paths.py -v
 ```
 
-**預期：8 passed** ＝ Phase 90 的 4 顆（`test_Dockerfile有cloud_worker這個target`／
+**預期：10 passed** ＝
+Phase 90 的 4 顆（`test_Dockerfile有cloud_worker這個target`／
 `test_Dockerfile的app階段在最後`／`test_Dockerfile的cloud_worker帶ARG_GIT_SHA`／
-`test_compose_yaml沒有新增服務也沒有AWS設定`）＋ 本 phase 的 4 顆（名字見上面的程式碼）。
+`test_compose_yaml沒有新增服務也沒有AWS設定`）
+＋ commit `f2fc067` 補的 2 顆（`test_unit檔與user_data內嵌段逐字相同`／`test_unit只在local才等本機Ollama`）
+＋ 本 phase 的 4 顆（名字見上面的程式碼）。
 
 #### 錯誤表第 9 列「不准合併」在本專案是怎麼落地的
 
@@ -1069,30 +1225,51 @@ design6 §8 第 9 列寫的是「**不准合併**」。本專案是單人 repo�
 `conclusion` 就不是 `success`，deploy 這個 workflow 的 `if` 條件不成立 → **不部署**。
 也就是說：**鑰匙被改壞的那一刻，自動部署就自己停了**，不必靠人記得。
 
-### 4.8 更新 `CLAUDE.md` 的 AWS 指令小段
+### 4.8 更新 `CLAUDE.md` 的指令區
 
-Phase 82 §4.10 在「指令」段建了 `# ── AWS（增量六 Phase 82 起）` 那一段，Phase 92 又在它後面加了「雲端工人（EC2）」的指令。
-在 **AWS 這一整段的最後面**追加下面這幾行（**只寫變數名，不寫值**）：
+> 🤖 **這一節由 subagent 執行**（純改檔）。
+
+**插入點（2026-09-03 實查的現況）：** `CLAUDE.md` 的「指令」區裡，AWS 相關的段落現在是**三段連著**：
+
+```text
+# ── AWS（增量六 Phase 82 起）──────────────────      ← Phase 82 建的
+# ── 雲端看圖工人（增量六 Phase 88；**平常不用開**）──   ← Phase 88 建的
+# ── 雲端工人（EC2；增量六 Phase 92 起）─────────      ← Phase 92 建的（最後一行是 Budget 警報那句）
+# ── 格式與 lint：pre-commit（Phase 73，2026-08-27）── ← 下一段（Phase 73 的，不要動）
+```
+
+**把下面這一小段放在「雲端工人（EC2）」那一段的最後面、`# ── 格式與 lint` 那一行之前**
+（也就是三段 AWS 內容的結尾，不是插在中間）。原因：讀的人是照「先有帳號 → 再有工人 →
+再有機器 → 最後才有自動部署」的順序在往下看的。
+
+**只寫變數名，不寫值**（總覽 §7 鐵律 10；**這個 repo 是 public**）：
 
 ````text
 # ── 部署角色（Phase 93）─────────────────────────────────────────
 # GitHub Actions 用 OIDC 換臨時憑證，GitHub 上**沒有**存任何 AWS 金鑰。
 # 角色名 personaldocai-github-deploy；它的 ARN 放在 repo secret AWS_DEPLOY_ROLE_ARN。
-# 兩份 JSON 在 deploy/aws/（帳號 ID 用 <ACCOUNT_ID> 佔位，要用時 sed 展開到 /tmp）：
+# 兩份 JSON 在 deploy/aws/（帳號 ID 與實例 ID 用 <ACCOUNT_ID>／<INSTANCE_ID> 佔位，
+# 要送 AWS 時才用 sed 展開到**專案外**的暫存目錄，展開檔永遠不進 repo）：
 aws iam get-role --role-name personaldocai-github-deploy \
   --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals'
 # 預期：aud=sts.amazonaws.com、sub=repo:1104030360@92135456/personalDocAI@1349196211:ref:refs/heads/main
 gh secret list      # 預期看得到 AWS_DEPLOY_ROLE_ARN（看得到名字，看不到值）
 ````
 
-- [ ] 貼進去了，而且**沒有**把帳號 ID、實例 ID、role ARN 的真值寫進去。
+- [x] 貼進去了，位置在「雲端工人（EC2）」段的結尾、`# ── 格式與 lint` 之前。
+- [x] **沒有**把帳號 ID、實例 ID、role ARN 的真值寫進去（`grep -nE '\b[0-9]{12}\b' CLAUDE.md` 預期無輸出）。
 
 ### 4.9 全量回歸與 commit
+
+> 👤 **這一節由 controller 執行。**
+> ⛔ **絕不同時跑兩份 pytest**（`tests/conftest.py` 的 `reset_tables` 會 TRUNCATE 同一個測試庫）。
+> subagent 在 §4.7 只跑**單檔**（`pytest tests/integration/test_design6_error_paths.py`），
+> 全量 `pytest -q` 由 controller 在 subagent 收工之後跑。
 
 ```bash
 # 1) 全量
 pytest -q
-# 預期：666 passed ＋ 0 skipped（開工基線 662 ＋ 4）
+# 預期：696 passed ＋ 0 skipped（開工基線 692 ＋ 4）
 
 # 2) 零依賴實證（三個死埠一起指，顆數必須完全相同）
 AWS_ENDPOINT_URL=http://127.0.0.1:9 \
@@ -1106,9 +1283,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 with TestClient(app) as c:
     paths = c.get("/openapi.json").json()["paths"]
-    運算元 = [(p, m) for p, item in paths.items() for m in item]
-    print("端點數 =", len(運算元))
-    print("DELETE 數 =", sum(1 for _, m in 運算元 if m == "delete"))
+    operations = [(path, method) for path, item in paths.items() for method in item]
+    print("端點數 =", len(operations))
+    print("DELETE 數 =", sum(1 for _, method in operations if method == "delete"))
 EOPY
 # 預期：端點數 = 22 / DELETE 數 = 0
 
@@ -1128,14 +1305,22 @@ git status --short -- deploy/ tests/ CLAUDE.md
 #        M tests/integration/test_design6_error_paths.py
 #        M CLAUDE.md
 
-# 7) 確認 /tmp 那兩份展開檔沒有被誤加進來（它們含真實帳號 ID）
+# 7) 確認 $SCRATCH 那兩份展開檔沒有被誤加進來（它們含真實帳號 ID 與實例 ID）
 git status --short | grep -i rendered
-# 預期：完全沒有輸出（它們在 /tmp，本來就不在 repo 裡）
+# 預期：完全沒有輸出（它們在專案外的暫存目錄，本來就不在 repo 裡）
+
+# 8) controller 收工快照：用 snapshot-tree 的 tree SHA 與 BASE_TREE 相減，
+#    確認「這一輪到底動了哪些檔」與上面第 6 項列的完全一致（本輪不 commit、不 push）
 ```
 
-- [ ] 七項全部符合預期。
+- [ ] 八項全部符合預期。
 
 **Commit（產品負責人指示才做；本專案 commit 節奏由產品負責人決定）：**
+
+> ⚠️ **本輪（phase0903-1）明示「不 commit、不 push」**（controller 裁決 R0）。
+> 下面這段留著給產品負責人日後自己下手用——**實作者不要跑它**。
+> 另外 push 這件事在 Phase 94 有額外意義：Demo 3 要靠 `git push` 才觸發得了 CI→CD，
+> 那一步也是產品負責人做（Phase 94 §4.8）。
 
 ```bash
 git add deploy/aws/github-oidc-trust.json deploy/aws/github-deploy-policy.json \
@@ -1148,8 +1333,8 @@ feat: GitHub OIDC 部署角色（sub 逐字鎖 main，零長期金鑰）
 repo:1104030360@92135456/personalDocAI@1349196211:ref:refs/heads/main（GitHub 不可變主體格式）、aud 鎖 sts.amazonaws.com，
 整份零萬用字元。權限只有 ECR push、對那一台實例的 ssm:SendCommand
 （實例 ARN ＋ AWS-RunShellScript 兩個資源）、ec2:DescribeInstances。
-帳號 ID 一律 <ACCOUNT_ID> 佔位，用時 sed 展開到 /tmp。
-test_design6_error_paths.py +4（662 → 666）。
+帳號 ID 一律 <ACCOUNT_ID> 佔位，用時 sed 展開到專案外的暫存目錄。
+test_design6_error_paths.py +4（692 → 696；該檔 6 → 10）。
 EOF
 )"
 ```
@@ -1232,8 +1417,12 @@ EOF
 
 ## 6. 驗收清單
 
-- [ ] **★G3 已由產品負責人明示通過**（本檔最上面的門檻框；實作者不得自行勾選）
-- [ ] OIDC provider 存在且 audience 正確
+> 📌 **打 `aws`／`gh` 的那幾項由 controller 勾**（裁決 R3）；`pytest`／`grep`／`git status`
+> 那幾項 subagent 自己勾得起來。兩邊都做完才算本 phase 完成。
+
+- [x] **★G3 已由產品負責人明示通過**（本檔最上面的門檻框；實作者不得自行勾選）（controller 2026-09-03 實查）
+      ——**2026-09-03 已通過**，憑據見該框
+- [x] OIDC provider 存在且 audience 正確（controller 2026-09-03 實查）
 
   ```bash
   aws iam get-open-id-connect-provider \
@@ -1242,7 +1431,7 @@ EOF
   # 預期：{"Url": "token.actions.githubusercontent.com", "Audiences": ["sts.amazonaws.com"]}
   ```
 
-- [ ] 角色的 trust 逐字鎖住 `main`
+- [x] 角色的 trust 逐字鎖住 `main`（controller 2026-09-03 實查）
 
   ```bash
   aws iam get-role --role-name personaldocai-github-deploy \
@@ -1251,7 +1440,7 @@ EOF
   #       sub = repo:1104030360@92135456/personalDocAI@1349196211:ref:refs/heads/main
   ```
 
-- [ ] trust 的 `sub` ＝ GitHub 給這個 repo 的前綴 ＋ `:ref:refs/heads/main`（§4.3 的框；前綴變了兩邊要一起改）
+- [x] trust 的 `sub` ＝ GitHub 給這個 repo 的前綴 ＋ `:ref:refs/heads/main`（§4.3 的框；前綴變了兩邊要一起改）（controller 2026-09-03 實查）
 
   ```bash
   gh api repos/1104030360/personalDocAI/actions/oidc/customization/sub --jq .sub_claim_prefix
@@ -1259,7 +1448,7 @@ EOF
   # 預期：第二行 ＝ 第一行 ＋ ':ref:refs/heads/main'（不相等＝CD 永遠換不到憑證）
   ```
 
-- [ ] 角色的權限恰好五段、沒有多給
+- [x] 角色的權限恰好五段、沒有多給（controller 2026-09-03 實查）
 
   ```bash
   aws iam get-role-policy --role-name personaldocai-github-deploy \
@@ -1270,7 +1459,7 @@ EOF
   #       DescribeInstancesToSeeIfItIsRunning
   ```
 
-- [ ] 角色**沒有**掛任何 managed policy（＝沒有人偷偷加 PowerUserAccess）
+- [x] 角色**沒有**掛任何 managed policy（＝沒有人偷偷加 PowerUserAccess）（controller 2026-09-03 實查）
 
   ```bash
   aws iam list-attached-role-policies --role-name personaldocai-github-deploy \
@@ -1278,14 +1467,14 @@ EOF
   # 預期：[]
   ```
 
-- [ ] GitHub secret 在
+- [x] GitHub secret 在（controller 2026-09-03 實查）
 
   ```bash
   gh secret list
   # 預期：AWS_DEPLOY_ROLE_ARN 那一列（看得到名字，看不到值）
   ```
 
-- [ ] 兩份 JSON 都在版控裡，而且**帳號 ID 是佔位符**；**4 顆新測試全綠且每顆都看過紅**
+- [x] 兩份 JSON 都在版控裡，而且**帳號 ID 是佔位符**；**4 顆新測試全綠且每顆都看過紅**
       （§4.7 ④做過兩輪反向驗證）；全量顆數 ＝ 基線 ＋ 4；端點仍 22、零 DELETE；
       三死埠零依賴實證顆數相同；ruff 兩句 exit 0
 
@@ -1293,15 +1482,15 @@ EOF
   grep -c '<ACCOUNT_ID>' deploy/aws/github-oidc-trust.json deploy/aws/github-deploy-policy.json
   # 預期：…trust.json:1   …policy.json:2
   grep -nE '\b[0-9]{12}\b' deploy/aws/*.json          # 預期：完全沒有輸出
-  pytest tests/integration/test_design6_error_paths.py -v   # 預期：8 passed（90 的 4 ＋ 本 phase 的 4）
-  pytest -q                                            # 預期：666 passed ＋ 0 skipped（基線 ＿＿＿ → 完成 ＿＿＿）
+  pytest tests/integration/test_design6_error_paths.py -v   # 預期：10 passed（90 的 4 ＋ f2fc067 的 2 ＋ 本 phase 的 4）
+  pytest -q                                            # 預期：696 passed ＋ 0 skipped（基線 ＿＿＿ → 完成 ＿＿＿；應為 692 → 696）
   AWS_ENDPOINT_URL=http://127.0.0.1:9 \
   CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
   OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q         # 預期：顆數完全相同
   ruff format --check app tests scripts && ruff check app tests scripts   # 預期：exit 0
   ```
 
-- [ ] **該零改動的都零改動**：`test.yml`（D16）、`docs/spec/`、產品碼、專案 `data/`
+- [x] **該零改動的都零改動**：`test.yml`（D16）、`docs/spec/`、產品碼、專案 `data/`
 
   ```bash
   git diff --stat -- .github/workflows/test.yml        # 預期：無輸出
@@ -1311,7 +1500,7 @@ EOF
   find data/staging -type f -mmin +1440 2>/dev/null | head    # 預期：無輸出
   ```
 
-- [ ] **EC2 全程沒有被本 phase 開機**；**沒有產生任何 AWS 運算費用**（IAM／OIDC 全免費）
+- [x] **EC2 全程沒有被本 phase 開機**；**沒有產生任何 AWS 運算費用**（IAM／OIDC 全免費）（controller 2026-09-03 實查）
 
   ```bash
   aws ec2 describe-instances --region "$AWS_REGION" \
@@ -1320,7 +1509,7 @@ EOF
   # 預期：空。有輸出＝有人忘了關 EC2（92-A 的 t3.xlarge 或 92-B 的 g4dn），立刻處理（本 phase 不該開機）
   ```
 
-- [ ] **沒有自行 commit、沒有把 `unfinish/` 搬進 `finish/`**（除非產品負責人指示）
+- [x] **沒有自行 commit、沒有把 `unfinish/` 搬進 `finish/`**（除非產品負責人指示）（controller 2026-09-03 實查）
 
 ---
 
@@ -1393,12 +1582,13 @@ EOF
    卻仍被拒 → 回 Phase 82 §4.5 確認 `AdministratorAccess` 有掛上。**不要**放寬 `mac-policy.json`——
    那份是「這台 Mac 日常在用」的權限，放寬了就收不回來，而且它是 Phase 95 掃碼的對象之一；也**不要**用 root。
 
-6. **把 `/tmp/*.rendered.json` 加進 git。**
+6. **把 `*.rendered.json` 複製回專案、加進 git。**
    **症狀：** `test_部署用的policy裡沒有寫死帳號ID` 不會紅（它只掃 `deploy/aws/`），
-   但你的帳號 ID 與實例 ID 就永遠留在 git 歷史裡了——**改不掉，只能重寫歷史**。
+   但你的帳號 ID 與實例 ID 就永遠留在 git 歷史裡了——**改不掉，只能重寫歷史**，
+   而且**這個 repo 是 public**，等於直接公開。
    **原因：** 展開後的檔案含真值。`.gitignore` 管不到專案外的路徑，
    但如果有人把它們複製回專案裡就會被 `git add .` 掃進去。
-   **正解：** 展開結果**只寫 `/tmp`**，永遠不要複製回專案。
+   **正解：** 展開結果**只寫 `$SCRATCH`（專案外）**，永遠不要複製回專案。
    §4.9 第 7 項那個 `git status --short | grep -i rendered` 就是在守這件事。
 
 7. **建了角色卻忘了 `put-role-policy`，於是角色「借得到但什麼都不能做」。**
@@ -1411,9 +1601,11 @@ EOF
 
 8. **`file://` 的斜線數錯。**
    **症狀：** `Error parsing parameter '--assume-role-policy-document': Unable to load paramfile`。
-   **原因：** AWS CLI 的 `file://` 後面直接接路徑。**絕對路徑**是 `file:///tmp/x.json`
-   （`file://` ＋ `/tmp/x.json` ＝ **三條斜線**）；相對路徑是 `file://x.json`（兩條）。
-   **正解：** 本檔一律用絕對路徑（三條斜線），因為指令可能在任何目錄執行。
+   **原因：** AWS CLI 的 `file://` 後面直接接路徑。**絕對路徑**是 `file:///private/tmp/…/x.json`
+   （`file://` ＋ `/private/tmp/…` ＝ **三條斜線**）；相對路徑是 `file://x.json`（兩條）。
+   **正解：** 本檔一律寫成 `"file://$SCRATCH/x.json"`——`$SCRATCH` 本身是絕對路徑（開頭就有 `/`），
+   展開後自然是三條斜線。**雙引號不要拿掉**，`$SCRATCH` 沒展開時錯誤訊息會變成看不懂的
+   `Unable to load paramfile file:///x.json`。
 
 9. **以為「trust 沒有 `Resource` 是寫漏了」，於是加一個 `"Resource": "*"`。**
    **症狀：** `test_OIDC信任文件沒有星號萬用字元` 紅，而且 AWS 也可能回
@@ -1436,7 +1628,10 @@ EOF
     反過來，由 `workflow_run` 啟動的 workflow（Phase 94 的 `deploy`）**拿得到** secrets——GitHub 事件表原句：
     *"The workflow started by the `workflow_run` event is able to access secrets and write tokens, even if the previous workflow was not."*
     **正解：** 這是保護，不是 bug，什麼都不用改。本專案的 CD 只在 `main` 上、由 `workflow_run` 啟動，讀得到 secret；
-    就算哪天 repo 轉 public 有人從 fork 開 PR，他既拿不到 secret，`sub` 也是 `…:pull_request` 而被 trust 的 `StringEquals` 擋掉——兩道鎖各擋一次。
+    **這個 repo 已經是 public**，所以「有人從 fork 開 PR」是隨時可能發生的事——而他既拿不到 secret，
+    `sub` 也是 `…:pull_request` 而被 trust 的 `StringEquals` 擋掉——兩道鎖各擋一次。
+    （Phase 94 還會在 `deploy` 的 `if` 多加一條 `workflow_run.event == 'push'`，
+    擋「fork 的分支剛好也叫 `main`」那種情況；總覽 §10.2 M。）
 
 ---
 
@@ -1448,7 +1643,7 @@ EOF
 |---|---|
 | AWS（IAM） | 一個 OIDC identity provider（指向 GitHub）＋ 一個角色 `personaldocai-github-deploy`（trust ＋ 一份 inline policy）。**全部免費** |
 | GitHub | 一個 repository secret `AWS_DEPLOY_ROLE_ARN` |
-| repo | `deploy/aws/github-oidc-trust.json`、`deploy/aws/github-deploy-policy.json`（帳號 ID 用佔位符）；`tests/integration/test_design6_error_paths.py` +4 顆；`CLAUDE.md` 多三行 |
+| repo | `deploy/aws/github-oidc-trust.json`、`deploy/aws/github-deploy-policy.json`（帳號 ID 與實例 ID 用佔位符）；`tests/integration/test_design6_error_paths.py` +4 顆（該檔 **6 → 10**）；`CLAUDE.md` 多一個「部署角色（Phase 93）」小段 |
 
 **對外行為變了沒：完全沒有。**
 
@@ -1459,22 +1654,202 @@ EOF
 
 **顆數：**
 
-| | 顆數 |
-|---|---|
-| 開工基線（Phase 92 之後） | **662** ＋ 0 skipped |
-| 本 phase 新增 | **+4**（全部在 `tests/integration/test_design6_error_paths.py`） |
-| 完成後 | **666** ＋ 0 skipped |
+| | 顆數 | `test_design6_error_paths.py` 檔內 |
+|---|---|---|
+| 開工基線（Phase 92 之後，含 `f2fc067` 的 2 顆） | **692** ＋ 0 skipped | **6** |
+| 本 phase 新增 | **+4**（全部在 `tests/integration/test_design6_error_paths.py`） | **+4** |
+| 完成後 | **696** ＋ 0 skipped | **10** |
 
-與總覽 §2.7／§9 的 Phase 93 那一列**完全一致（+4）**，沒有多加也沒有少加。
-（累計：**662 → 666**，與總覽 §9 一致。）
+與總覽 §2.7／§9 的 Phase 93 那一列**在「新增 +4」這件事上完全一致**，沒有多加也沒有少加。
+**絕對值不同是預期的**：總覽 §9 寫的累計是 `662 → 666`，實查基線是 **692**（差 30），
+§9 自己在 Phase 75 那列就註明過「絕對值只對『本 phase 新增幾顆』」。本檔一律以 **692 → 696** 為準。
 
 **下一個 phase：** `phase-94-CD工作流程.md`——把 `.github/workflows/deploy.yml` 寫出來
 （`workflow_run` 綁 `test` → OIDC → QEMU ＋ buildx → `linux/amd64,linux/arm64` → ECR `<sha>` ＋ `latest`
-→ SSM 重啟），追加 6 顆掃碼測試（666 → 672），並做 **Demo 3**。
+→ SSM 重啟），追加 6 顆掃碼測試（**696 → 702**；該檔 10 → 16），並就位 **Demo 3**
+（Demo 3 本身要 `git push` 才觸發得了 CI→CD，**由產品負責人執行**）。
 Phase 94 會用到本 phase 的兩樣東西，名字不要改：
 
 - GitHub repository secret **`AWS_DEPLOY_ROLE_ARN`**（`${{ secrets.AWS_DEPLOY_ROLE_ARN }}`）
 - IAM 角色 **`personaldocai-github-deploy`**（它的 policy 決定 Phase 94 能做哪三件事）
+
+> ⚠️ 順帶提醒 Phase 94：本 phase 把角色的 `--max-session-duration` 設成 **3600 秒**。
+> `aws-actions/configure-aws-credentials` 預設就是 1 小時，所以**不填**最省事；
+> 真要填 `role-duration-seconds`，值**不能超過 3600**，否則會紅在換憑證那一步
+> （訊息是 `DurationSeconds exceeds the MaxSessionDuration set for this role`）。
+
+---
+
+## 9. 2026-09-03 校準紀錄
+
+> 這一節是給實作者與 reviewer 看的 **diff 摘要**：本檔在 2026-09-03（工作區
+> `.superpowers/sdd/phase0903-1/`）依 controller 實查的現況校準過一次，
+> 下面逐條列「改了什麼、為什麼」。**沒列到的部分一字未動。**
+
+### 9.1 ★G3 與開工狀態
+
+| # | 改了什麼 | 為什麼 |
+|---|---|---|
+| 1 | 檔頭框「本 phase 仍不准開工，要等 ★G3」→「★G3 已通過，可以開工」；92-A 從「現在就做」改成「已建好、Demo 2／2b 通過、收工 Stop」 | ★G3 已於 2026-09-03 由產品負責人通過 |
+| 2 | §「開工門檻」加一個 ✅ 框（三項憑據）與表格最後一列「本次狀態：已通過」 | 閘門的**規則**要留著（將來重跑仍以它為準），但「這一次過了沒」必須寫清楚，否則實作者會停在門口 |
+| 3 | §2 前置條件補：repo 是 **PUBLIC**、`docs/plan/aws/` 六份 owner 筆記只當對照 | repo public ＝「不寫值」是硬性規定不是潔癖；owner 的筆記不是計畫檔，不准改 |
+
+### 9.2 顆數與基線（controller 裁決 R4）
+
+| # | 舊 | 新 | 為什麼 |
+|---|---|---|---|
+| 4 | 開工基線 `662 passed` | **`692 passed`** | 2026-09-03 實查值。差 30 的原因寫進 §2 的註解：總覽 §9 的絕對值只保證「本 phase 新增幾顆」 |
+| 5 | `test_design6_error_paths.py` 目前 **4** 顆 | **6** 顆（並列出六個測試名） | Phase 92 本身 +0，但產品負責人在 commit `f2fc067` 補了 2 顆（`test_unit檔與user_data內嵌段逐字相同`、`test_unit只在local才等本機Ollama`） |
+| 6 | `--collect-only` 預期 `4 tests collected`；§4.7 ⑤ 預期 `8 passed` | **6** ／ **10 passed** | 同上 |
+| 7 | 完成後 `666`；§6 與 §8 的表；commit message `662 → 666` | **`696`**；`692 → 696`；檔內 `6 → 10` | 同上 |
+| 8 | 「下一個 phase：追加 6 顆（666 → 672）」 | **696 → 702**，並註明 Demo 3 由產品負責人執行 | 與 Phase 94 校準後的數字對齊（裁決 R0） |
+
+### 9.3 分工與執行順序（裁決 R3）
+
+| # | 改了什麼 | 為什麼 |
+|---|---|---|
+| 9 | §4 開頭那個「順序是有意義的」框整段改寫：加「誰做哪一節」表 ＋ 八步執行順序（先 subagent 寫 JSON／測試／CLAUDE.md，後 controller 建 provider／role／secret／跑全量） | 實作 subagent **零 `aws`／`gh`／`docker` 指令、零真連線**；而且「鑰匙的形狀」先被測試釘死再去配鎖，錯了不必 `delete-role` |
+| 10 | §4.1／§4.2／§4.4 後半／§4.5／§4.6／§4.9 各加「👤 由 controller 執行」；§4.3／§4.4 前半／§4.7／§4.8 各加「🤖 由 subagent 執行」 | 同上，逐節標清楚免得混 |
+| 11 | §4.9 加警語「絕不同時跑兩份 pytest」，並說明 subagent 只跑單檔、controller 才跑全量 | `reset_tables` 會 TRUNCATE 同一個測試庫，兩份同時跑會出現一堆假紅 |
+| 12 | §4.9 加第 8 項「controller 用 `snapshot-tree` 的 tree SHA 相減驗動到哪些檔」；commit 那段加「本輪不 commit／不 push」的框 | 裁決 R0：本輪只就位，不 commit、不 push |
+
+### 9.4 暫存路徑：`/tmp` → `$SCRATCH`
+
+| # | 改了什麼 | 為什麼 |
+|---|---|---|
+| 13 | §4.1 定義 `export SCRATCH=<scratchpad 絕對路徑>`（含 `mkdir -p` 與「為什麼要 export」） | 本輪展開檔一律寫進 agent 的 scratchpad；`export` 不能省，§4.4 有一句 `python3 -c` 讀 `os.environ['SCRATCH']` |
+| 14 | §4.4 的兩條 `sed`、檢查用的 `python3 -c`／`grep`、§4.5 的 `create-role`／`put-role-policy`／`update-assume-role-policy`、§7 陷阱 6／8：`/tmp/...` 全部換成 `"$SCRATCH/..."`／`"file://$SCRATCH/..."` | 同上。並保留「人自己做時用 `/tmp` 也一樣」這句，免得半年後的人以為非 scratchpad 不可 |
+| 15 | §4.8 給 `CLAUDE.md` 的三行**不寫** `$SCRATCH` 也不寫 `/tmp`，改成「展開到**專案外**的暫存目錄」 | `CLAUDE.md` 是長期文件，不該被塞進某一次 session 的路徑 |
+
+### 9.5 識別字英文化（裁決 R1；`test_中文` 名保留）
+
+§4.7 的測試碼區與 §4.9 第 3 項的 `python3` 片段，識別字全部改英文：
+
+| 舊（中文） | 新（英文） | 在哪裡 |
+|---|---|---|
+| `部署目錄` | `DEPLOY_AWS_DIR` | 模組層常數 |
+| `專案根目錄` | `PROJECT_ROOT` | **沿用檔頭既有的**，不重新宣告 |
+| `帳號ID的長相` | `ACCOUNT_ID_PATTERN` | 模組層常數 |
+| `信任文件()` | `read_trust_policy()` | helper |
+| `語句` | `statements`（第 1 顆）／`statement`（第 3 顆） | 區域變數 |
+| `條件` | `condition` | 區域變數 |
+| `原文` | `source` | 區域變數 |
+| `檔案們`／`名稱們`／`命中`／`檔`／`疑似`／`檔名` | `json_files`／`names`／`hits`／`path`／`suspect`／`filename` | 區域變數 |
+| `運算元` | `operations` | §4.9 第 3 項的端點清點片段 |
+
+- **四個 `test_中文` 測試名一字未動**（總覽 §2.7 的契約）。
+- 註解、docstring、斷言訊息**仍然是中文**（規矩只管識別字）。
+- **沒有**加 `read_deploy_policy()`：這 4 顆沒有任何一顆需要把權限 policy 解析成 dict
+  （第 4 顆掃的是整個目錄的**原始文字**），多寫就是死碼。理由已寫進 §4.7 的框。
+- §4.7 ③ 從「重貼三行 import」改成「**只補一行 `import json`**，其餘沿用現況檔頭」，
+  並貼出 2026-09-03 實查的檔頭長相（`re`／`Path`／`yaml`／`PROJECT_ROOT` 都已經在）。
+
+### 9.6 外部事實複查（裁決 R11；全部 2026-09-03 以 WebFetch 讀官方原文）
+
+| 查什麼 | 結果 | 出處 |
+|---|---|---|
+| thumbprint 是不是選填 | **仍然選填**，原句一字未變（AWS 用自己的可信根 CA 清單驗 JWKS 的 TLS 憑證） | [IAM：Create an OIDC identity provider](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc.html) |
+| CLI synopsis 與「參數是選填」那句 | **逐字相同**（`--url` 必填，其餘方括號） | [CLI `create-open-id-connect-provider`](https://docs.aws.amazon.com/cli/latest/reference/iam/create-open-id-connect-provider.html) |
+| ECR 推映像的六個動作 ＋ `GetAuthorizationToken` 用 `*` | **完全相同**（`CompleteLayerUpload`／`UploadLayerPart`／`InitiateLayerUpload`／`BatchCheckLayerAvailability`／`PutImage`／`BatchGetImage`） | [ECR image-push-iam](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-push-iam.html) |
+| `ssm:SendCommand` 要同時列實例 ARN 與 document ARN | **確認**（Example 3），且同頁明文「`AWS-*` 這種公開 document 的 ARN **不要填帳號 ID**」 | [SSM identity-based policy examples](https://docs.aws.amazon.com/systems-manager/latest/userguide/security_iam_id-based-policy-examples.html) |
+| GitHub 不可變主體格式 | **確認**：2026-07-15 之後建的 repo 用 `repo:OWNER@OWNER-ID/REPO@REPO-ID:ref:refs/heads/BRANCH`；改名／轉移也會換成新格式；「Update your trust policies to match the format your repository uses」 | [OIDC reference §Immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims) |
+| `workflow_run` 的 `GITHUB_REF` 與 secrets | **確認**：`GITHUB_SHA` ＝ Last commit on default branch、`GITHUB_REF` ＝ Default branch；workflow 檔必須在預設分支上才觸發得了；由它啟動的 workflow 拿得到 secrets | [Events that trigger workflows → `workflow_run`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run) |
+| GitHub OIDC → AWS 指南的 `sub` 範例 | **已更新**：同一頁現在**兩種格式都列**（舊的 mutable ＋ 新的 immutable）。附錄那一條已改寫，提醒「照那頁抄要挑對版本」 | [oidc-in-aws](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws) |
+| `ec2:DescribeInstances` 的資源層級限制 | **未能從官方表格逐字複查**（Service Authorization Reference 的表是 JS 產生的，抓不到）。原文寫「AWS 的 `Describe*` 系列**一律**不支援」過於絕對，已收窄成「`ec2:DescribeInstances` 不支援（EC2 的 `Describe*` 幾乎都如此）」 | — |
+
+另外補了三個實查事實進正文：**OIDC provider 現在 0 個**（§4.2）、
+**IAM 沒有 `personaldocai-github-deploy` 這個角色**（§4.5）、
+**`gh secret list` 與 `gh variable list` 都是空的**（§4.6）——三處都會走「全新建立」那條路，
+不會撞 `EntityAlreadyExists`。
+
+### 9.7 其他修正
+
+| # | 改了什麼 | 為什麼 |
+|---|---|---|
+| 16 | §4.3 的框加「✅ 2026-09-03 controller 又跑了一次 `gh api …/customization/sub`：三個欄位逐字相同」 | 實作者不必猜那一串還對不對；但**動手前仍要自己再跑一次**（repo 改名／轉移會變） |
+| 17 | §4.3 引的 GitHub 原文改成 2026-09-03 讀到的**逐字**版本，並補上官方例子 `repo:octo-org@123456/octo-repo@456789:ref:refs/heads/main` | 原本引的第二句（"will also adopt the new format"）與現行原文措辭不同 |
+| 18 | §4.2 補一句：Console 寫「至少一個 thumbprint」與「不必自己填」**不衝突**（不填時 IAM 自己抓一個） | 避免有人在 Console 看到有值就以為被人動過手腳 |
+| 19 | §4.4 新增一個框：**92-B 換機之後實例 ID 會變**，要①重跑 `put-role-policy` ②改 Phase 94 的 GitHub variable，並列出各自漏掉的症狀 | 這兩處是不同的東西，只改一邊 CD 會安靜地半殘 |
+| 20 | §4.6／§7 陷阱 6／11、第 4 顆測試的 docstring：「repo 現在是 private，哪天轉 public…」→ **「已經是 public」** | 實查：repo `1104030360/personalDocAI` 是 PUBLIC。原文的語氣會讓人低估風險 |
+| 21 | §7 陷阱 11 補一句：Phase 94 的 `if` 還會多一條 `workflow_run.event == 'push'`（擋 fork 分支叫 `main`） | 總覽 §10.2 M 的裁決，兩個 phase 要對得上 |
+| 22 | §2 前置：ECR 三個 tag 的實況（`bb3921a` 單架構 arm64、`bb3921a-dirty`／`latest` 多架構）；「不要加 `--profile`」 | 原文只寫「已經有一個映像」；而這台 Mac 沒有具名 profile，加了會找不到 |
+| 23 | §3 範圍與 §4.8：`CLAUDE.md` 的插入點從「AWS 段的最後面」改成**「雲端工人（EC2）」段的結尾、`# ── 格式與 lint` 之前**，並貼出現況的四段標題 | 實查：AWS 段之後還接了「雲端看圖工人」與「雲端工人（EC2）」兩段，照舊描述會插錯地方 |
+
+### 9.8 本次校準**沒有**動的東西
+
+- 四個 `test_中文` 測試名、兩份 JSON 的內容（`Sid`／`Action`／`Resource` 一字未改）。
+- `deploy/aws/*.json`、`tests/`、`app/`、`.env`、`compose*.yaml`、`docs/spec/`——
+  校準階段**零程式碼改動**，只改這一份計畫檔。
+- §5 的兩張 ASCII 圖、§7 的十一個陷阱標題與結構、§1 的對照表。
+
+---
+
+## 10. 實作紀錄（2026-09-03，實作 subagent）
+
+**結論：🤖 標的四段（§4.3 的 JSON、§4.4 前半的 JSON、§4.7 的 4 顆測試、§4.8 的 `CLAUDE.md` 小段）
+照計畫逐字做完，兩份 JSON 逐字落地、4 顆測試紅→綠、全量 692 → 696（0 skipped）。**
+本 task **零 `aws`／`gh`／`docker` 指令、零真連線、零 `.env` 變更、零產品碼、未 commit**（裁決 R0／R3）。
+👤 標的 §4.1／§4.2／§4.3 的 `gh api` 複查／§4.4 的 `sed` 展開／§4.5／§4.6／§4.9 **仍待 controller 執行**，
+§6 那幾條打 `aws`／`gh` 的 checkbox 一律留白。
+
+### 10.1 交付的四個檔
+
+| 檔案 | 狀態 | 來源 | 備註 |
+|---|---|---|---|
+| `deploy/aws/github-oidc-trust.json` | 新檔（19 行） | §4.3 heredoc（本檔第 577〜595 行） | 一條 Statement；`StringEquals` 逐字鎖 `sub`、`aud`；全檔零 `*`；`<ACCOUNT_ID>`×1 |
+| `deploy/aws/github-deploy-policy.json` | 新檔（45 行） | §4.4 heredoc（本檔第 674〜718 行） | 五段 `Sid` 依序 `EcrLoginTokenIsAccountWide`／`EcrPushOnlyToTheWorkerRepository`／`SsmRestartOnlyThatOneInstance`／`SsmReadTheCommandResult`／`DescribeInstancesToSeeIfItIsRunning`；`<ACCOUNT_ID>`×2、`<INSTANCE_ID>`×1 |
+| `tests/integration/test_design6_error_paths.py` | 改檔（+127 行、**零刪除**） | §4.7 ② 的 python 區塊（本檔第 990〜1113 行） | 檔頭只補 `import json`（在 `import re` 前）；4 顆＋常數＋`read_trust_policy()` 一整塊追加在**檔尾**；既有 6 顆與既有 helper 一字未動 |
+| `CLAUDE.md` | 改檔（+10 行） | §4.8 的 ````text` 區塊（本檔第 1248〜1256 行） | 插在「雲端工人（EC2）」段結尾（Budget 警報那行之後）、`# ── 格式與 lint` 之前 |
+
+**落地手法：** 四段全部用 `sed -n '<起>,<迄>p' <本計畫檔>` 從計畫檔**原樣導出**，不手打
+（Phase 91 同一手法）。導出後檢查 `grep -P '\xc2\xa0'`／exotic space／行尾空白皆零命中，
+兩份 JSON 是**全 ASCII**、檔尾各有一個換行。
+
+### 10.2 TDD 證據
+
+| 步驟 | 指令 | 結果 |
+|---|---|---|
+| 追加測試前 | `pytest …test_design6_error_paths.py --collect-only -q` | `6 tests collected`（與 §4.7 ① 預期相同） |
+| 追加測試後（**RED**，JSON 還不存在） | `pytest …test_design6_error_paths.py -q` | **4 failed, 6 passed**——三顆 `FileNotFoundError: …/deploy/aws/github-oidc-trust.json`、第四顆 `AssertionError: deploy/aws/ 應該至少有本 phase 的兩份 JSON，現在只有：['mac-policy.json', 's3-lifecycle.json', 'worker-role-policy.json', 'worker-role-trust.json']` |
+| 寫完兩份 JSON（**GREEN**） | `pytest …test_design6_error_paths.py -v` | **10 passed** |
+| 反向變異 ①（`sub` → `…@1349196211:*`） | `pytest … -k OIDC -q` | **2 failed**（`sub逐字鎖住main分支` 的 `assert '…:*' == '…:ref:refs/heads/main'`＋`沒有星號萬用字元`），1 passed |
+| 反向變異 ②（`<ACCOUNT_ID>` → `000000000000`） | `pytest … -k 帳號ID -q` | **1 failed**：`不可以寫死 12 位數的 AWS 帳號 ID：['github-deploy-policy.json：000000000000', …]` |
+| 還原後 | `diff` 兩份 JSON 與變異前的備份 | **逐字相同**（零差異）；同檔 **10 passed** |
+
+### 10.3 全量與零依賴
+
+| 檢查 | 結果 |
+|---|---|
+| `pytest -q` | **696 passed、0 skipped**（開工基線 692 ＋ 4），warning 只有基線那一個 `StarletteDeprecationWarning` |
+| 三死埠（`AWS_ENDPOINT_URL`／`CELERY_BROKER_URL`／`OLLAMA_BASE_URL` 全指 `127.0.0.1:9`） | **696 passed**（顆數完全相同＝本 phase 的 4 顆真的不連網） |
+| `ruff format app tests scripts && ruff check app tests scripts` | `114 files left unchanged`／`All checks passed!`，exit 0（**format 零改檔**＝計畫檔那段碼本來就合格式） |
+| 端點仍 22、openapi 零 DELETE | 由既有的 `test_端點恰好是這22支`／`test_openapi裡沒有任何DELETE動詞` 在全量裡把關，全綠 |
+| 非 ASCII 識別字自檢（tokenize） | `[]`（測試檔；`test_中文` 名不計，見裁決 R1） |
+| `grep -nE '\b[0-9]{12}\b' deploy/aws/*.json CLAUDE.md` | 無輸出（零真帳號 ID） |
+| `git status --short -- app/ compose.yaml Dockerfile db/ requirements.txt data/`、`git diff --stat -- .github/workflows/test.yml`、`git status --short docs/spec/` | 全部無輸出（該零改動的都零改動；D16 的 `test.yml` 一字未動） |
+| 工作樹本 phase 動到的檔 | `M CLAUDE.md`、`M tests/integration/test_design6_error_paths.py`、`?? deploy/aws/github-oidc-trust.json`、`?? deploy/aws/github-deploy-policy.json`（＋本計畫檔的勾選與本節）——與 §4.9 第 6 項列的完全一致 |
+
+### 10.4 與計畫檔的差異
+
+**零差異。** 檔名、JSON 內容（`Sid`／`Action`／`Resource`／`Condition` 一字未改）、
+四個 `test_中文` 測試名、常數名（`DEPLOY_AWS_DIR`／`GITHUB_OIDC_SUB`／`GITHUB_OIDC_AUD`／`ACCOUNT_ID_PATTERN`）、
+helper 名（`read_trust_policy()`）、`CLAUDE.md` 小段的文字與插入點，全部照 §4.3／§4.4／§4.7／§4.8 逐字。
+未新增計畫外的檔案、函式或測試；**沒有**加 `read_deploy_policy()`（§4.7 的框已說明那會是死碼）。
+
+兩點供 controller 留意（都不是偏離，只是措辭）：
+
+1. §6 那一條「兩份 JSON 都**在版控裡**」——本輪依裁決 R0 **不 commit、不 `git add`**，
+   所以兩份檔目前是工作樹裡的 `??`（未追蹤）。「在 repo 裡、內容是佔位符」這一半已成立，
+   真正進版控要等產品負責人 commit。
+2. 總覽 §2.7 Phase 93 的「動到的檔」只列兩份 JSON ＋ 測試檔，**沒有列 `CLAUDE.md`**；
+   本檔 §3 與 §4.8 則明文要求改 `CLAUDE.md`。兩者不衝突（總覽那欄不列文件檔），
+   已照本檔做，並在此註記。
+
+### 10.5 疑慮
+
+- 無阻斷性疑慮。唯一提醒：`deploy/aws/github-deploy-policy.json` 的 `<INSTANCE_ID>` 綁的是
+  **92-A 那一台**；92-B 換機時要照 §4.4 那個框做兩件事（重跑 `put-role-policy` ＋ 改 Phase 94 的
+  GitHub variable），少做一件 CD 會安靜地半殘。
 
 ---
 
@@ -1488,8 +1863,11 @@ Phase 94 會用到本 phase 的兩樣東西，名字不要改：
 - [IAM policy 語法參考](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies.html)
 - [IAM JSON policy 的 Condition 元素（`StringEquals` vs `StringLike`）](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html)
 - [GitHub OIDC → AWS（官方指南）](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
-  ——`sub` 的格式 `repo:octo-org/octo-repo:ref:refs/heads/octo-branch`、
-  `permissions: id-token: write` ＋ `contents: read` 都出自這一頁
+  ——`permissions: id-token: write`（拿 JWT）＋ `contents: read`（給 `actions/checkout`）出自這一頁。
+  ⚠ **2026-09-03 複查：這一頁的 trust policy 範例現在同時列出兩種 `sub`**——
+  舊的 `repo:octo-org/octo-repo:ref:refs/heads/octo-branch` 與新的
+  `repo:octo-org@123456/octo-repo@456789:ref:refs/heads/octo-branch`，並自己說明
+  「2026-07-15 之後建立的 repo」用後者。**本 repo 要用後者**（見 §4.3 的框）
 - [GitHub OIDC 令牌裡有哪些 claim（`sub` 的各種長相）](https://docs.github.com/en/actions/concepts/security/openid-connect)
 - [Amazon ECR 需要哪些權限才能推映像](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-push.html)
 - [SSM Run Command](https://docs.aws.amazon.com/systems-manager/latest/userguide/run-command.html)

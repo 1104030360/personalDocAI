@@ -832,6 +832,38 @@ def test_崩潰重送route是cloud但S3沒有結果_fallback本機(caplog):
     )
 
 
+def test_崩潰重送時雲端路已經關掉_照樣fallback本機(caplog):
+    """使用者在任務跑到一半把 .env 改回 CLOUD_ROUTE=off 並 restart worker。
+
+    重送回來時 job 的 route 還是 "cloud"，但手上的 cloud 已經換成 CloudRouteOff——
+    它的 fetch_result／cleanup **都會丟 RuntimeError**。
+    `_resume_cloud_route` 與 `_best_effort_cloud_cleanup` 那兩個 try 就是為了這一刻
+    （兩支的 docstring 都寫明了「cloud 有可能已經是 CloudRouteOff」），
+    但在本 phase 之前**零測試**——註解說有防護，沒有人證明過。
+
+    正確行為：兩個例外都被吃掉並留 warning -> fallback 本機
+    -> reason=redelivered_without_result -> 照片照樣入庫一列。
+    """
+    caplog.set_level(logging.INFO)
+    store = RememberDeletedStore()
+    job_id = create_job(store)
+    store.update(job_id, privacy="NON_SENSITIVE", route="cloud")
+    gate = FakePrivacyGate(Verdict.SENSITIVE)  # 走到就代表「重送又問了一次閘門」＝違規
+
+    run(job_id, store=store, gate=gate, cloud=cloud_ingest.CloudRouteOff())
+
+    assert gate.calls == 0, "route 已經有值就不准再問閘門（design6 §2.1）"
+    assert photo_repository.count_photos() == 1, "走本機把它做完（使用者無感）"
+    assert store.deleted[job_id]["route"] == "local"
+    assert any("fallback=local reason=redelivered_without_result" in m for m in caplog.messages), (
+        f"design6 §2.1 要求的 log 字樣不見了：{caplog.messages}"
+    )
+    # 防假綠：RuntimeError 真的發生過才算數（不然「CloudRouteOff 安靜回 None」也會綠）
+    assert any("崩潰重送時讀不到雲端結果" in m for m in caplog.messages), (
+        f"fetch_result 應該丟 RuntimeError 並被 _resume_cloud_route 記下來：{caplog.messages}"
+    )
+
+
 def test_等結果時信箱丟例外_fallback本機而且清乾淨(monkeypatch, caplog):
     """controller 裁決 R14（Phase 79 review 的 Minor 升級成本 phase 的做項）。
 

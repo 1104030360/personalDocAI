@@ -1,6 +1,7 @@
 .venv/
 .env
 .env.*
+!.env.example
 .aws/
 *accessKeys.csv
 __pycache__/

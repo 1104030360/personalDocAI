@@ -549,6 +549,41 @@ def test_收到別人的訊息而那筆已改走本機時刪訊息也刪S3(monke
     assert mailbox.objects == {}
 
 
+class ExplodingStore(InMemoryJobStore):
+    """get() 一律丟例外的 JobStore（模擬 Redis 半路連不上）。"""
+
+    def get(self, job_id: str):
+        raise RuntimeError("Redis 連不上")
+
+
+def test_處理別人的訊息時store掛掉_例外往外丟(monkeypatch):
+    """規則 3 的邊界：`_handle_foreign_message` 要查 store 才知道「別人那筆還在不在」。
+
+    store.get 丟例外時，`wait_result` **不接**——例外一路往外丟到 gated_ingest，
+    那裡的 try（裁決 R14）把它當成逾時：cleanup ＋ fallback=local reason=result_timeout。
+    行為是**安全**的（照片照樣入庫），代價是「白白放棄這一趟雲端」：
+    我們自己的結果可能下一秒就到了，卻因為別人的訊息把整個等待中斷掉。
+
+    這一顆只**釘住現況**（收尾 phase 不改產品行為）。真的要改成「查不到就當作沒人在等」
+    要回 Phase 80 改 `_handle_foreign_message`，那是另一個 phase 的事。
+
+    順帶釘兩件事：那則**別人的**訊息既沒被刪、也沒被還回去（真 SQS 要等可見度逾時才會
+    再出現），別人的 S3 物件也一個都沒被動到——例外中斷不可以順手毀掉別人的東西。
+    """
+    advance_clock_each_call(monkeypatch, 2.0)
+    mailbox = FakeMailbox()
+    put_three_objects(mailbox, "別人")
+    mailbox.send_result("別人")
+    route = CloudRoute(mailbox, FakeProbe(True), timeout_seconds=5)
+
+    with pytest.raises(RuntimeError):
+        route.wait_result("我的", store=ExplodingStore())
+
+    assert "delete_result_message" not in mailbox.calls
+    assert "release_result_message" not in mailbox.calls
+    assert mailbox.result_key("別人") in mailbox.objects
+
+
 def test_自己的訊息但result_json不在時回None(monkeypatch):
     """規則 2 的後半：工人說「寫好了」，S3 上卻找不到 result.json。
 

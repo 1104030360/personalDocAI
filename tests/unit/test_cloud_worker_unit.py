@@ -2,7 +2,7 @@
 
 這一層完全不碰網路、不碰資料庫、不碰 Celery：
 信箱是 tests/fakes.py 的 FakeMailbox（一顆假件同時扮演 S3 ＋ 兩條佇列），
-看圖是 FakeVLM／ScriptedVLM。所以這 10 顆跑起來是毫秒等級，而且**永遠不會**
+看圖是 FakeVLM／ScriptedVLM。所以**本檔跑起來是毫秒等級**，而且**永遠不會**
 連到真 AWS（就算第五道安全網漏接，AWS SDK 也只會撞死埠）。
 
 刻意的三條規矩：
@@ -292,6 +292,36 @@ def test_context是合法JSON但不是物件時三份清單也當空的(caplog):
 
     assert any("context.json" in line for line in caplog.messages), (
         f"不是物件的 context.json 也要留 warning：{caplog.messages}"
+    )
+
+
+def test_context值不是list時當空清單不炸(caplog):
+    """三個鍵的**值**型別不對（不是缺檔、也不是壞 JSON）——這是第三種壞法。
+
+    ⚠ 為什麼它是真缺口：`{"folders": 5}` 的 json.loads 過得了關、payload 也真的是 dict，
+      所以既有那兩顆（解不開／不是物件）都攔不到它。
+      加固之前 `list(5 or [])` 會丟 TypeError，一路衝出 process_job_message ->
+      jobs 訊息**沒被刪掉** -> 900 秒後回來再炸一次 = 永遠出不去的毒訊息。
+      字串與 dict 更陰險：`list("abc")` 會**安靜地**變成三個假資料夾餵進 prompt。
+
+    三種都走一遍，而且順帶確認它照樣走完整條路（有寫 result、有刪 jobs 訊息）。
+    """
+    caplog.set_level(logging.WARNING)
+    for raw in (b'{"folders": 5}', b'{"entities": "abc"}', b'{"corrections": {"a": 1}}'):
+        mailbox = FakeMailbox()
+        message = queue_one_job(mailbox, payload=make_png_bytes())
+        mailbox.put_object(mailbox.context_key("job-1"), raw, "application/json")
+        vlm = FakeVLM(RECEIPT_UNDERSTANDING)
+
+        cloud_worker.process_job_message(mailbox, message, vlm)
+
+        assert vlm.last_folders == [], f"{raw!r} 的 folders 應該被當成空清單"
+        assert vlm.last_entities == [], f"{raw!r} 的 entities 應該被當成空清單"
+        assert vlm.last_corrections == [], f"{raw!r} 的 corrections 應該被當成空清單"
+        assert mailbox.calls.count("delete_job_message") == 1, "訊息要被刪掉，不可以變成毒訊息"
+
+    assert any("不是清單" in line for line in caplog.messages), (
+        f"型別不對也要留 warning，不可以安靜地當空的：{caplog.messages}"
     )
 
 
