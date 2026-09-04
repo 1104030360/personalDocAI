@@ -1,498 +1,195 @@
-# LAUNCH.md — startup and daily operations
+# LAUNCH.md — daily operations
 
-Since 2026-08-24 PersonalDocAI runs inside Docker. **It starts automatically at boot; normally
-you do not need to type anything.**
+Start / stop, URLs, tests, backups, optional cloud worker.
+Product intro: [`README.md`](README.md).
 
----
-
-## Contents
-
-1. [Quick start](#1-quick-start)
-2. [URLs](#2-urls)
-3. [Starting and stopping](#3-starting-and-stopping)
-4. [Dev mode (hot reload)](#4-dev-mode-hot-reload)
-5. [When the network changes](#5-when-the-network-changes)
-6. [Running the tests](#6-running-the-tests)
-7. [Database](#7-database)
-8. [Backups](#8-backups)
-9. [Monitoring and logs](#9-monitoring-and-logs)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Never do these](#11-never-do-these)
-
----
+Four Docker services: `db` `redis` `app` `worker`. **HTTPS only.** Ollama stays on the
+Mac — after Quit it does not come back; the site still loads and upload still returns
+202, but analysis fails and `/ask` is 500.
 
 ## 1. Quick start
 
-**There is nothing to do. Just open this URL:**
+Bookmark (survives Wi-Fi / IP changes):
 
 ```
-https://linjuntingdeMacBook-Pro-1071.local:8000/
+https://$(scutil --get LocalHostName).local:8000/
 ```
-
-This URL **never changes** — not when you switch Wi-Fi, not when the IP changes. Bookmark it.
-
-If the services are not up:
 
 ```bash
-docker compose -f compose.yaml up -d
+docker compose -f compose.yaml up -d          # four Up; db + redis healthy
+open -a Ollama
+curl -s http://127.0.0.1:11434/api/version    # JSON = up
 ```
 
-One more thing has to be running: **Ollama on the Mac** (its icon should be in the menu bar).
-It is a login item and comes up at boot, but once you quit it manually **it does not come
-back on its own** — and while it is down the website still loads and photos are still accepted
-(202). What breaks is that **every analysis fails and asking a question returns 500**. This
-actually happened on 2026-08-27. To bring it back:
-
-```bash
-open -a Ollama    # ready in about 4 s
-                  # verify: curl -s http://127.0.0.1:11434/api/version
-```
-
----
+After `docker compose stop`, a reboot will **not** restart them — `up -d` again.
 
 ## 2. URLs
 
-`HOST` below stands for `linjuntingdeMacBook-Pro-1071.local`:
+Always `https`. `http://` never connects (uvicorn starts with `--ssl-*`).
 
-| Page | URL |
+| | |
 |---|---|
-| Home (redirects to upload) | `https://HOST:8000/` |
-| Upload | `https://HOST:8000/ui/upload.html` |
-| Filing cabinet | `https://HOST:8000/ui/browse.html` |
-| Ask | `https://HOST:8000/ui/ask.html` |
-| Wireless camera (desktop) | `https://HOST:8000/ui/camera-desk.html` |
-| API docs | `https://HOST:8000/docs` |
+| Pages | `https://<host>.local:8000/ui/{upload,pending,browse,ask}.html` |
+| Camera desktop | `https://<host>.local:8000/ui/camera-desk.html` |
+| API | `https://<host>.local:8000/docs` |
+| Local fallback | `https://localhost:8000/` (not for camera) |
 
-Rules:
+Open camera-desk on **`.local`**, not `localhost` — otherwise the QR host is a Docker
+`172.x` the phone cannot reach. QR host must equal `ipconfig getifaddr en0` exactly.
+Phone: scan the QR; never type a URL.
 
-- **It must be `https`** — plain `http://` will not connect at all.
-- **Open the home page via the `.local` hostname**, not `localhost`. For the other pages
-  `localhost` makes no difference, but if you navigate from the home page to the camera page,
-  the QR code will point at a Docker-internal subnet (`172.x`) that your phone cannot reach.
-- You never need to type a URL on the phone — just scan the QR code.
-
-**Why `.local` instead of an IP:** `.local` is this Mac's Bonjour name and follows whatever IP
-it currently has. Switching Wi-Fi or getting a new DHCP lease changes nothing, so **the URL
-stays the same and the certificate does not need re-signing**. (The certificate covers the IP
-as well, so the IP route still works as a fallback.)
-
----
-
-## 3. Starting and stopping
+## 3. Start, stop, restart
 
 ```bash
 cd /Users/linjunting/personalDocAI
-
-# Start (always-on mode; brings up db, redis, app and worker together)
 docker compose -f compose.yaml up -d
-
-# Stop
-docker compose stop
-
-# Status (all four should be there; db and redis must be healthy)
-docker compose ps
-
-# Logs (app is the website and API, worker is the one analysing photos)
-docker compose logs -f app worker   # Ctrl+C only exits the log; containers keep running
-docker compose logs -f worker       # use this when you only care about analysis progress
+docker compose stop                           # keeps volumes
+docker compose logs -f app worker             # Ctrl+C leaves containers up
+docker compose ps --no-trunc                  # --no-trunc required to see --reload
 ```
 
-**Restarting a single service** (the worker is misbehaving, or you edited `.env`):
+**Dev overlay** — `compose.dev.yaml` **second** (`--reload` + bind-mount `./app`):
 
 ```bash
-docker compose -f compose.yaml restart worker        # background analysis only
-docker compose -f compose.yaml restart app worker    # after editing .env, both need it
-```
-
-**Wait until the worker is idle before restarting it.** That means the progress panel in the
-bottom-right corner has collapsed, or `curl -sk https://127.0.0.1:8000/ingest-jobs` shows no
-`analyzing` or `retrying` in `jobs` (leftover `failed` rows are fine — they do not occupy the
-worker). The reason: a restart grants only a 10-second grace period, while a single local
-vision call takes 60–90 seconds. A job killed midway **is not redelivered** — the message has
-already been acknowledged by Celery — so it stays stuck in "analyzing" forever (see
-[section 10](#10-troubleshooting) for the rescue). If a job really is running and you really
-must restart:
-
-```bash
-docker compose stop -t 300 worker      # give it up to 5 minutes to finish the current photo
-docker compose -f compose.yaml up -d   # bring it back
-```
-
-**In always-on mode `restart` will not pick up code changes.** The code is baked into the
-image, so after editing `app/` you must rebuild:
-`docker compose -f compose.yaml up -d --build` (app and worker share one image, so both are
-replaced at once). To iterate quickly, switch to dev mode ([section 4](#4-dev-mode-hot-reload)).
-
-**After `docker compose stop`, a reboot will not bring the services back** — you have to run
-`up -d` yourself.
-
-**After editing `requirements.txt` you must pass `--build`**, otherwise the new packages never
-enter the image: `docker compose -f compose.yaml up -d --build`
-
----
-
-## 4. Dev mode (hot reload)
-
-Saving a file under `app/` takes effect in **app** automatically; in **worker** it does not
-(see the first row of the table below).
-
-```bash
-# Always-on -> dev
+# always-on → dev
 docker compose -f compose.yaml stop app worker
 docker compose -f compose.yaml -f compose.dev.yaml up -d
-docker compose -f compose.yaml -f compose.dev.yaml logs -f app worker
-
-# Dev -> always-on
+# dev → always-on
 docker compose -f compose.yaml -f compose.dev.yaml stop
 docker compose -f compose.yaml up -d
-
-# Which mode am I in? (does app's COMMAND contain --reload?)
-docker compose ps --no-trunc
 ```
 
-`--no-trunc` is not optional: without it the COMMAND column is truncated and the trailing
-`--reload` is invisible (same for the worker's `--concurrency=2`).
+Wait until the worker is idle before restarting it (`/ingest-jobs` has no `analyzing` /
+`retrying`). A mid-job restart is **not** redelivered — the row stays analyzing forever.
 
-**`--reload` rescues app, never worker.** Celery does not watch files. After editing Python
-under `app/`, the analysis path is still running the old code **and nothing reports an
-error** — you see "HTTP behaviour is already new, photo analysis results are still old".
-You must run:
+| Changed | Do this |
+|---|---|
+| `.py` HTTP in **dev** | Nothing (app `--reload`) |
+| `.py` analysis | `restart worker` (same `-f` you started with). Silent if you skip. |
+| `.py` **always-on** | `up -d --build` |
+| `.env` | `restart app worker` |
+| `requirements.txt` | `build app` then `up -d` |
+| `certs/` | `restart app` |
+| Camera pairing | New QR (reload clears the token) |
+
+`DATABASE_URL` / `OLLAMA_BASE_URL` / `CELERY_BROKER_URL` in the container come from
+compose `environment` and ignore `.env`. Do camera tests in always-on mode.
+
+## 4. Network / certs
+
+`.local` URL: do nothing when the IP changes. Re-sign only if you renamed the Mac or
+mDNS is blocked:
 
 ```bash
+ipconfig getifaddr en0
+openssl x509 -in certs/cert.pem -noout -text | grep -A2 "Subject Alternative Name"
+mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
+  $(scutil --get LocalHostName).local $(ipconfig getifaddr en0) localhost 127.0.0.1
+docker compose restart app
+```
+
+## 5. Tests and database
+
+`db` must be healthy. **Never run two pytest sessions** (they TRUNCATE the same test DB).
+
+```bash
+source .venv/bin/activate
+pytest -q
+AWS_ENDPOINT_URL=http://127.0.0.1:9 CELERY_BROKER_URL=redis://127.0.0.1:9/0 \
+  OLLAMA_BASE_URL=http://127.0.0.1:9 pytest -q    # same count = no external deps
+ruff format --check app tests scripts && ruff check app tests scripts
+```
+
+`~/.zshrc`: `PGPORT=5433` `PGUSER=postgres` `PGHOST=127.0.0.1`.
+
+```bash
+psql -d PersonalDocAI
+psql -d PersonalDocAI_test
+```
+
+Never `schema.sql` on `PersonalDocAI` (`DROP TABLE`). Never touch `postgresql@14` on 5432.
+
+## 6. Backups
+
+```bash
+pg_dump -h 127.0.0.1 -p 5433 -U postgres -d PersonalDocAI --no-owner --no-acl -Fc \
+  -f ~/PersonalDocAI-backup-$(date +%F).dump
+tar -czf ~/PersonalDocAI-data-$(date +%F).tar.gz data/    # originals; not in git
+```
+
+`personaldocai_pgdata` = real DB. `personaldocai_redisdata` = unfinished jobs only.
+`down -v` deletes both.
+
+## 7. Monitoring and troubleshooting
+
+```bash
+docker compose ps
+curl -s http://127.0.0.1:11434/api/version
+curl -sk https://127.0.0.1:8000/ingest-jobs | python3 -m json.tool
+docker compose logs worker | grep -E "route=|fallback="
+```
+
+`202` = queued. Success deletes the job. `route=local verdict=SENSITIVE|UNCERTAIN` stayed
+here. `route=cloud` went to S3. `fallback=local reason=…` tried cloud and came home.
+
+| Symptom | Fix |
+|---|---|
+| Site will not load | Use `https://` |
+| Models / keys empty after clone | `./.env` became a **directory** — `stop`, `rmdir .env`, `cp .env.example .env`, `up -d` |
+| Cert warning on LAN IP | Re-sign + `restart app` |
+| `.env` edited, no change | `restart app worker` (same `-f`) |
+| 202 but no photo | Worker or Ollama down, or still analysing (60–90 s local) |
+| QR is `172.x` | Open camera-desk on `.local` |
+| Safari “offline” on phone | Install mkcert root + enable full trust |
+| All jobs fail, `ConnectError` | `open -a Ollama` |
+| Random pytest 404 | Another pytest is running |
+| Job stuck `analyzing` | Worker restarted mid-job — clear Redis key, re-upload |
+
+AWS CLI: `set -a; . ./.env; set +a; unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY`
+(CLI must stay on `~/.aws` admin). Idle mailbox: `documents/` empty, both queues 0.
+
+## 8. Never
+
+`docker compose stop` only. Do not: `down -v`, volume prune, `volume rm personaldocai_pgdata`,
+`schema.sql` on the real DB, `pg17`→`pg18`, NAT / Elastic IP / inbound SSH,
+Terminate a CPU box you still need, expose Ollama on `0.0.0.0`.
+
+## 9. Cloud worker (Mac)
+
+Not the Celery `worker`. Day to day it should be off.
+
+`CLOUD_ROUTE`: `off` (default) / `assume` (this section) / `ec2` (next). Restart Celery
+worker after every change. Empty `WORKER_VLM_BACKEND` = `cloud`.
+
+```bash
+# terminal A — do not source .env here
+python -m app.workers.cloud_worker
+# expect: cloud_worker 啟動 version=dev … vlm=cloud model=…
+
+# terminal B
+# .env: CLOUD_ROUTE=assume   (optional: CLOUD_RESULT_TIMEOUT_SECONDS=30)
 docker compose -f compose.yaml -f compose.dev.yaml restart worker
 ```
 
-**Five things that look like "saving had no effect":**
+Upload a non-sensitive image (receipt, not an ID). Expect `route=cloud` then
+`雲端結果已入庫`. **Done:** `CLOUD_ROUTE=off`, timeout `300`, `restart worker`.
+Leave `assume` on with no process → every non-sensitive upload waits the full timeout.
 
-| What you changed | What to do |
-|---|---|
-| A `.py` under `app/`, but **analysis behaviour** did not change | `docker compose -f compose.yaml -f compose.dev.yaml restart worker` |
-| `.env` | `docker compose -f compose.yaml -f compose.dev.yaml restart app worker` |
-| `requirements.txt` | `docker compose build app`, then `up -d` (worker shares the image and updates too) |
-| `certs/` | Same as `.env`: `restart app` (the worker does not use certificates) |
-| You are pairing the camera right now | A reload clears the token; regenerate the QR and rescan |
+## 10. Cloud worker (EC2)
 
-Always do real-device camera testing in **always-on mode** — in dev mode every file save
-invalidates the pairing.
-
----
-
-## 5. When the network changes
-
-**If you use the `.local` URL: do nothing.** The name follows the new IP automatically.
-
-Only two situations need action:
-
-**1. You renamed the computer** (System Settings → General → About → Name)
+Optional. Normally **stopped**. Running ≈ $0.22/h; disk while stopped ≈ $3/month.
+On this Mac: `CLOUD_ROUTE=ec2` + `restart worker`. Stopped instance →
+`fallback=local reason=remote_unavailable` (probe cached 60 s).
 
 ```bash
-cd /Users/linjunting/personalDocAI
-scutil --get LocalHostName          # the new name; update your bookmark to match
-mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
-  $(scutil --get LocalHostName).local $(ipconfig getifaddr en0) localhost 127.0.0.1
-docker compose restart app
+set -a; . ./.env; set +a
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+aws ec2 start-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
+aws ec2 wait instance-running --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
+# every session ends with Stop, not Terminate:
+aws ec2 stop-instances --instance-ids "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"
 ```
 
-**2. The network blocks mDNS, so `.local` does not resolve** (common on corporate and public
-Wi-Fi)
-
-Fall back to the IP — this is the case where the certificate must be re-signed:
-
-```bash
-ipconfig getifaddr en0              # the IP; use it in the URL
-mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
-  $(scutil --get LocalHostName).local $(ipconfig getifaddr en0) localhost 127.0.0.1
-docker compose restart app
-```
-
-Check which addresses the current certificate covers:
-
-```bash
-openssl x509 -in certs/cert.pem -noout -text | grep -A2 "Subject Alternative Name"
-```
-
-**Do not run `restart` in the middle of camera testing** — the pairing token lives in memory
-and is lost on restart, so the QR code has to be regenerated.
-
----
-
-## 6. Running the tests
-
-```bash
-cd /Users/linjunting/personalDocAI && source .venv/bin/activate
-pytest -q                                        # expect 543 passed
-                                                 # (measured 2026-08-27; trust the current run)
-OLLAMA_BASE_URL=http://localhost:9 pytest -q     # zero-external-dependency check;
-                                                 # the count must be identical
-```
-
-Prerequisite: `db` must be `Up (healthy)` in `docker compose ps` — the test database lives
-inside the container.
-
-**Do not run two pytest sessions at once** (two terminals, or you running one while an agent
-runs another). Every single test TRUNCATEs the same test database, so two runs wipe each
-other's data. The symptom is a large number of apparently random 404s and `NoneType` errors.
-
-### Formatting and lint
-
-```bash
-ruff format --check app tests scripts && ruff check app tests scripts   # check only
-ruff format app tests scripts && ruff check app tests scripts --fix     # fix
-```
-
-A commit-time hook runs the same tools on staged `.py` files. It is not installed
-automatically — **run this once per clone, and again after recreating `.venv`**:
-
-```bash
-pre-commit install
-```
-
----
-
-## 7. Database
-
-`~/.zshrc` already sets `PGPORT=5433`, `PGUSER=postgres` and `PGHOST=127.0.0.1`, so:
-
-```bash
-psql -d PersonalDocAI        # the real database
-psql -d PersonalDocAI_test   # the test database
-
-# Explicit form (use this in scripts)
-psql -h 127.0.0.1 -p 5433 -U postgres -d PersonalDocAI
-```
-
-All three variables are required:
-
-- Without `PGHOST` → `connection to server on socket "/tmp/.s.PGSQL.5433" failed`
-- Without `PGUSER` → `role "linjunting" does not exist`
-
-`postgresql@14` (port 5432) belongs to **other projects** (wanderlove, fse_chat_room). Never
-stop it or modify it.
-
----
-
-## 8. Backups
-
-```bash
-# Database
-pg_dump -h 127.0.0.1 -p 5433 -U postgres -d PersonalDocAI --no-owner --no-acl -Fc \
-  -f ~/PersonalDocAI-backup-$(date +%F).dump
-
-# Photo originals
-# (the line above does NOT include image files; data/ is not in version control,
-#  so exactly one copy exists anywhere)
-tar -czf ~/PersonalDocAI-data-$(date +%F).tar.gz data/
-```
-
-Restore:
-
-```bash
-pg_restore -h 127.0.0.1 -p 5433 -U postgres --no-owner --no-acl \
-  --dbname=PersonalDocAI ~/PersonalDocAI-backup-YYYY-MM-DD.dump
-```
-
----
-
-## 9. Monitoring and logs
-
-**One-minute health check — three layers, outside in, in this order:**
-
-```bash
-docker compose ps                                    # 1. all four up? db and redis healthy?
-curl -s http://127.0.0.1:11434/api/version           # 2. is Ollama alive on the Mac?
-                                                     #    no response -> row 1 of section 10
-curl -sk https://127.0.0.1:8000/ingest-jobs | python3 -m json.tool
-                                                     # 3. queue state: in-flight and failed
-                                                     #    jobs, plus the inbox count
-```
-
-### Docker layer (are the services alive)
-
-```bash
-docker compose ps --no-trunc            # full start command; tells always-on from dev mode
-                                        # (--no-trunc is not optional)
-docker compose logs -f app worker       # follow both (Ctrl+C only exits the log)
-docker compose logs worker --tail 50    # last 50 lines
-docker compose logs worker --since 10m  # last 10 minutes (use this to find that failure)
-```
-
-### Celery / worker layer (what is happening to the photos)
-
-```bash
-docker compose logs -f worker                    # each job end to end: received -> attempt N
-                                                 # -> stored / finally failed
-docker compose logs worker | grep "kind=vlm"     # per-image duration, local or cloud
-                                                 # (backend=local|cloud)
-docker compose logs worker | grep "kind=embed"   # embedding (always backend=local)
-docker compose logs worker | grep "job "         # job lifecycle events only
-
-# Ask the worker directly (broadcast via Redis; a live worker answers.
-# You want to see "1 node online")
-docker compose exec worker celery -A app.celery_app.celery_app status
-docker compose exec worker celery -A app.celery_app.celery_app inspect active
-                                                 # currently running (empty = idle)
-docker compose exec worker celery -A app.celery_app.celery_app inspect reserved
-                                                 # claimed but not started yet
-```
-
-### Redis layer (the queue and progress data themselves)
-
-```bash
-docker compose exec redis redis-cli ping                          # must answer PONG
-docker compose exec redis redis-cli llen celery                   # queued, not yet claimed
-                                                                  # (normally 0)
-docker compose exec redis redis-cli smembers ingest:open          # unfinished job_ids
-                                                                  # (success deletes the whole
-                                                                  #  record, so normally empty)
-docker compose exec redis redis-cli get "ingest:<job_id>"         # one job as JSON
-                                                                  # (status/attempt/error)
-docker compose exec redis redis-cli --scan --pattern "ingest:*"   # every progress-related key
-docker compose exec redis redis-cli info persistence | grep aof_enabled
-                                                                  # AOF on = aof_enabled:1
-```
-
-The two key families do different jobs: `celery` (a list) is **Celery's queue**, while
-`ingest:*` is **our own progress record** — the panel in the corner and `GET /ingest-jobs`
-read that one. Reading them together: a non-zero `llen celery` means work is queued waiting
-for the worker; something in `ingest:open` while `llen` is 0 means the worker is busy with it
-(`inspect active` should show it — if it does not, the job is stuck; see section 10).
-
-### app layer (the ask flow and the camera)
-
-```bash
-docker compose logs app --tail 50
-docker compose logs app | grep "kind="        # route/answer timings for questions
-                                              # (ingest's kind=vlm lives in the worker)
-docker compose logs app | grep "role=phone"   # wireless camera: did the phone connect at all
-```
-
----
-
-## 10. Troubleshooting
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| The site will not load at all | You used `http://` | Use `https://` |
-| Certificate warning | Opened via a LAN IP the certificate does not cover | Re-sign the certificate ([section 5](#5-when-the-network-changes)) |
-| **The QR code starts with `172.x`** | The desktop page was opened via `localhost` | Close the tab and reopen it on the `.local` URL |
-| The `.local` URL will not load | This network blocks mDNS | Fall back to the IP: `ipconfig getifaddr en0`, and re-sign the certificate ([section 5](#5-when-the-network-changes)) |
-| The QR renders fine but the phone cannot scan it | The URL is long, so the QR grid is too dense | `.cd-qr svg` in `style.css` needs `max-width` >= `20rem` (a test pins this). The longer the URL, the more cells, the finer each cell |
-| The phone scans it but nothing opens | 1. the QR's IP is wrong 2. the iPhone does not trust the root certificate 3. the network blocks it | Check in that order. If the log shows no `role=phone`, the phone never reached the server at all |
-| The desktop keeps saying the other side is offline | The phone never connected | Same as above |
-| **Every photo fails to analyse**: the panel shows "AI 看不懂這張照片（已試 3 次）" for every single one | Almost certainly **Ollama is not running on the Mac**. If the worker log shows `ConnectError: [Errno 101] Network is unreachable`, that is it — a container hitting a host port with nothing listening reports it this way, so **it looks like broken Docker networking when Ollama is simply not running** (hit on 2026-08-27). Switching to cloud does not help: embeddings always use local bge-m3 | `open -a Ollama`, wait until `curl -s http://127.0.0.1:11434/api/version` responds. **No container needs restarting.** Dismiss the failed rows with `x` and re-upload the photos (failed = nothing was stored) |
-| Asking a question returns 500 | Ollama is down. (Uploading does **not** 500 — it still accepts the file and returns 202, then lands in the row above) | Same: `open -a Ollama` |
-| Uploads are slow (1–2 minutes) | That is simply how fast the local model is | Normal. Vision 60–90 s, routing 138 s, answering 92 s |
-| Uploading and asking at the same time → 500 | The host was overwhelmed | **Do one thing at a time** |
-| Lots of random pytest failures | Two pytest sessions running at once | Wait for the other one to finish |
-| Upload returns 202 but the photo never appears | The worker is down or crashed | `docker compose ps` to see whether the worker is there; `docker compose logs worker --tail 50` for a traceback |
-| Upload returns 500 immediately | redis is down or not healthy yet | Check redis in `docker compose ps`; `docker compose exec redis redis-cli ping` must answer PONG |
-| Code changed but analysis behaviour did not | Celery has no `--reload` | `docker compose -f compose.yaml -f compose.dev.yaml restart worker` |
-| The worker keeps restarting | The image was not rebuilt (celery package missing) | If `docker compose logs worker` shows `ModuleNotFoundError: No module named 'celery'` → `docker compose up -d --build` |
-| A job is stuck in "analyzing" **forever** and `x` will not dismiss it | The worker was restarted or killed mid-job (the warning in [section 3](#3-starting-and-stopping) exists to prevent exactly this). The message was already acknowledged by Celery so it is never redelivered, and dismiss only accepts `failed` | First confirm nobody is working on it with `inspect active` ([section 9](#9-monitoring-and-logs)), then clear the record by hand: `docker compose exec redis redis-cli del "ingest:<job_id>"` and `docker compose exec redis redis-cli srem ingest:open "<job_id>"`, then re-upload the photo. The leftover staging file is removed by the 24-hour sweeper |
-
-The log and queue commands for each layer are collected in
-[section 9](#9-monitoring-and-logs).
-
----
-
-## 11. Never do these
-
-| Command | Consequence |
-|---|---|
-| `docker compose down -v` | **Destroys the real database** (`-v` deletes the volumes too) |
-| `docker volume rm personaldocai_pgdata` | **Destroys the real database** |
-| `docker system prune --volumes` | **Destroys the real database** (dangerous after any `down`) |
-| Docker Desktop → Reset to factory defaults | **Destroys the real database** |
-| Changing `pg17` to `pg18` in `compose.yaml` | PGDATA moves, so a new empty cluster is created and it looks like all the data vanished |
-| Running `db/schema.sql` against the real database | It starts with `DROP TABLE` |
-| `brew uninstall postgresql@17` | That is the first layer of undo (the data directory `/opt/homebrew/var/postgresql@17` is still there) |
-| Stopping or modifying `postgresql@14` | Another project is using it |
-| `docker volume rm personaldocai_redisdata` | Loses the progress and failure rows (**not** the real database; see below) |
-
-Always stop services with `docker compose stop`.
-
-**`pgdata` and `redisdata` are very different — do not confuse them:**
-
-| Volume | Contents | If you lose it |
-|---|---|---|
-| `personaldocai_pgdata` | **The real database**: photo rows, folders, entities, tasks, vectors | A disaster. Every photo is gone and only a backup can restore it |
-| `personaldocai_redisdata` | Progress rows, failure rows, unfinished jobs | You only lose the photos that had not finished analysing. Not a single stored photo is affected (the masters live in pgdata and `data/photos`). Re-upload those few; their leftover files in `data/staging` are removed by the 24-hour sweeper |
-
-So `down -v` remains absolutely forbidden — it deletes **both**. But if you ever genuinely
-need to clear only Redis, `docker volume rm personaldocai_redisdata` is an acceptable loss —
-**provided no job is running at the time**.
-
----
-
-## Appendix: current architecture
-
-```
-   Mac (host)
-   |-- postgresql@14 (brew) :5432   <- another project. NEVER TOUCH
-   |-- postgresql@17 (brew)  --     <- stopped; data directory kept as an undo (do not delete)
-   |-- Ollama              :11434   <- stays on the Mac (MLX, GPU access), never in Docker
-   |                                   Login item, but does NOT return after a manual
-   |                                   Quit (see section 1)
-   |-- data/  certs/  .env          <- files live here, bind-mounted into the containers
-   |-- .venv/ + pytest              <- tests still run on the host, against 127.0.0.1:5433
-   |
-   +-- Docker Desktop (starts at boot)
-        +------ Compose project "personaldocai" ------------------------------+
-        |       (internal network: the service name IS the hostname)          |
-        |                                                                     |
-        |   [app]  uvicorn --ssl-*  (no --reload)                             |
-        |     :8000 in the container --published--> 0.0.0.0:8000 on the Mac   |
-        |                                           (reachable from the phone)|
-        |     mounts: ./data ./certs ./.env                                   |
-        |        |                     |                        |             |
-        |        | TCP db:5432         | TCP redis:6379         | disk        |
-        |        v                     v                        v             |
-        |   [db] pgvector:pg17      [redis] redis:7-alpine   data/staging     |
-        |     :5432 in container      :6379 in container         |            |
-        |     --published-->          --published-->             |            |
-        |       127.0.0.1:5433          127.0.0.1:6379           |            |
-        |     volume: pgdata          volume: redisdata (AOF)    |            |
-        |       ** REAL DB **           ** progress only **      |            |
-        |        ^                     ^                         |            |
-        |        | TCP db:5432         | TCP redis:6379          | disk       |
-        |        |                     |                         v            |
-        |   [worker] celery -A app.celery_app.celery_app worker                |
-        |            --loglevel=info --concurrency=2                           |
-        |     no ports (it listens on nothing; it pulls work from Redis)       |
-        |     mounts: ./data ./.env   (** no certs: it does not serve HTTPS **)|
-        |        |                                                             |
-        +--------|-------------------------------------------------------------+
-                 | TCP host.docker.internal:11434
-                 v
-              Ollama (on the Mac) -- local gemma4 vision 64-88 s
-                                     bge-m3 embeddings
-                 or
-              https://ollama.com  -- cloud gemma4 vision, about 2 s
-                                     (when the snapshot says cloud)
-
-   Six TCP / HTTPS links
-     browser or iPhone --HTTPS :8000--> app
-     app    --db:5432--------> db     (queries, filing, creating folders, pinning
-                                       entities and creating tasks are still written
-                                       by app; only the photo INSERT moved to worker)
-     app    --redis:6379-----> redis  (enqueue, read progress, dismiss)
-     worker --redis:6379-----> redis  (take jobs, update status)
-     worker --db:5432--------> db     (this is the photo INSERT)
-     worker --host.docker.internal:11434--> Ollama (or straight out to ollama.com)
-
-   Plus two links that are not TCP:
-     app writes data/staging and worker reads it -- that goes over DISK
-        (design5 section 4.1: image bytes NEVER enter Redis or a Celery argument)
-     phone ==WebRTC direct== desktop browser -- the camera preview never touches
-        the server (increment five left this alone)
-
-   Dev mode (layering compose.dev.yaml) differs in exactly three ways:
-     app's command gains --reload, app and worker both bind-mount ./app,
-     and both have restart: "no".
-     * The worker's command is IDENTICAL in both modes -- Celery has no --reload,
-       so after editing Python you must `docker compose ... restart worker`.
-```
-
-Related documents: [`README.md`](README.md) (what this project is), `CLAUDE.md` (full project
-context and development rules), `docs/design/` (design decisions), `docs/plan/`
-(implementation record).
+No SSH. `aws ssm start-session --target "$EC2_WORKER_INSTANCE_ID" --region "$AWS_REGION"`
+then `sudo docker logs cloud-worker --tail 50` — first line `version=<git sha>`.
+`WORKER_VLM_BACKEND` is on the instance (`/opt/personaldocai/worker.env`), not this Mac `.env`.

@@ -1,10 +1,11 @@
-"""pytest 共用設定：把資料庫指到測試庫，並套上四道 autouse 安全網。
+"""pytest 共用設定：把資料庫指到測試庫，並套上五道 autouse 安全網。
 
 reset_tables          每測清空四張表＋重播六筆資料夾種子（絕不動正式庫）
-wire_fake_ai          六個 AI 注入點全換假件＋固定時鐘（絕不打真 Ollama）
+wire_fake_ai          七個 AI 注入點全換假件＋固定時鐘（絕不打真 Ollama）
 isolated_data_dir     DATA_DIR 指到 tmp_path（絕不寫專案的 data/）
 wire_memory_job_store JobStore 指到每測獨立的記憶體實作（Depends 與直接
                       呼叫兩條路都攔；絕不連真 Redis）
+wire_fake_cloud       雲端路一律關掉、AWS_ENDPOINT_URL 指死埠（絕不連真 AWS）
 """
 
 import os
@@ -49,20 +50,25 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import dependencies  # noqa: E402
 from app.dependencies import (  # noqa: E402
     get_answerer,
+    get_cloud_route,
     get_embeddings,
     get_entity_suggester,
     get_job_store,
     get_now,
+    get_privacy_gate,
     get_router,
     get_task_dispatcher,
     get_vlm,
 )
 from app.main import app  # noqa: E402
+from app.services.cloud_ingest import CloudRouteOff  # noqa: E402
 from app.services.ingest_job_store import InMemoryJobStore  # noqa: E402
+from app.services.privacy_gate import Verdict  # noqa: E402
 from tests.fakes import (  # noqa: E402
     FakeAnswerLLM,
     FakeEmbeddings,
     FakeEntitySuggester,
+    FakePrivacyGate,
     FakeRouter,
     FakeVLM,
     FixedClock,
@@ -70,11 +76,11 @@ from tests.fakes import (  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def wire_fake_ai():
+def wire_fake_ai(monkeypatch):
     """安全網：每個測試預設接上假 AI 與固定時鐘，結束時清掉所有覆寫。
 
     本機 Ollama 是真的在跑——pytest 絕不能默默打真模型（design.md §11：
-    全部測試不依賴任何外部服務）。六個注入點全部都要接上假件，
+    全部測試不依賴任何外部服務）。七個注入點全部都要接上假件，
     需要不同行為的測試自行覆寫：
     - get_vlm 預設「看不懂」假件（要看得懂就覆寫成 FakeVLM(某理解結果)）
     - get_embeddings 預設 FakeEmbeddings（決定論向量）
@@ -82,6 +88,7 @@ def wire_fake_ai():
     - get_router 預設 FakeRouter（照登記的問題回查法，沒登記就丟例外模擬無法判斷）
     - get_answerer 預設 FakeAnswerLLM（拿檢索結果模板化回答，不呼叫真 LLM）
     - get_entity_suggester 預設 FakeEntitySuggester（預設誰都不挑，最保守的答案）
+    - get_privacy_gate 預設 FakePrivacyGate(UNCERTAIN)（＝全部走本機，既有 543 顆行為零改變）
     """
     app.dependency_overrides[get_vlm] = lambda: FakeVLM()
     app.dependency_overrides[get_embeddings] = lambda: FakeEmbeddings()
@@ -89,6 +96,12 @@ def wire_fake_ai():
     app.dependency_overrides[get_router] = lambda: FakeRouter()
     app.dependency_overrides[get_answerer] = lambda: FakeAnswerLLM()
     app.dependency_overrides[get_entity_suggester] = lambda: FakeEntitySuggester()
+    # 第五道之外的雙管：ingest_task 是直接呼叫，dependency_overrides 攔不到它。
+    # 三條路要拿到**同一顆**假閘門，測試才驗得出「誰問過閘門幾次」。
+    fake_gate = FakePrivacyGate(Verdict.UNCERTAIN)
+    app.dependency_overrides[get_privacy_gate] = lambda: fake_gate
+    monkeypatch.setattr(dependencies, "get_privacy_gate", lambda: fake_gate)
+    monkeypatch.setattr(dependencies, "build_privacy_gate_for_backend", lambda _: fake_gate)
     yield
     app.dependency_overrides.clear()
 
@@ -150,6 +163,34 @@ def wire_memory_job_store(monkeypatch):
     app.dependency_overrides.pop(get_task_dispatcher, None)
 
 
+@pytest.fixture(autouse=True)
+def wire_fake_cloud(monkeypatch):
+    """第五道安全網（Phase 77）：雲端路一律關著，而且就算漏接也連不出去。
+
+    pytest **絕不連真 AWS**（design6 §9、總覽 §7 鐵律 2）。三件事缺一不可：
+
+    ① config.CLOUD_ROUTE 蓋成 "off"
+       ——.env 裡萬一寫了 assume／ec2（手動煙霧完忘了改回來），測試也不受影響。
+    ② get_cloud_route 兩條呼叫路都換成同一顆 CloudRouteOff()：
+       Depends() 那條靠 dependency_overrides、**直接呼叫**那條靠 monkeypatch。
+       Celery 的 ingest_task（Phase 78 起）走的正是直接呼叫那條，
+       只做前者的話它會拿到真的那一支（理由與第四道完全相同，見 Phase 57 陷阱 7）。
+    ③ AWS_ENDPOINT_URL 指到死埠 http://127.0.0.1:9：
+       萬一日後真的有人建了 boto3 client，它也只會**立刻** connection refused，
+       絕不會真的把位元組送出這台機器。埠 9 是網路標準保留的 discard 埠，
+       本機一定沒有程式在聽，所以是「立刻拒絕」而不是「卡住等逾時」。
+
+    回傳那顆 CloudRouteOff，需要斷言「有沒有被拿去用」的測試可以寫進參數列。
+    """
+    monkeypatch.setattr(config, "CLOUD_ROUTE", "off")
+    cloud_route = CloudRouteOff()
+    app.dependency_overrides[get_cloud_route] = lambda: cloud_route
+    monkeypatch.setattr(dependencies, "get_cloud_route", lambda: cloud_route)
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9")
+    yield cloud_route
+    app.dependency_overrides.pop(get_cloud_route, None)
+
+
 def pytest_bdd_apply_tag(tag, function):
     """規格裡標 @未實作 的例子先跳過，等對應 phase 落地再摘標。"""
     if tag == "未實作":
@@ -190,7 +231,7 @@ def split_items(cell: str) -> list[str]:
 # （get_job_store 檔頭已 import，這裡不重覆。）
 
 from app.repositories import photo_repository as _repo  # noqa: E402
-from app.services.ingest_job import run_ingest_job  # noqa: E402
+from app.services.gated_ingest import run_gated_ingest_job  # noqa: E402
 from tests.fakes import make_png_bytes  # noqa: E402
 
 
@@ -206,7 +247,7 @@ def 目前的任務清單():
 
 
 def 目前注入的假件() -> dict:
-    """把測試現在掛在 dependency_overrides 上的假件挖出來，交給 run_ingest_job。
+    """把測試現在掛在 dependency_overrides 上的假件挖出來，交給入庫任務。
 
     這是讓改寫變便宜的關鍵：既有測試那一行
         app.dependency_overrides[get_vlm] = lambda: FakeVLM(收據理解)
@@ -215,6 +256,16 @@ def 目前注入的假件() -> dict:
     注意 get_now 的取法不一樣：它的覆寫值本身就是 callable（FixedClock 實例），
     所以直接把那個物件交出去；get_vlm／get_embeddings 的覆寫值是「工廠」
     （lambda: FakeVLM(...)），要呼叫一次才拿得到物件。
+
+    增量六（Phase 78）多回兩個零件：
+      gate  ＝ 隱私閘門。wire_fake_ai 預設掛 FakePrivacyGate(Verdict.UNCERTAIN)
+              ＝「不確定」＝走本機，所以**既有幾十顆用 跑完任務() 的測試行為零改變**。
+      cloud ＝ 雲端路。第五道安全網 wire_fake_cloud 預設掛 CloudRouteOff()
+              ＝ available() 恆為 False ＝ 永遠 fallback 本機。
+    兩個都用 .get(注入點, 注入點) 取，理由與前三個一致（不必知道安全網是怎麼接的）。
+    ⚠ 但 gate 這一條的退路**不安全**：安全網真的沒掛上時，get_privacy_gate() 會建出
+      Phase 75 的 OllamaPrivacyModel ＝ 真的打模型。真正的主力是 wire_fake_ai 裡
+      那兩行 monkeypatch（cloud 的退路 CloudRouteOff 則怎樣都不會連外）。
     """
     assert get_vlm in app.dependency_overrides, (
         "conftest 的 wire_fake_ai 應該已經把 get_vlm 換成假件了——"
@@ -224,6 +275,8 @@ def 目前注入的假件() -> dict:
         "vlm": app.dependency_overrides[get_vlm](),
         "embeddings": app.dependency_overrides[get_embeddings](),
         "now": app.dependency_overrides[get_now],
+        "gate": app.dependency_overrides.get(get_privacy_gate, get_privacy_gate)(),
+        "cloud": app.dependency_overrides.get(get_cloud_route, get_cloud_route)(),
     }
 
 
@@ -231,15 +284,22 @@ def 跑完任務(job_id: str) -> None:
     """測試扮演 worker：把某一個 job 就地跑完（design5.md §9）。
 
     用的假件就是測試自己掛上去的那幾份，所以「這次看圖看得懂嗎」「時鐘停在哪一天」
-    完全由測試決定，與正式路徑的 worker 用同一個函式 run_ingest_job。
+    完全由測試決定，與正式路徑的 worker 用**同一支函式**。
+
+    ★ 增量六（Phase 78）起呼叫的是 run_gated_ingest_job（與 Celery 任務同一支）。
+      預設的閘門是「不確定」、預設的雲端路是「關掉的」，兩個加起來的結果
+      就是「照舊呼叫 run_ingest_job」——**既有測試的行為一個字都沒變**。
+      要測雲端路的測試不走這裡，它們自己組零件（見 tests/integration/test_gated_ingest.py）。
     """
     假件 = 目前注入的假件()
-    run_ingest_job(
+    run_gated_ingest_job(
         job_id,
         store=目前的任務清單(),
         vlm=假件["vlm"],
         embeddings=假件["embeddings"],
         now=假件["now"],
+        gate=假件["gate"],
+        cloud=假件["cloud"],
     )
 
 

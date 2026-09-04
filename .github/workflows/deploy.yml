@@ -1,0 +1,247 @@
+# GitHub Actions：CI（test）在 main 上跑綠之後才跑的 CD（Phase 94、design6.md D16）。
+#
+# 這個檔跟 test.yml 的關係：
+#   test.yml    push 與 PR 都跑；ruff + pytest；**本 phase 一個字都不改**（D16「CI 不動契約」）
+#   deploy.yml  只在「test 在 main 上成功」之後跑；build 多架構（amd64＋arm64）映像
+#               → 推 ECR → 重啟 EC2 工人
+#
+# ★ 這裡**沒有任何 AWS 長期金鑰**。憑證是每次執行跟 AWS 現換的（OIDC，Phase 93）：
+#   GitHub 簽一張只對這次執行有效的令牌 → AWS 驗過 trust policy 的 sub／aud → 發臨時憑證。
+#   角色的 ARN 放在 repo secret AWS_DEPLOY_ROLE_ARN（放 secret 的理由見 phase-93 §4.6）。
+#
+# 刻意不做（phase-94 §3）：不建 app 映像（app 跑在那台 Mac 上，不上雲）、
+# 不跑 pytest／ruff（test 已經跑過了）、不開機也不關機（那是人的決定，D15）、
+# 不做 staging／production 兩套環境、不發 Slack 通知、
+# 不用 matrix 拆成兩個 job 各建一種架構（buildx 一次就推得出多架構 manifest）。
+#
+# ── 為什麼六個 action 都用大版 tag（`@vN`）而不是 40 字的 commit SHA（R19）──────
+# 下面用到六個第三方 action：actions/checkout@v7、
+# aws-actions/configure-aws-credentials@v6、aws-actions/amazon-ecr-login@v2、
+# docker/setup-qemu-action@v4、docker/setup-buildx-action@v4、docker/build-push-action@v7。
+# tag 是**會移動的指標**：上游（或攻破上游帳號的人）把 v7 重新指到別的 commit，
+# 這個 workflow 下一次執行就會跑到那份新程式碼，而且 repo 裡一個字都沒改。
+# 2025-03 的 tj-actions/changed-files 事件就是這樣——被改掉的 action 把 runner
+# 記憶體裡的祕密印進了公開的 build log。
+# **這個風險已經評估過，這裡刻意接受**：釘 SHA 的代價是上游每修一次 bug 就要手動
+# 改六個地方，對一個 side project 太重，而且釘住不動反而容易長期跑在有洞的舊版上。
+# 緩解（就算 action 真的被換掉，它能做的事有上限）：
+#   * 角色 policy 最小權限——只推得動**一個** ECR repo、只能對**一台**實例下 restart
+#     （deploy/aws/github-deploy-policy.json，Phase 93 建的角色）
+#   * 這個 job 的 permissions 只有 id-token: write ＋ contents: read，其餘一律 none
+#   * 憑證是 OIDC 當場換的臨時憑證、1 小時到期；repo 裡沒有任何長期金鑰
+#   * job 的 if 只認 push 事件，fork 送 PR 觸發不了這個 workflow
+# 哪天要改成釘 SHA：六處都寫成 `uses: owner/action@<40 字 sha> # vN`，
+# 並把 tests/integration/test_design6_error_paths.py 的
+# `test_CD沒有寫死任何AWS金鑰` 裡那條 `@v\d+` 放寬成也接受 40 位 hex。
+
+name: deploy
+
+on:
+  # workflow_run ＝「另一個 workflow 跑完之後才觸發我」。
+  # ⚠ 三件要知道的事：
+  #   1. 這個 workflow 檔**必須存在於預設分支（main）上**才會被觸發（放在別的分支永遠不跑）。
+  #      第一次把它推上 main 的那一輪，deploy 可能會跑、也可能不會——GitHub 只保證
+  #      「檔案在預設分支上」這個條件。不要拿那一輪當判準，再 push 一次才算數（phase-94 §4.8 步驟 0）。
+  #   2. 它**跑在預設分支的上下文**底下——所以 OIDC 令牌的 sub 永遠是
+  #      repo:1104030360@92135456/personalDocAI@1349196211:ref:refs/heads/main，剛好對上 Phase 93 鎖的那一串。
+  #   3. branches: [main] 過濾的是「被觸發的那次 test 跑在哪個分支」。
+  #      在別的分支上 push（test 照跑）不會觸發部署。
+  #      ⚠ 但 fork 的分支也可以叫 main，而 test 也會被 pull_request 觸發——
+  #        所以 job 的 if 還要多認一個 event == 'push'（見下面 jobs.deploy.if）。
+  workflow_run:
+    workflows: ["test"]
+    types: [completed]
+    branches: [main]
+
+# 同一時間只准跑一個 deploy。第二次會**排隊等**（不是取消前一次）。
+# cancel-in-progress 為什麼是 false：這個 job 有副作用（推映像、重啟遠端服務）。
+# 取消在半路的話，可能剛好停在「映像推了一半」或「SSM 送出去了但還沒確認結果」，
+# 而下一次執行完全不知道上一次做到哪。排隊等最多多花幾分鐘，但狀態永遠是完整的。
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # 兩個條件缺一不可，任一不符就整個 job 不跑（顯示為 skipped，不是 failed）：
+    #   event == 'push'          test 被 pull_request 觸發（含 fork 來的 PR）完成時**不部署**。
+    #                            官方文件說 workflow_run 觸發的 workflow「拿得到 secrets 與
+    #                            write token，即使前一個 workflow 拿不到」，並警告不要拿它去
+    #                            checkout 不受信任的 PR 內容；擋法就是這個條件（phase-94 §7 陷阱 8）。
+    #   conclusion == 'success'  workflow_run 不管成功失敗都會觸發，test 紅了不准部署。
+    if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    # QEMU 模擬 arm64 很慢：第一次（沒有快取）5〜15 分鐘。40 分鐘留足餘裕。
+    timeout-minutes: 40
+
+    permissions:
+      # ★ 沒有這一行，configure-aws-credentials 會拿不到 OIDC 令牌，
+      #   錯誤訊息長得像 "Could not assume role ... Unable to get ACTIONS_ID_TOKEN_REQUEST_URL"。
+      id-token: write
+      # checkout 要用的讀取權。permissions 一旦明寫，沒列到的權限一律變成 none——
+      # 所以這一行不能省。
+      contents: read
+
+    env:
+      AWS_REGION: ap-northeast-1
+      ECR_REPOSITORY: personaldocai-worker
+
+    steps:
+      # ★ ref 指定成 head_sha，不是預設的「這個分支最新」。
+      #   理由：workflow_run 跑在預設分支上下文，不指定的話 checkout 拿到的是
+      #   **當下的 main**，可能已經比 CI 測過的那一版新（你在 CI 跑的那幾分鐘裡又 push 了）。
+      #   那會變成「部署了一份沒有被測過的程式碼」——CD 綁 CI 的意義就沒了。
+      - name: Check out the exact commit that CI tested
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # 用 OIDC 換一組臨時憑證（最多 1 小時，Phase 93 的 --max-session-duration 3600）。
+      # 這一步之後，同一個 job 裡所有的 aws 指令與 ECR 登入都自動帶著那組憑證。
+      # ⚠ **不要加 role-duration-seconds**：不填就是用角色自己的上限（3600 秒 ＝ 1 小時），
+      #   而本 job 的 timeout-minutes 才 40，夠用。填了而且超過 3600 的話 STS 會打回
+      #   「DurationSeconds exceeds the MaxSessionDuration set for this role」——
+      #   那是 Phase 93 建角色時定的值，不是這裡能調的（phase-94 §7 陷阱 13）。
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 這一步做三件事：跟 ECR 換一次性密碼、docker login、把 registry 位址
+      # 放進 steps.ecr.outputs.registry（長得像 <帳號>.dkr.ecr.ap-northeast-1.amazonaws.com）。
+      # ★ 有了這個 output，workflow 裡就**不必寫死帳號 ID**。
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # runner 的 CPU 是 x86_64。amd64 那一份原生建；arm64 那一份靠 QEMU。
+      # 真機（92-A t3.xlarge、92-B g4dn.xlarge）都要 amd64；arm64 留給對照與以後的 Graviton。
+      - name: Set up QEMU (so an x86_64 runner can also build arm64)
+        uses: docker/setup-qemu-action@v4
+
+      # buildx ＝ Docker 的多平台建置外掛。沒有它就沒有 platforms 這個選項。
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push the cloud-worker image
+        uses: docker/build-push-action@v7
+        with:
+          # build context ＝ repo 根目錄（Dockerfile 也在那裡）
+          context: .
+          # 多階段 Dockerfile 停在中間那一段（Phase 90：base -> cloud-worker -> app）。
+          # 不指定 target 的話會蓋出最後一段（app），那是給這台 Mac 用的映像。
+          target: cloud-worker
+          # 真機兩段都是 x86_64（92-A 的 t3.xlarge、92-B 的 g4dn.xlarge）。兩個平台打進同一個 manifest。
+          # 漏掉 amd64 → EC2 docker run 才炸 exec format error（訊息在遠端 systemd，不在 Actions）。
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # 把 commit SHA 烙進映像：Dockerfile 的 ARG GIT_SHA -> ENV WORKER_VERSION，
+          # 工人啟動時印在 log 裡。Demo 3 就是靠它證明「跑的是新映像」（D16）。
+          build-args: |
+            GIT_SHA=${{ github.event.workflow_run.head_sha }}
+          # 兩個 tag 指向同一份映像：
+          #   <sha>   永遠指向這一版，任何一版都回得去
+          #   latest  給 EC2 開機時的 docker pull 用（systemd 的 ExecStartPre）
+          # ★ 「跑的是不是新映像」不靠 latest 判斷（D16）——靠工人 log 的 version=<sha>。
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.event.workflow_run.head_sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          # 把 build 的中間層存進 GitHub 的快取空間。QEMU 很慢，有快取差很多
+          # （第一次 5〜15 分鐘，之後改一行 Python 大約 2〜4 分鐘）。
+          cache-from: type=gha
+          # ignore-error=true（R20）：快取**匯出**失敗——GitHub 的 Actions cache 有配額
+          # （超過就開始淘汰甚至直接拒收）、fork／權限受限的情境也可能寫不進去——
+          # 不該讓「映像已經建好也推上去了」的這一輪變成紅燈。
+          # 它是 GitHub Actions cache backend（type=gha）文件裡列的 cache-to 屬性，
+          # 說明就是一句「Ignore errors caused by failed cache exports」：
+          #   https://docs.docker.com/build/cache/backends/gha/
+          # 只影響「寫快取」；讀不到快取本來就只是慢一點，不會失敗。
+          cache-to: type=gha,mode=max,ignore-error=true
+
+      # ★ 這一步是「盡力而為」：EC2 開著就重啟工人，沒開著就印一行提示並成功結束。
+      #   design6 D16 明文「EC2 Stop 時 CD 仍可 push ECR；下次 Start 再拉」——
+      #   產品負責人的常態是機器關著或已經 Terminate（2026-09-03 選 B），
+      #   所以「沒開機 = 部署失敗」會讓 Actions 永遠一片紅，紅到沒人看。
+      - name: Restart the worker if the instance is running
+        env:
+          # ⚠ vars 不是 secrets（兩個不同的命名空間）。沒設的話這裡會是空字串而且不報錯，
+          #   所以下面第一件事就是檢查它有沒有值。
+          EC2_INSTANCE_ID: ${{ vars.EC2_WORKER_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${EC2_INSTANCE_ID:-}" ]; then
+            echo "::notice::EC2_WORKER_INSTANCE_ID variable is not set; image pushed, nothing to restart"
+            exit 0
+          fi
+
+          # 實例不存在時（92-B 的 GPU 機 Terminate 之後 ID 就過期了、或變數填錯）
+          # describe-instances 會**非零退出**，而 set -e 會讓整個 job 紅——
+          # 那與 D16 和 phase-94 §1 的「找不到實例也算成功」正好相反。
+          # 所以吞掉錯誤、把狀態當成 not-found，讓它走下面那條 notice ＋ exit 0。
+          # ⚠ 但**錯誤訊息本身不要一起丟掉**（R21）：ID 過期、變數填錯、policy 少了
+          #   ec2:DescribeInstances、區域填錯——四種病症全都落到同一條 not-found，
+          #   只印 "not-found" 的話它們在 log 裡長得一模一樣，而「權限掉了」會被
+          #   誤讀成「機器沒開，正常」，然後永遠沒有人去修。
+          #   所以把 stderr 接進 $ERR_FILE，not-found 時連第一行一起印出來：
+          #   InvalidInstanceID.NotFound（真的沒這台）與 UnauthorizedOperation／
+          #   AccessDenied（角色權限不足）當場就分得出來。
+          #   只印第一行：後面是 botocore 的堆疊雜訊，對判讀沒有幫助。
+          ERR_FILE=$(mktemp)
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text 2>"$ERR_FILE" || echo "not-found")
+
+          if [ "$STATE" = "not-found" ]; then
+            echo "instance state: not-found ($(head -n1 "$ERR_FILE"))"
+          else
+            echo "instance state: $STATE"
+          fi
+
+          if [ "$STATE" != "running" ]; then
+            echo "::notice::instance not running; image pushed, next Start pulls latest"
+            exit 0
+          fi
+
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --parameters 'commands=["sudo systemctl restart personaldocai-worker"]' \
+            --query Command.CommandId \
+            --output text)
+          echo "ssm command id: $CMD_ID"
+
+          # 輪詢最多 60 次 x 10 秒 = 10 分鐘。
+          # 為什麼不是 5 分鐘：`systemctl restart` 要等 ExecStartPre 那一整條做完才會回
+          # （ECR 登入 → docker pull → local 模式還要等 Ollama），而 unit 的
+          # TimeoutStartSec 是 600 秒。輪詢窗口比它短的話，服務其實正常起來了，
+          # CD 卻先報 timeout 紅掉——那是最容易讓人不再看紅燈的假警報。
+          # 第一次一定要先 sleep：send-command 剛回來時 invocation 還沒建好，
+          # 立刻查會得到 InvocationDoesNotExist（所以下面用 || echo Pending 吞掉）。
+          for i in $(seq 1 60); do
+            sleep 10
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query Status \
+              --output text 2>/dev/null || echo "Pending")
+            echo "attempt $i: $STATUS"
+            case "$STATUS" in
+              Success)
+                echo "worker restarted"
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut)
+                echo "::error::SSM command ended as $STATUS"
+                aws ssm get-command-invocation \
+                  --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" \
+                  --query StandardErrorContent --output text || true
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "::error::SSM command did not finish within 10 minutes"
+          exit 1

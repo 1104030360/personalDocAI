@@ -37,3 +37,16 @@ def test_壞檔丟PdfUnreadableError():
     """
     with pytest.raises(pdf_service.PdfUnreadableError):
         pdf_service.render_pages(b"not a pdf")
+
+
+def test_max_pages只渲染前幾頁():
+    """閘門只需要第一頁（Phase 81 裁決 R4）：30 頁的掃描件不必整份渲染。
+
+    max_pages=None ＝ 全部——既有呼叫端（ingest_job._run_pdf_job）一個字都不必改，
+    這一顆就是那個「向下相容」的證據。給的數字比實際頁數大也不會炸。
+    """
+    pdf_bytes = make_pdf_bytes(3)
+
+    assert len(pdf_service.render_pages(pdf_bytes, max_pages=1)) == 1
+    assert len(pdf_service.render_pages(pdf_bytes, max_pages=None)) == 3
+    assert len(pdf_service.render_pages(pdf_bytes, max_pages=5)) == 3

@@ -1,0 +1,63 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "MailboxObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::personaldocai-mailbox-*/documents/*"
+    },
+    {
+      "Sid": "ListMailboxBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::personaldocai-mailbox-*"
+    },
+    {
+      "Sid": "SendToJobsQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:ap-northeast-1:<ACCOUNT_ID>:personaldocai-jobs"
+    },
+    {
+      "Sid": "ReceiveFromResultsQueue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:ap-northeast-1:<ACCOUNT_ID>:personaldocai-results"
+    },
+    {
+      "Sid": "WorkerReceiveJobs",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:ChangeMessageVisibility"
+      ],
+      "Resource": "arn:aws:sqs:ap-northeast-1:<ACCOUNT_ID>:personaldocai-jobs"
+    },
+    {
+      "Sid": "WorkerSendResults",
+      "Effect": "Allow",
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:ap-northeast-1:<ACCOUNT_ID>:personaldocai-results"
+    },
+    {
+      "Sid": "DescribeWorkerInstance",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeInstances",
+      "Resource": "*"
+    }
+  ]
+}

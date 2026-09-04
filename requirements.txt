@@ -22,6 +22,14 @@ ollama>=0.4               # 官方 Ollama 套件：看圖切「雲端」時直�
 celery>=5.4               # 任務佇列：把「等一下再做的事」丟給另一個行程做
 redis>=5.0                # Redis 的 Python 客戶端；Celery 用它連 broker，RedisJobStore 也直接用
 
+# --- AWS（增量六 design6.md：S3 當寄物櫃、SQS 當兩條佇列）---
+boto3>=1.35               # AWS 的官方 Python 套件（S3／SQS／EC2 Describe 三個服務）
+                          # ★ 全系統**只有** app/services/aws_mailbox.py 可以 import 它
+                          #   （tests/unit/test_aws_mailbox_unit.py 有一顆掃碼測試釘住）
+                          # ⚠ 改完這一行之後一定要重建映像，否則 worker 容器裡沒有它：
+                          #     docker compose -f compose.yaml up -d --build
+                          #   症狀會是走雲端路時 ModuleNotFoundError（容器裡根本沒有這個套件）
+
 # --- 設定 ---
 python-dotenv>=1.0        # 讀 .env 檔裡的環境變數
 

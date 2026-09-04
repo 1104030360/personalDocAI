@@ -424,7 +424,24 @@ def test_redis沒有發佈到區網():
 
 
 def test_沒有背景任務框架的替代品也沒有雲端儲存():
-    """§1.2 第 1／2 列＋§3 第 7 列。"""
+    """§1.2 第 1／2 列＋§3 第 7 列。
+
+    ⚠ 增量六（Phase 83）修改過這一顆：**boto3 從禁止清單移除**。
+    來源是 design6.md §1.1 第 1 列，它正式推翻了 design5.md §3 的
+    「不做：雲端物件儲存、S3」——改成「僅 NON_SENSITIVE 且遠端可用時，
+    S3 當 mailbox（寄物櫃）；正本仍在本機」。
+
+    推翻的**只有 boto3 那一項**，其餘一個字都沒動：
+      ・s3fs／minio／google-cloud-storage 仍然禁止——它們是「把 S3 當檔案系統
+        或第二個檔案櫃」的用法，而 design6 D1 明文「S3 **不是**檔案櫃、
+        不是備份、不是相簿」，正本永遠在這台 Mac 的 Postgres 與 data/。
+      ・flower 仍然禁止（design5 §3 第 5 列；design6 沒提到它）。
+      ・BackgroundTasks 與「自寫 Redis 消費迴圈」仍然禁止（§1.2 第 1／2 列）。
+
+    另外反過來加一條：boto3 **必須**在 requirements 裡。
+    沒有這一條的話，哪天有人「順手清乾淨」把它移掉，整條雲端路會在
+    worker 容器裡 ModuleNotFoundError，而 pytest 全綠——那是最難查的落差。
+    """
     app目錄原始碼 = "".join(
         檔案.read_text(encoding="utf-8") for 檔案 in sorted((專案根目錄 / "app").rglob("*.py"))
     )
@@ -436,9 +453,12 @@ def test_沒有背景任務框架的替代品也沒有雲端儲存():
     # §1.2 第 2 列：用的是 Celery，不是自寫的 Redis list 消費迴圈
     assert "celery" in 需求
     assert (專案根目錄 / "app" / "celery_app.py").exists()
-    # §3 第 7 列：不做雲端物件儲存
-    for 關鍵字 in ("boto3", "s3fs", "minio", "google-cloud-storage"):
-        assert 關鍵字 not in 需求, f"不做雲端物件儲存：{關鍵字}"
+    # §3 第 7 列（design6 §1.1 第 1 列已推翻其中的 boto3 一項，其餘照舊禁止）
+    for 關鍵字 in ("s3fs", "minio", "google-cloud-storage"):
+        assert 關鍵字 not in 需求, f"S3 只當寄物櫃、不是第二個檔案櫃：{關鍵字}"
+    # 增量六起：boto3 是必要的（design6 §1.1 第 1 列）。
+    # 用「行首」比對而不是子字串：註解裡提到這個名字不算數，只有真的那一行 requirement 才算
+    assert re.search(r"^boto3\b", 需求, re.M), "增量六需要 boto3（design6.md §1.1 第 1 列）"
     # §3 第 5 列：不裝 Flower
     assert "flower" not in 需求
 

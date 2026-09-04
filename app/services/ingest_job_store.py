@@ -57,6 +57,12 @@ class IngestJob(TypedDict, total=False):
     error: str | None  # 失敗時給人看的**短句**，不要把 stack trace 丟給瀏覽器
     ai_backend: str  # 入列當下 config.AI_BACKEND 的快照："local" / "cloud"（D14）
     source: str  # "upload"（電腦選檔）/ "camera"（無線鏡頭快門）
+    # ---- 增量六 Phase 77 追加（design6.md §4；總覽 §2.4.4）----
+    # 兩個都**可選**：剛收下檔案時還沒有人問過閘門，所以這兩個鍵根本不存在。
+    # 「鍵不存在」與「值是 local」是**兩件不同的事**——Phase 78 的崩潰重送
+    # 就是靠這個差別決定「要不要再問一次閘門」（design6 §2.1 禁止 fallback 時重跑分類器）。
+    privacy: str  # 隱私閘門的三分類："SENSITIVE" / "NON_SENSITIVE" / "UNCERTAIN"
+    route: str  # 這筆走哪條路："local"（增量五那條）/ "cloud"
 
 
 class JobStore(Protocol):
@@ -311,18 +317,18 @@ class RedisJobStore:
         raws = self._client.mget([job_key(job_id) for job_id in job_ids])
 
         jobs: list[IngestJob] = []
-        孤兒: list[str] = []
+        orphans: list[str] = []
         for job_id, raw in zip(job_ids, raws):
             if raw is None:
                 # 集合有這個 id，但 JSON 不見了（AOF 半截、有人手動 DEL…）。
                 # 這種殘骸不該讓整個進度面板炸掉，順手清掉即可。
-                孤兒.append(job_id)
+                orphans.append(job_id)
                 continue
             job = json.loads(raw)
             if job.get("status") not in JOB_STATUSES:
                 # 沒定義過的狀態不准出現在使用者的進度面板上（防禦性，同記憶體版）
                 continue
             jobs.append(job)
-        if 孤兒:
-            self._client.srem(OPEN_SET_KEY, *孤兒)
+        if orphans:
+            self._client.srem(OPEN_SET_KEY, *orphans)
         return jobs

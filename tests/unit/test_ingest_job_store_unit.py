@@ -367,3 +367,34 @@ def test_list_open遇到集合有id但資料不見時自己修好():
 def test_list_open沒有任何job時回空清單():
     store = ingest_job_store.RedisJobStore(FakeRedisClient())
     assert store.list_open() == []
+
+
+# ---------- 增量六 Phase 77 追加：兩個新欄位 ----------
+
+
+def test_job可以存取privacy與route兩個新欄位():
+    """IngestJob 多兩個**可選**欄位（design6 §4、總覽 §2.4.4）。
+
+      privacy ＝ 隱私閘門判的三分類（SENSITIVE／NON_SENSITIVE／UNCERTAIN）
+      route   ＝ 這筆最後走哪條路（local／cloud）
+
+    兩個都**不進 photo 表**（design6 §4 明文：狀態放 JobStore），
+    也**不進 GET /ingest-jobs 的回應**（IngestJobOut 是逐欄挑的，使用者看不到 route）。
+
+    為什麼是「可選」而不是在 create() 就填：剛收下檔案的那一刻還沒有人問過閘門，
+    填一個假的預設值（例如 route="local"）會讓「還沒判斷」與「判斷結果是本機」
+    長得一模一樣——而 Phase 78 的崩潰重送**正是靠這個差別**決定要不要再問一次閘門。
+    """
+    store = _new_store()
+    job = _create(store)
+
+    assert "privacy" not in job, "剛建立時還沒判斷過，這個鍵不該存在"
+    assert "route" not in job
+
+    store.update("job-1", privacy="SENSITIVE", route="local")
+
+    updated = store.get("job-1")
+    assert updated["privacy"] == "SENSITIVE"
+    assert updated["route"] == "local"
+    assert updated["status"] == "queued", "update 只改指定的欄位，其他一個都不動"
+    assert updated["photo_ids"] == []

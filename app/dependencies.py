@@ -25,9 +25,11 @@ from langchain_core.embeddings import Embeddings
 from app.core import config
 from app.services import (
     ask_workflow,
+    cloud_ingest,
     entity_suggestion_service,
     indexing_service,
     ingest_job_store,
+    privacy_gate,
     vlm_service,
 )
 
@@ -150,6 +152,36 @@ def get_today(now: datetime | None = Depends(get_now)) -> date:
     return now.date() if now is not None else date.today()
 
 
+# ---------- 隱私閘門（增量六 Phase 74 立契約、75 接真模型；design6.md D2〜D4）----------
+#
+# 「這張照片能不能離開這台 Mac」由它判斷：同一顆看圖 VLM、另一份短 prompt。
+# 還沒有人呼叫 classify()（接線是 Phase 78）。
+
+
+def build_privacy_gate_for_backend(ai_backend: str) -> privacy_gate.PrivacyGate:
+    """依「指定的」後端建隱私閘門——**不看** config.AI_BACKEND。
+
+    誰會用它：
+    - get_privacy_gate()（下面那個）：web 行程／pytest，參數是當下的開關值
+    - Phase 78 的 app/celery_app.py：worker 行程，參數是**入列當下寫進 job 的快照**
+      job["ai_backend"]。worker 行程的 config.AI_BACKEND 永遠是預設的 "local"
+      （頁首開關撥的是 web 行程的記憶體狀態，兩個行程不共用），所以這裡若改讀
+      config 就會變成「頁首撥雲端、閘門仍打本機」——違反 D6 而且完全不出聲。
+
+    理由與寫法同 build_vlm_for_backend()（design5.md D14 的同一個坑）。
+
+    ⚠ 刻意不加 @lru_cache（不像 _ollama_vlm 那種）：後端是建構參數，
+      快取一顆會讓第二次呼叫拿到第一次的後端。ChatOllama 與
+      ollama_cloud.build_client() 建物件本身不連線，每次建一顆是可接受的成本。
+    """
+    return privacy_gate.VlmGate(privacy_gate.OllamaPrivacyModel(backend=ai_backend))
+
+
+def get_privacy_gate() -> privacy_gate.PrivacyGate:
+    """給 Depends 的隱私閘門。跟著頁首的 AI 開關走（理由與寫法同 get_vlm）。"""
+    return build_privacy_gate_for_backend(config.AI_BACKEND)
+
+
 # ---------- 入庫任務的狀態存放處（Phase 57；design5.md §4.3）----------
 
 
@@ -241,3 +273,92 @@ def get_task_dispatcher() -> TaskDispatcher:
     from app.celery_app import CeleryDispatcher
 
     return CeleryDispatcher()
+
+
+# ---------------- 增量六 Phase 77：雲端路的注入點（design6 D7／D10）----------------
+
+
+@lru_cache(maxsize=1)
+def _ec2_cloud_route() -> cloud_ingest.CloudRoute:
+    """ec2 模式的雲端路，**整個行程只建一次**（手法與 _ollama_vlm 相同）。
+
+    ★ 為什麼一定要共用同一個物件：Ec2Probe 的 TTL 快取是**物件身上的狀態**。
+      每次呼叫都 new 一個的話，快取永遠是空的——等於每張照片都打一次
+      DescribeInstances，design6 D10 第 1 條要的「避免每張圖都打 AWS」就落空了。
+      順便也省下每次重建 boto3 client 的成本（那不是免費的）。
+
+    ★ 代價：改了 .env 之後要重啟 worker 才生效。這與本專案既有的規則一致
+      （CLAUDE.md 指令區：「改 .env → restart app worker」）。
+
+    ★ AwsMailbox 的 import 寫在函式**裡面**（與 get_task_dispatcher 同一個理由）：
+      pytest 收集階段不必為了一顆字串測試就載入 AWS SDK；
+      而且測試可以 monkeypatch aws_mailbox.AwsMailbox 把它整個換掉。
+    """
+    # 只有真的要走雲端時才載入 boto3（唯一入口是 aws_mailbox；與 assume 那支同一句）
+    from app.services.aws_mailbox import AwsMailbox
+
+    mailbox = AwsMailbox(
+        bucket=config.S3_BUCKET,
+        jobs_queue_url=config.SQS_JOBS_QUEUE_URL,
+        results_queue_url=config.SQS_RESULTS_QUEUE_URL,
+        region=config.AWS_REGION,
+    )
+    # 同一顆信箱同時給 CloudRoute（S3／SQS）與 Ec2Probe（DescribeInstances）用
+    return cloud_ingest.CloudRoute(
+        mailbox,
+        cloud_ingest.Ec2Probe(
+            mailbox,
+            config.EC2_WORKER_INSTANCE_ID,
+            ttl_seconds=config.EC2_PROBE_TTL_SECONDS,
+        ),
+        timeout_seconds=config.CLOUD_RESULT_TIMEOUT_SECONDS,
+    )
+
+
+def get_cloud_route() -> cloud_ingest.CloudRoute | cloud_ingest.CloudRouteOff:
+    """這一台現在要不要走雲端路、怎麼走。**全系統只有這一個地方決定。**
+
+    三種模式由 config.CLOUD_ROUTE 決定（總覽 §2.4.2）：
+      off    → CloudRouteOff()：available() 恆為 False，gated_ingest 直接 fallback 成
+               run_ingest_job——行為與增量五**逐字相同**（pytest 與新 clone 的預設）
+      assume → CloudRoute ＋ AwsMailbox ＋ AlwaysRunning：假設遠端開著、**不做探測**
+               （階段丁：工人跑在這台 Mac 上時用；機器沒開時它會傻傻送出、等到逾時才
+               fallback，所以不要拿來當日常設定——總覽 §10.1 追認項 l）
+      ec2    → CloudRoute ＋ AwsMailbox ＋ Ec2Probe：用 DescribeInstances 問那台機器
+               現在是不是 running（戊之後的日常；整個行程共用一條，見 _ec2_cloud_route）
+
+    ★ 打錯字要當場炸（ValueError），不要默默當成 off：
+      「我明明把 CLOUD_ROUTE 設成 cloud 了，怎麼都沒送出去」是最難查的一種壞法。
+      （Phase 77 的 test_get_cloud_route預設off時回CloudRouteOff 用 CLOUD_ROUTE=cloudy 釘住它。）
+
+    ★ boto3 相關的 import 寫在函式**裡面**（不是檔案最上面），理由與既有的
+      get_task_dispatcher() 相同：pytest 收集階段不必為了跑一顆字串測試就載入 boto3，
+      而且 CLOUD_ROUTE=off 時根本走不到那一行。
+
+    ★ 三個資源名稱與逾時秒數一律 config.X **即時讀**（不要 from … import X）：
+      那樣才改得動（tests 用 monkeypatch 換、.env 改完 restart worker 就生效）。
+
+    pytest 由 tests/conftest.py 的第五道安全網 wire_fake_cloud 兩管齊下換掉它。
+    """
+    mode = config.CLOUD_ROUTE
+    if mode == "off":
+        return cloud_ingest.CloudRouteOff()
+    if mode == "assume":
+        # 只有真的要走雲端時才載入 boto3（唯一入口是 aws_mailbox）
+        from app.services.aws_mailbox import AwsMailbox
+
+        mailbox = AwsMailbox(
+            bucket=config.S3_BUCKET,
+            jobs_queue_url=config.SQS_JOBS_QUEUE_URL,
+            results_queue_url=config.SQS_RESULTS_QUEUE_URL,
+            region=config.AWS_REGION,
+        )
+        return cloud_ingest.CloudRoute(
+            mailbox,
+            cloud_ingest.AlwaysRunning(),
+            timeout_seconds=config.CLOUD_RESULT_TIMEOUT_SECONDS,
+        )
+    if mode == "ec2":
+        # 整個行程共用一條（lru_cache）：Ec2Probe 的 TTL 快取住在物件身上
+        return _ec2_cloud_route()
+    raise ValueError(f"CLOUD_ROUTE 只認 off／assume／ec2，讀到的是：{mode!r}")

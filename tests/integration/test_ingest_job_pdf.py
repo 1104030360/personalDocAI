@@ -213,7 +213,7 @@ def test_壞檔拆不開_job標failed且不留列():
 
     「零頁 PDF」在 pdf_service.render_pages 裡走的是**同一個** PdfUnreadableError
     （壞檔在開檔時丟、零頁在 `if len(document) == 0` 那兩行丟——對本函式來說
-    兩種都是同一個例外、同一條 _fail 路），所以整合層驗 b"not a pdf" 這一條就夠。
+    兩種都是同一個例外、同一條 fail_job 路），所以整合層驗 b"not a pdf" 這一條就夠。
     壞檔那一半另有 Phase 28 的單元測試 test_壞檔丟PdfUnreadableError 釘著；
     零頁那一半沒有單元測試，也做不出來——make_pdf_bytes(pages=0) 會直接
     ValueError（見本檔陷阱 10），Pillow 根本寫不出零頁的 PDF 檔。
@@ -236,7 +236,7 @@ def test_某頁寫檔失敗_當成跳過該頁_其他頁照樣入庫(monkeypatch
     """本計畫的裁決（design5 沒明寫）：PDF 某頁寫檔失敗＝跳過那一頁。
 
     理由見計畫文件 phase-60 §4 步驟 3 的「⚠ 一個 design5 沒寫、要自己裁決的情況」。
-    半成品由 _insert_photo_with_files 自己清乾淨，所以不會留孤兒列或孤兒檔。
+    半成品由 insert_photo_with_files 自己清乾淨，所以不會留孤兒列或孤兒檔。
     """
     真的縮圖 = storage_service.make_thumbnail
     狀態 = {"次數": 0}
